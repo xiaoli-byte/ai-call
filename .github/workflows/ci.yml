@@ -16,13 +16,24 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @ai-call/api prisma:generate
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build shared package
+        run: pnpm --filter @ai-call/shared build
+      - name: Generate Prisma client
+        run: pnpm --filter @ai-call/api prisma:generate
         env:
           DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
-      - run: pnpm lint
-      - run: pnpm test
-      - run: pnpm build
+      - name: Typecheck API
+        run: pnpm --filter @ai-call/api test:typecheck
+      - name: Unit test API
+        run: pnpm --filter @ai-call/api test
+      - name: Typecheck dashboard
+        run: pnpm --filter @ai-call/dashboard test:typecheck
+      - name: Unit test dashboard
+        run: pnpm --filter @ai-call/dashboard test:unit
+      - name: Build workspace
+        run: pnpm build
 
   python:
     runs-on: ubuntu-latest

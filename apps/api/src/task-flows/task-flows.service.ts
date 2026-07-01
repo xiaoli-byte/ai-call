@@ -9,6 +9,7 @@ import type {
 } from '@ai-call/shared';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { LlmService } from '../llm/llm.service.js';
+import { toPrismaJson } from '../common/prisma-json.js';
 import type { CreateTaskFlowDto } from './dto/create-task-flow.dto.js';
 import type { UpdateTaskFlowDto } from './dto/update-task-flow.dto.js';
 
@@ -33,8 +34,8 @@ export class TaskFlowsService {
         name: dto.name,
         description: dto.description ?? '',
         status: FlowStatus.DRAFT,
-        nodes: (dto.nodes ?? []) as unknown as never,
-        edges: (dto.edges ?? []) as unknown as never,
+        nodes: toPrismaJson(dto.nodes ?? []),
+        edges: toPrismaJson(dto.edges ?? []),
       },
     });
     this.logger.log(`created task-flow id=${record.id} name=${record.name}`);
@@ -63,8 +64,8 @@ export class TaskFlowsService {
     const data: Record<string, unknown> = {};
     if (dto.name !== undefined) data.name = dto.name;
     if (dto.description !== undefined) data.description = dto.description;
-    if (dto.nodes !== undefined) data.nodes = dto.nodes as unknown as never;
-    if (dto.edges !== undefined) data.edges = dto.edges as unknown as never;
+    if (dto.nodes !== undefined) data.nodes = toPrismaJson(dto.nodes);
+    if (dto.edges !== undefined) data.edges = toPrismaJson(dto.edges);
     if (
       current.status === FlowStatus.PUBLISHED &&
       (dto.name !== undefined || dto.description !== undefined || dto.nodes !== undefined || dto.edges !== undefined)
@@ -108,8 +109,8 @@ export class TaskFlowsService {
           version: updated.version,
           name: updated.name,
           description: updated.description,
-          nodes: updated.nodes as never,
-          edges: updated.edges as never,
+          nodes: toPrismaJson(updated.nodes),
+          edges: toPrismaJson(updated.edges),
         },
       });
       return updated;
@@ -165,8 +166,8 @@ export class TaskFlowsService {
         name: `${source.name} (副本)`,
         description: source.description,
         status: FlowStatus.DRAFT,
-        nodes: source.nodes as unknown as never,
-        edges: source.edges as unknown as never,
+        nodes: toPrismaJson(source.nodes),
+        edges: toPrismaJson(source.edges),
       },
     });
     this.logger.log(`duplicated task-flow from=${id} to=${record.id}`);

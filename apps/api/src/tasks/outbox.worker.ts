@@ -5,6 +5,13 @@ import { randomUUID } from 'node:crypto';
 import { FreeSwitchService } from '../freeswitch/freeswitch.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { ActionDeliveryService } from './action-delivery.service.js';
+import {
+  callEventPayload,
+  type FlowActionType,
+  type OutboxEventType,
+  outboxFailureCallEventType,
+  parseOutboxPayload,
+} from './task-payloads.js';
 
 type OutboxRecord = {
   id: string;
@@ -99,14 +106,8 @@ export class OutboxWorker implements OnModuleInit, OnModuleDestroy {
   }
 
   private async deliver(event: OutboxRecord): Promise<void> {
-    const payload = event.payload as {
-      taskId: string;
-      attemptId?: string;
-      to?: string;
-      config?: Record<string, unknown>;
-    };
     if (event.type === 'call.dispatch_requested') {
-      if (!payload.to || !payload.attemptId) throw new Error('Invalid dispatch payload');
+      const payload = parseOutboxPayload(event.type, event.payload);
       await this.freeswitch.originate(payload.to, payload.attemptId);
       await this.prisma.$transaction([
         this.prisma.callAttempt.update({
@@ -118,23 +119,25 @@ export class OutboxWorker implements OnModuleInit, OnModuleDestroy {
             taskId: payload.taskId,
             attemptId: payload.attemptId,
             type: 'call.dispatch_accepted',
-            payload: {} as never,
+            payload: callEventPayload('call.dispatch_accepted', {}),
           },
         }),
       ]);
       return;
     }
     if (event.type === 'action.sms') {
+      const payload = parseOutboxPayload(event.type, event.payload);
       await this.actions.deliverSms(
-        { taskId: payload.taskId, attemptId: payload.attemptId, to: payload.to, config: payload.config ?? {} },
+        { taskId: payload.taskId, attemptId: payload.attemptId, to: payload.to, config: payload.config },
         event.deduplicationKey ?? event.id,
       );
       await this.recordActionDelivered(payload, 'sms');
       return;
     }
     if (event.type === 'action.api') {
+      const payload = parseOutboxPayload(event.type, event.payload);
       await this.actions.deliverWebhook(
-        { taskId: payload.taskId, attemptId: payload.attemptId, config: payload.config ?? {} },
+        { taskId: payload.taskId, attemptId: payload.attemptId, config: payload.config },
         event.deduplicationKey ?? event.id,
       );
       await this.recordActionDelivered(payload, 'api');
@@ -147,12 +150,13 @@ export class OutboxWorker implements OnModuleInit, OnModuleDestroy {
     payload: { taskId: string; attemptId?: string },
     actionType: string,
   ): Promise<void> {
+    const eventType = `action.${actionType as FlowActionType}.delivered` as const;
     await this.prisma.callEvent.create({
       data: {
         taskId: payload.taskId,
         attemptId: payload.attemptId,
-        type: `action.${actionType}.delivered`,
-        payload: {} as never,
+        type: eventType,
+        payload: callEventPayload(eventType, {}),
       },
     });
   }
@@ -161,7 +165,8 @@ export class OutboxWorker implements OnModuleInit, OnModuleDestroy {
     const attempts = event.attempts + 1;
     const terminal = attempts >= Number(process.env.OUTBOX_MAX_ATTEMPTS ?? 5);
     const message = error.message.slice(0, 1000);
-    const payload = event.payload as { taskId: string; attemptId?: string };
+    const payload = parseOutboxPayload(event.type as OutboxEventType, event.payload);
+    const eventType = outboxFailureCallEventType(event.type as OutboxEventType, terminal);
     await this.prisma.$transaction(async (tx) => {
       await tx.outboxEvent.update({
         where: { id: event.id },
@@ -177,8 +182,8 @@ export class OutboxWorker implements OnModuleInit, OnModuleDestroy {
         data: {
           taskId: payload.taskId,
           attemptId: payload.attemptId,
-          type: `${event.type}.${terminal ? 'failed' : 'retrying'}`,
-          payload: { attempts, error: message } as never,
+          type: eventType,
+          payload: callEventPayload(eventType, { attempts, error: message }),
         },
       });
       if (terminal && event.type === 'call.dispatch_requested' && payload.attemptId) {

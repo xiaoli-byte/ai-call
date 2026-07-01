@@ -23,6 +23,7 @@ import type {
 import { FreeSwitchService } from '../freeswitch/freeswitch.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { TaskFlowsService } from '../task-flows/task-flows.service.js';
+import { callEventPayload, outboxPayload, toPrismaJson } from './task-payloads.js';
 
 type ResolvedContext = {
   taskId: string;
@@ -66,13 +67,16 @@ export class TasksService {
         to: dto.to,
         from: process.env.FROM_NUMBER ?? '+10000000000',
         scenario: dto.scenario,
-        variables: (dto.variables ?? {}) as never,
+        variables: toPrismaJson(dto.variables ?? {}),
         status: TaskStatus.PENDING,
         scheduledAt: dto.scheduledAt ? new Date(dto.scheduledAt) : new Date(),
         flowId: dto.flowId,
         flowVersionId: flowVersion?.id,
         events: {
-          create: { type: 'task.created', payload: { flowVersionId: flowVersion?.id } as never },
+          create: {
+            type: 'task.created',
+            payload: callEventPayload('task.created', { flowVersionId: flowVersion?.id }),
+          },
         },
       },
       include: this.detailInclude,
@@ -163,7 +167,7 @@ export class TasksService {
           taskId: context.taskId,
           attemptId: context.attemptId,
           type: 'task.status_changed',
-          payload: { from: current.status, to: status } as never,
+          payload: callEventPayload('task.status_changed', { from: current.status, to: status }),
         },
       });
     });
@@ -199,7 +203,7 @@ export class TasksService {
             taskId: context.taskId,
             attemptId: context.attemptId,
             type: 'transcript.appended',
-            payload: { role: turn.role } as never,
+            payload: callEventPayload('transcript.appended', { role: turn.role }),
           },
         });
       }
@@ -219,7 +223,7 @@ export class TasksService {
           taskId: context.taskId,
           attemptId: context.attemptId,
           type: 'call.outcome_set',
-          payload: { outcome, tags } as never,
+          payload: callEventPayload('call.outcome_set', { outcome, tags }),
         },
       }),
     ]);
@@ -265,7 +269,7 @@ export class TasksService {
           taskId: context.taskId,
           attemptId: context.attemptId,
           type: 'call.hung_up',
-          payload: { outcome: body.outcome, duration } as never,
+          payload: callEventPayload('call.hung_up', { outcome: body.outcome, duration }),
         },
       });
     });
@@ -294,7 +298,12 @@ export class TasksService {
         },
       });
       await tx.callEvent.create({
-        data: { taskId: id, attemptId, type: 'call.dispatch_requested', payload: {} as never },
+        data: {
+          taskId: id,
+          attemptId,
+          type: 'call.dispatch_requested',
+          payload: callEventPayload('call.dispatch_requested', {}),
+        },
       });
       await tx.outboxEvent.create({
         data: {
@@ -302,7 +311,7 @@ export class TasksService {
           aggregateId: attemptId,
           type: 'call.dispatch_requested',
           deduplicationKey: `call.dispatch:${attemptId}`,
-          payload: { taskId: id, attemptId, to: task.to, from: task.from } as never,
+          payload: outboxPayload('call.dispatch_requested', { taskId: id, attemptId, to: task.to, from: task.from }),
         },
       });
     });
@@ -318,7 +327,7 @@ export class TasksService {
         taskId: context.taskId,
         attemptId: context.attemptId,
         type: 'call.transferred',
-        payload: { extension, channelId } as never,
+        payload: callEventPayload('call.transferred', { extension, channelId }),
       },
     });
     this.logger.log(`transfer task=${context.taskId} attempt=${context.attemptId ?? '-'} to=${extension}`);
@@ -349,12 +358,12 @@ export class TasksService {
           aggregateId: context.attemptId ?? context.taskId,
           type: `action.${actionType}`,
           deduplicationKey,
-          payload: {
+          payload: outboxPayload(`action.${actionType}`, {
             taskId: context.taskId,
             attemptId: context.attemptId,
             to: task.to,
             config,
-          } as never,
+          }),
         },
       });
       await tx.callEvent.create({
@@ -362,7 +371,7 @@ export class TasksService {
           taskId: context.taskId,
           attemptId: context.attemptId,
           type: `action.${actionType}.requested`,
-          payload: { outboxEventId: created.id } as never,
+          payload: callEventPayload(`action.${actionType}.requested`, { outboxEventId: created.id }),
         },
       });
       return created;
