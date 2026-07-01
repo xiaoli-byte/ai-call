@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+*.egg
+build/
+dist/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Tests / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE
+.vscode/
+.idea/
+
+# FunASR runtime artifacts
+temp_dir/
+offline_segments/
+*.wav
+!tests/**/*.wav
+
+# Models (ModelScope 缓存在 ~/.cache/modelscope，不入库)
+models/

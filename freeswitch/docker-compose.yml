@@ -1,0 +1,66 @@
+# ============================================================
+# FreeSWITCH + FunASR + mod_audio_fork 容器化部署
+#
+# 启动：
+#   docker compose -f freeswitch/docker-compose.yml up -d
+#
+# 验证：
+#   docker compose -f freeswitch/docker-compose.yml logs -f freeswitch
+#   docker compose -f freeswitch/docker-compose.yml logs -f funasr
+#
+# 连接 SIP 软电话（如 Zoiper/Linphone）：
+#   - 服务器地址：本机 IP
+#   - 端口：5060
+#   - 用户名：1000 / 1001（默认配置在 conf/directory/default.xml）
+#   - 密码：1234
+#
+# 拨打测试分机 9999：
+#   拨号后 FreeSWITCH 会将 RTP 音频 fork 到 mod_audio_fork 配置的 WebSocket 服务器
+#   （Voice Agent 端监听该 WebSocket 接收音频流）
+#
+# FunASR STT 服务（:10095）：
+#   Voice Agent 通过 STT_PROVIDER=funasr 连接 ws://localhost:10095
+# ============================================================
+services:
+  freeswitch:
+    image: signalwire/freeswitch:1.10.11-release
+    container_name: ai-call-freeswitch
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      # 配置文件挂载
+      - ./conf:/etc/freeswitch/conf.d:ro
+      # 录音与日志
+      - ./recordings:/var/lib/freeswitch/recordings
+      - ./logs:/var/log/freeswitch
+      # mod_audio_fork 模块（如需自编译，否则用镜像内置）
+      # - ./mods/mod_audio_fork.so:/usr/lib/freeswitch/mod/mod_audio_fork.so:ro
+    environment:
+      - TZ=Asia/Shanghai
+      - FREESWITCH_DOMAIN=192.168.1.100
+    # ESL 外部访问（用于 NestJS 后端通过 ESL 控制呼叫）
+    ports:
+      - "5060:5060/udp"   # SIP UDP
+      - "5060:5060/tcp"   # SIP TCP
+      - "8021:8021/tcp"   # ESL Event Socket
+      - "7443:7443/tcp"   # WebRTC（可选，用于浏览器软电话）
+      - "16384-32768:16384-32768/udp"  # RTP 媒体流端口范围
+    command: >
+      freeswitch -nf -nc
+      -nf
+      -c
+
+  # FunASR 语音识别服务（开源，本地部署）
+  # 镜像 tag 请按需选择：online-cpu / online-gpu / offline-cpu
+  funasr:
+    image: registry.cn-hangzhou.aliyuncs.com/funasr_repo/funasr:funasr-runtime-sdk-online-cpu-0.1.12
+    container_name: ai-call-funasr
+    restart: unless-stopped
+    ports:
+      - "10095:10095"
+    environment:
+      - TZ=Asia/Shanghai
+    # FUNASR_HOTWORDS 可通过环境变量传入热词（重启生效）
+    # 在 .env 中配置 FUNASR_HOTWORDS 后取消注释：
+    # env_file:
+    #   - ../.env

@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-call.local/contracts/task-api.schema.json",
+  "title": "TaskContext",
+  "type": "object",
+  "required": ["id", "scenario", "variables"],
+  "properties": {
+    "id": { "type": "string", "format": "uuid" },
+    "scenario": { "type": "string", "enum": ["collection", "ecommerce", "presale"] },
+    "scenarioConfig": { "$ref": "#/$defs/scenarioConfig" },
+    "variables": { "type": "object", "additionalProperties": { "type": "string" } },
+    "flowId": { "type": "string", "format": "uuid" },
+    "flowVersionId": { "type": "string", "format": "uuid" },
+    "flowVersion": { "$ref": "#/$defs/taskFlowVersion" }
+  },
+  "$defs": {
+    "scenarioConfig": {
+      "type": "object",
+      "required": ["scenario", "name", "description", "systemPrompt", "greeting", "knowledgeBaseId", "allowedTools", "escalationRules"],
+      "properties": {
+        "scenario": { "enum": ["collection", "ecommerce", "presale"] },
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "systemPrompt": { "type": "string" },
+        "greeting": { "type": "string" },
+        "knowledgeBaseId": { "type": "string" },
+        "allowedTools": { "type": "array", "items": { "type": "string" } },
+        "escalationRules": { "type": "array", "items": { "type": "object" } }
+      },
+      "additionalProperties": false
+    },
+    "flowNode": {
+      "type": "object",
+      "required": ["id", "type", "position", "data"],
+      "properties": {
+        "id": { "type": "string" },
+        "type": { "enum": ["start", "dialog", "decision", "action", "end"] },
+        "position": {
+          "type": "object",
+          "required": ["x", "y"],
+          "properties": { "x": { "type": "number" }, "y": { "type": "number" } },
+          "additionalProperties": false
+        },
+        "data": { "type": "object" }
+      },
+      "additionalProperties": false
+    },
+    "flowEdge": {
+      "type": "object",
+      "required": ["id", "source", "target"],
+      "properties": {
+        "id": { "type": "string" },
+        "source": { "type": "string" },
+        "target": { "type": "string" },
+        "label": { "type": "string" },
+        "sourceHandle": { "type": "string" },
+        "targetHandle": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "taskFlowVersion": {
+      "type": "object",
+      "required": ["id", "flowId", "version", "name", "description", "nodes", "edges", "createdAt"],
+      "properties": {
+        "id": { "type": "string", "format": "uuid" },
+        "flowId": { "type": "string", "format": "uuid" },
+        "version": { "type": "integer", "minimum": 1 },
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "nodes": { "type": "array", "items": { "$ref": "#/$defs/flowNode" } },
+        "edges": { "type": "array", "items": { "$ref": "#/$defs/flowEdge" } },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": true
+}

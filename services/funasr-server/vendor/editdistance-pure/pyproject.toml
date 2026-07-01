@@ -1,0 +1,12 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "editdistance"
+version = "0.8.1"
+description = "Pure Python editdistance shim (replaces C extension that requires MSVC)"
+requires-python = ">=3.8"
+
+[tool.setuptools.packages.find]
+where = ["src"]

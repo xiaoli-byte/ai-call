@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-call.local/contracts/voice-websocket.schema.json",
+  "title": "VoiceWebSocketMessage",
+  "oneOf": [
+    {
+      "title": "CallMetadata",
+      "type": "object",
+      "required": ["dialog_id"],
+      "properties": {
+        "dialog_id": { "type": "string" },
+        "caller_id": { "type": "string" },
+        "callee_id": { "type": "string" },
+        "scenario": { "enum": ["collection", "ecommerce", "presale"] },
+        "token": { "type": "string" }
+      },
+      "additionalProperties": { "type": ["string", "number", "boolean", "null"] }
+    },
+    {
+      "title": "TranscriptEvent",
+      "type": "object",
+      "required": ["type", "text"],
+      "properties": {
+        "type": { "enum": ["agent_speech", "caller_speech"] },
+        "text": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  ]
+}

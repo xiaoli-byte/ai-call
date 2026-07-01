@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  typescript:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.12.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @ai-call/api prisma:generate
+        env:
+          DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+      - run: pnpm lint
+      - run: pnpm test
+      - run: pnpm build
+
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install voice-agent test dependencies
+        run: pip install -e "services/voice-agent[dev]"
+      - name: Install lightweight FunASR API test dependencies
+        run: |
+          pip install pytest pytest-asyncio httpx fastapi uvicorn python-multipart aiofiles structlog numpy scipy
+          pip install --no-deps -e services/funasr-server
+      - run: python -m pytest services/voice-agent/tests -q
+      - run: python -m pytest services/funasr-server/tests -q

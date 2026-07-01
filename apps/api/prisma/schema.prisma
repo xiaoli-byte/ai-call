@@ -1,0 +1,115 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model TaskFlow {
+  id          String            @id @default(uuid())
+  name        String
+  description String            @default("")
+  status      String            @default("draft")
+  nodes       Json              @default("[]")
+  edges       Json              @default("[]")
+  version     Int               @default(0)
+  versions    TaskFlowVersion[]
+  tasks       OutboundTask[]
+  createdAt   DateTime          @default(now()) @map("created_at")
+  updatedAt   DateTime          @updatedAt @map("updated_at")
+
+  @@map("task_flows")
+}
+
+model TaskFlowVersion {
+  id          String         @id @default(uuid())
+  flowId      String         @map("flow_id")
+  flow        TaskFlow       @relation(fields: [flowId], references: [id], onDelete: Restrict)
+  version     Int
+  name        String
+  description String         @default("")
+  nodes       Json
+  edges       Json
+  tasks       OutboundTask[]
+  createdAt   DateTime       @default(now()) @map("created_at")
+
+  @@unique([flowId, version])
+  @@index([flowId, createdAt])
+  @@map("task_flow_versions")
+}
+
+model OutboundTask {
+  id            String            @id @default(uuid())
+  to            String
+  from          String
+  scenario      String
+  variables     Json              @default("{}")
+  status        String            @default("pending")
+  scheduledAt   DateTime          @map("scheduled_at")
+  calledAt      DateTime?         @map("called_at")
+  endedAt       DateTime?         @map("ended_at")
+  duration      Int?
+  outcome       String?
+  recordingUrl  String?           @map("recording_url")
+  intentTags    String[]          @default([]) @map("intent_tags")
+  flowId        String?           @map("flow_id")
+  flow           TaskFlow?        @relation(fields: [flowId], references: [id], onDelete: Restrict)
+  flowVersionId String?           @map("flow_version_id")
+  flowVersion   TaskFlowVersion?  @relation(fields: [flowVersionId], references: [id], onDelete: Restrict)
+  transcripts   TranscriptTurn[]
+  events        CallEvent[]
+  createdAt     DateTime          @default(now()) @map("created_at")
+  updatedAt     DateTime          @updatedAt @map("updated_at")
+
+  @@index([status, scheduledAt])
+  @@index([flowVersionId])
+  @@map("outbound_tasks")
+}
+
+model TranscriptTurn {
+  id        String       @id @default(uuid())
+  taskId    String       @map("task_id")
+  task      OutboundTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  role      String
+  content   String
+  timestamp Float
+  emotion   String?
+  externalId String?      @map("external_id")
+  createdAt DateTime     @default(now()) @map("created_at")
+
+  @@index([taskId, createdAt])
+  @@unique([taskId, externalId])
+  @@map("transcript_turns")
+}
+
+model CallEvent {
+  id        String       @id @default(uuid())
+  taskId    String       @map("task_id")
+  task      OutboundTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  type      String
+  payload   Json         @default("{}")
+  createdAt DateTime     @default(now()) @map("created_at")
+
+  @@index([taskId, createdAt])
+  @@map("call_events")
+}
+
+model OutboxEvent {
+  id            String    @id @default(uuid())
+  aggregateType String    @map("aggregate_type")
+  aggregateId   String    @map("aggregate_id")
+  type          String
+  payload       Json      @default("{}")
+  status        String    @default("pending")
+  attempts      Int       @default(0)
+  availableAt   DateTime  @default(now()) @map("available_at")
+  processedAt   DateTime? @map("processed_at")
+  lastError     String?   @map("last_error")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  @@index([status, availableAt])
+  @@map("outbox_events")
+}

@@ -1,0 +1,33 @@
+{
+  "name": "ai-call",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI Agent 外呼机器人 - FreeSWITCH + WebSocket 直连 + NestJS + Next.js",
+  "packageManager": "pnpm@9.12.0",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "test": "turbo run test",
+    "test:python:voice": "cd services/voice-agent && python -m pytest tests -q",
+    "test:python:funasr": "cd services/funasr-server && python -m pytest tests -q",
+    "test:all": "pnpm test && pnpm test:python:voice && pnpm test:python:funasr",
+    "dev:api": "turbo run dev --filter=@ai-call/api",
+    "dev:agent-py": "cd services/voice-agent && python -m voice_agent.main",
+    "dev:agent-py:cli": "cd services/voice-agent && python -m voice_agent.main --cli",
+    "dev:funasr": "cd services/funasr-server && .venv/Scripts/python.exe -m funasr_server",
+    "dev:funasr:setup": "cd services/funasr-server && python -m venv .venv && .venv/Scripts/pip install ./vendor/editdistance-pure/ && .venv/Scripts/pip install -e \".[dev]\"",
+    "dev:funasr:setup:gpu": "cd services/funasr-server && .venv/Scripts/pip install torch torchaudio --index-url https://mirror.sjtu.edu.cn/pytorch-wheels/cu124/",
+    "dev:funasr:test": "cd services/funasr-server && .venv/Scripts/python.exe -m pytest tests/ -v",
+    "dev:dashboard": "turbo run dev --filter=@ai-call/dashboard",
+    "freeswitch:up": "docker compose -f freeswitch/docker-compose.yml up -d",
+    "freeswitch:down": "docker compose -f freeswitch/docker-compose.yml down"
+  },
+  "devDependencies": {
+    "turbo": "^2.1.0",
+    "typescript": "^5.5.0"
+  }
+}
