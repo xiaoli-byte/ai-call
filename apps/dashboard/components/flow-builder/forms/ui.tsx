@@ -1,6 +1,11 @@
 'use client';
 
 import type { ReactNode } from 'react';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { Label } from '@/components/ui/label';
+import { Separator } from '@/components/ui/separator';
+import styles from '../flow-builder.module.scss';
 
 export function Field({
   label,
@@ -14,11 +19,11 @@ export function Field({
   children: ReactNode;
 }) {
   return (
-    <div className="flow-field">
-      <label className="flow-field-label">{label}</label>
+    <div className={styles.flowField}>
+      <Label className={styles.flowFieldLabel}>{label}</Label>
       {children}
-      {hint && !error && <div className="flow-field-hint">{hint}</div>}
-      {error && <div className="flow-field-error">{error}</div>}
+      {hint && !error && <div className={styles.flowFieldHint}>{hint}</div>}
+      {error && <div className={styles.flowFieldError}>{error}</div>}
     </div>
   );
 }
@@ -26,23 +31,19 @@ export function Field({
 export function TextInput(
   props: React.InputHTMLAttributes<HTMLInputElement>,
 ) {
-  return <input {...props} className={`flow-input ${props.className ?? ''}`} />;
+  return <Input {...props} className={`${styles.flowInput} ${props.className ?? ''}`} />;
 }
 
 export function TextArea(
   props: React.TextareaHTMLAttributes<HTMLTextAreaElement>,
 ) {
-  return (
-    <textarea {...props} className={`flow-textarea ${props.className ?? ''}`} />
-  );
+  return <Textarea {...props} className={`${styles.flowTextarea} ${props.className ?? ''}`} />;
 }
 
 export function Select(
   props: React.SelectHTMLAttributes<HTMLSelectElement>,
 ) {
-  return (
-    <select {...props} className={`flow-select ${props.className ?? ''}`} />
-  );
+  return <select {...props} className={`${styles.flowSelect} ${props.className ?? ''}`} />;
 }
 
 export function Checkbox({
@@ -55,7 +56,7 @@ export function Checkbox({
   onChange: (v: boolean) => void;
 }) {
   return (
-    <label className="flow-checkbox">
+    <label className={styles.flowCheckbox}>
       <input
         type="checkbox"
         checked={checked}
@@ -67,9 +68,9 @@ export function Checkbox({
 }
 
 export function SectionTitle({ children }: { children: ReactNode }) {
-  return <div className="flow-section-title">{children}</div>;
+  return <div className={styles.flowSectionTitle}>{children}</div>;
 }
 
 export function Divider() {
-  return <div className="flow-section-divider" />;
+  return <Separator className={styles.flowSectionDivider} />;
 }

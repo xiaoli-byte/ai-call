@@ -85,4 +85,10 @@ export class TaskFlowsController {
   duplicate(@Param('id') id: string) {
     return this.taskFlowsService.duplicate(id);
   }
+
+  @Post(':id/test')
+  @HttpCode(200)
+  async test(@Param('id') id: string, @Body() body: { input?: string }) {
+    return this.taskFlowsService.testFlow(id, body?.input ?? '');
+  }
 }

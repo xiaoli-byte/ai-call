@@ -1,10 +1,9 @@
 'use client';
 
-import { useCallback, useMemo } from 'react';
+import { useCallback, useEffect, useMemo } from 'react';
 import {
   ReactFlow,
   Background,
-  BackgroundVariant,
   Controls,
   MiniMap,
   applyNodeChanges,
@@ -14,10 +13,13 @@ import {
   type EdgeChange,
   type Edge,
   type Node,
+  type Connection,
+  type OnConnect,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
 import { useFlowStore } from './store/flow-store';
+import styles from './flow-builder.module.scss';
 import { StartNode } from './nodes/start-node';
 import { DialogNode } from './nodes/dialog-node';
 import { DecisionNode } from './nodes/decision-node';
@@ -36,6 +38,10 @@ export function FlowCanvas() {
   const nodes = useFlowStore((s) => s.nodes);
   const edges = useFlowStore((s) => s.edges);
   const setSelectedNode = useFlowStore((s) => s.setSelectedNode);
+  const setSelectedEdge = useFlowStore((s) => s.setSelectedEdge);
+  const connectEdge = useFlowStore((s) => s.connectEdge);
+  const undo = useFlowStore((s) => s.undo);
+  const redo = useFlowStore((s) => s.redo);
 
   const rfNodes = useMemo(() => nodes as unknown as Node[], [nodes]);
   const rfEdges = useMemo(() => edges as unknown as Edge[], [edges]);
@@ -50,66 +56,86 @@ export function FlowCanvas() {
 
   const onEdgesChange = useCallback(
     (changes: EdgeChange[]) => {
-      const next = applyEdgeChanges(changes, rfEdges) as unknown as typeof edges;
+      const next = applyEdgeChanges(
+        changes,
+        rfEdges,
+      ) as unknown as typeof edges;
       useFlowStore.setState({ edges: next });
     },
     [rfEdges],
   );
 
+  // 拖拽连线：从节点 source handle 拖到 target handle
+  const onConnect: OnConnect = useCallback(
+    (connection: Connection) => {
+      if (!connection.source || !connection.target) return;
+      connectEdge(connection.source, connection.target);
+    },
+    [connectEdge],
+  );
+
+  // Ctrl+Z / Ctrl+Y 快捷键
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const mod = e.ctrlKey || e.metaKey;
+      if (!mod) return;
+      if (e.key === 'z' && !e.shiftKey) {
+        e.preventDefault();
+        undo();
+      } else if (e.key === 'y' || (e.key === 'z' && e.shiftKey)) {
+        e.preventDefault();
+        redo();
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [undo, redo]);
+
   return (
-    <div className="flow-editor-canvas">
+    <div className={styles.flowEditorCanvas}>
       <ReactFlow
         nodes={rfNodes}
         edges={rfEdges}
         nodeTypes={nodeTypes}
         onNodeClick={(_, node) => setSelectedNode(node.id)}
-        onPaneClick={() => setSelectedNode(undefined)}
+        onEdgeClick={(_, edge) => setSelectedEdge(edge.id)}
+        onPaneClick={() => {
+          setSelectedNode(undefined);
+          setSelectedEdge(undefined);
+        }}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
+        onConnect={onConnect}
         fitView
         proOptions={{ hideAttribution: true }}
         defaultEdgeOptions={{
           style: { stroke: '#94a3b8', strokeWidth: 1.5 },
-          type: 'smoothstep',
+          labelStyle: { fill: '#64748b', fontSize: 12 },
+          labelBgStyle: { fill: '#ffffff' },
+          labelBgPadding: [4, 2] as never,
+          labelBgBorderRadius: 4,
+          markerEnd: { type: 'arrowclosed' as never, color: '#94a3b8' },
         }}
-        connectionLineStyle={{ stroke: '#2563eb', strokeWidth: 2 }}
       >
-        <Background
-          color="#cbd5e1"
-          gap={20}
-          size={1}
-          variant={BackgroundVariant.Dots}
-        />
-        <Controls showInteractive={false} />
+        <Background color="#e2e8f0" gap={20} />
+        <Controls />
         <MiniMap
-          nodeColor={(n) => {
-            const meta = (n.type ?? 'dialog') as string;
-            switch (meta) {
-              case 'start':    return '#2563eb';
-              case 'dialog':   return '#10b981';
-              case 'decision': return '#f59e0b';
-              case 'action':   return '#8b5cf6';
-              case 'end':      return '#ef4444';
-              default:         return '#94a3b8';
-            }
-          }}
-          maskColor="rgba(248, 250, 252, 0.7)"
+          nodeColor={() => '#3b82f6'}
+          maskColor="rgba(15, 23, 42, 0.04)"
         />
       </ReactFlow>
 
-      {/* 空画布引导 */}
       {nodes.length === 0 && (
-        <div className="flow-canvas-empty">
-          <svg className="flow-canvas-empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-            <rect x="3" y="3" width="6" height="6" rx="1" />
-            <rect x="15" y="15" width="6" height="6" rx="1" />
-            <rect x="9" y="9" width="6" height="6" rx="1" />
-            <path d="M6 9v3a3 3 0 0 0 3 3" />
-            <path d="M15 12h-3a3 3 0 0 0-3 3" />
+        <div className={styles.flowCanvasEmpty}>
+          <svg className={styles.flowCanvasEmptyIcon} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+            <rect x="3" y="3" width="7" height="7" rx="1" />
+            <rect x="14" y="3" width="7" height="7" rx="1" />
+            <rect x="3" y="14" width="7" height="7" rx="1" />
+            <rect x="14" y="14" width="7" height="7" rx="1" />
           </svg>
-          <div className="flow-canvas-empty-title">开始搭建你的外呼流程</div>
-          <div className="flow-canvas-empty-desc">
-            从左侧 Start 节点开始，依次添加对话、判断、动作节点，最终连接到 End 节点
+          <div className={styles.flowCanvasEmptyTitle}>从 Start 节点开始搭建流程</div>
+          <div className={styles.flowCanvasEmptyDesc}>
+            点击节点间的 + 号添加新节点，或从节点底部拖拽连线
           </div>
         </div>
       )}

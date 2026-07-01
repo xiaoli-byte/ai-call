@@ -7,6 +7,8 @@
     "dev": "nest start --watch",
     "build": "nest build",
     "start": "node dist/main.js",
+    "dev:outbox": "tsx src/outbox-worker.main.ts",
+    "start:outbox": "node dist/outbox-worker.main.js",
     "lint": "tsc --noEmit",
     "test": "tsc --noEmit",
     "prisma:generate": "prisma generate",
@@ -16,6 +18,8 @@
   },
   "dependencies": {
     "@ai-call/shared": "workspace:*",
+    "@langchain/core": "^0.3.0",
+    "@langchain/openai": "^0.3.0",
     "@nestjs/common": "^10.3.0",
     "@nestjs/core": "^10.3.0",
     "@nestjs/platform-express": "^10.3.0",

@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import type { DialogMode, DialogNodeData, FlowNode } from '@ai-call/shared';
 import { Checkbox, Field, SectionTitle, Select, TextArea, TextInput } from './ui';
+import styles from '../flow-builder.module.scss';
 
 interface DialogFormProps {
   node: FlowNode;
@@ -162,7 +163,7 @@ export function DialogForm({ node, onUpdate }: DialogFormProps) {
         </>
       )}
 
-      <div className="flow-section-divider" />
+      <div className={styles.flowSectionDivider} />
 
       <SectionTitle>行为设置</SectionTitle>
 

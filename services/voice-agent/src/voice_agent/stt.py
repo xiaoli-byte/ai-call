@@ -2,7 +2,7 @@ r"""FunASR WebSocket STT 客户端。
 
 复刻自 packages/providers/src/stt/funasr.ts。
 
-关键协议（已验证 s:\FunASR\runtime\python\websocket\funasr_wss_server.py:725）：
+关键协议（参考 FunASR 官方 funasr_wss_server.py）：
 - 服务器强制 subprotocols=["binary"]
 - 客户端连上后先发 JSON 配置：mode/chunk_size/chunk_interval/wav_name/is_speaking/hotwords/itn
 - 持续推送二进制 PCM 16-bit 16kHz mono

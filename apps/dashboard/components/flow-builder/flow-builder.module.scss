@@ -1,0 +1,865 @@
+/* ============================================================
+   Flow Builder Module Styles (CSS Module + Sass)
+
+   react-flow__ 全局覆盖和动态 accent 类已移至 globals.css
+   （css-loader pure 模式要求纯 :global() 选择器必须放在全局 CSS）
+   此文件仅包含 camelCase module 局部类
+   ============================================================ */
+
+/* ============================================================
+   Flow Editor Shell / Header / Toolbar
+   ============================================================ */
+
+.flowEditorShell {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  margin: -28px -32px -40px;
+  height: calc(100vh - 60px);
+  min-height: 600px;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+}
+
+.flowEditorHeader {
+  height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.flowEditorHeaderLeft {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.flowEditorBack {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  text-decoration: none;
+  padding: 6px 10px;
+  border-radius: var(--radius);
+  transition: all 0.15s;
+}
+
+.flowEditorBack:hover {
+  background: var(--gray-100);
+  color: var(--text);
+}
+
+.flowEditorTitle {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+
+.flowEditorDivider {
+  width: 1px;
+  height: 18px;
+  background: var(--border);
+}
+
+.flowEditorHeaderRight {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.flowEditorStatus {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.flowEditorStatus .statusDot {
+  width: 6px;
+  height: 6px;
+}
+
+.flowEditorStatus.saving .statusDot {
+  background: var(--warning);
+}
+
+.flowEditorStatus.saved .statusDot {
+  background: var(--success);
+}
+
+.flowEditorStatus.error .statusDot {
+  background: var(--danger);
+}
+
+.flowEditorMain {
+  flex: 1;
+  display: flex;
+  flex-direction: row;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.flowEditorCanvas {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+  background: var(--bg);
+}
+
+/* ============================================================
+   Flow Node (浅色卡片)
+   ============================================================ */
+
+.flowNode {
+  width: 224px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+  transition: box-shadow 0.15s, border-color 0.15s, transform 0.15s;
+}
+
+.flowNode:hover {
+  box-shadow: var(--shadow-md);
+  border-color: var(--border-strong);
+}
+
+.flowNode.selected {
+  border-color: var(--primary-600);
+  box-shadow:
+    0 0 0 3px rgba(37, 99, 235, 0.12),
+    var(--shadow-md);
+}
+
+.flowNodeHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.flowNodeIcon {
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.flowNodeTitle {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.01em;
+  flex: 1;
+  min-width: 0;
+}
+
+.flowNodeMode {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-weight: 500;
+  padding: 1px 6px;
+  background: var(--gray-100);
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.flowNodeBody {
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  min-height: 36px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-all;
+}
+
+.flowNodeBody.empty {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.flowNodeFooter {
+  padding: 6px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--gray-50);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 28px;
+}
+
+.flowNodeStatus {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.flowNodeStatus.configured {
+  color: #059669;
+}
+
+.flowNodeStatus.configured::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #10b981;
+}
+
+.flowNodeStatus.unconfigured {
+  color: var(--text-muted);
+}
+
+.flowNodeStatus.unconfigured::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--gray-300);
+}
+
+.flowNodeMeta {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--font-mono, 'SF Mono', monospace);
+}
+
+/* ============================================================
+   + Button (节点底部添加按钮)
+   ============================================================ */
+
+.flowAddRow {
+  display: flex;
+  justify-content: center;
+  padding: 4px 0;
+}
+
+.flowAddBtn {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s;
+  box-shadow: var(--shadow-xs);
+}
+
+.flowAddBtn:hover {
+  background: var(--primary-600);
+  border-color: var(--primary-600);
+  color: white;
+  transform: scale(1.08);
+  box-shadow: var(--shadow-primary);
+}
+
+.flowAddBtn:active {
+  transform: scale(0.95);
+}
+
+.flowAddBtn svg {
+  width: 12px;
+  height: 12px;
+}
+
+/* ============================================================
+   Toolbar icon buttons
+   ============================================================ */
+
+.flowIconBtn {
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.flowIconBtn:hover:not(:disabled) {
+  background: var(--gray-100);
+  color: var(--primary-700);
+}
+
+.flowIconBtn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+}
+
+.flowIconBtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ============================================================
+   Add Menu (弹出选择菜单)
+   ============================================================ */
+
+.flowAddMenuOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+}
+
+.flowAddMenu {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%) translateY(4px);
+  z-index: 50;
+  width: 240px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+  animation: flowMenuIn 120ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@keyframes flowMenuIn {
+  from { opacity: 0; transform: translateX(-50%) translateY(0); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(4px); }
+}
+
+.flowAddMenuGroupLabel {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 8px 12px 4px;
+  background: var(--gray-50);
+}
+
+.flowAddMenuItem {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.12s;
+}
+
+.flowAddMenuItem:hover {
+  background: var(--primary-50);
+}
+
+.flowAddMenuItemIcon {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.flowAddMenuItemContent {
+  flex: 1;
+  min-width: 0;
+}
+
+.flowAddMenuItemTitle {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.3;
+}
+
+.flowAddMenuItemDesc {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  margin-top: 1px;
+}
+
+.flowAddMenuDivider {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 0;
+}
+
+/* ============================================================
+   Empty canvas 引导
+   ============================================================ */
+
+.flowCanvasEmpty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  gap: 8px;
+  color: var(--text-muted);
+}
+
+.flowCanvasEmptyIcon {
+  width: 48px;
+  height: 48px;
+  color: var(--gray-300);
+  margin-bottom: 4px;
+}
+
+.flowCanvasEmptyTitle {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.flowCanvasEmptyDesc {
+  font-size: 13px;
+  color: var(--text-muted);
+  max-width: 320px;
+  text-align: center;
+  line-height: 1.6;
+}
+
+/* ============================================================
+   Property Panel (右侧属性)
+   ============================================================ */
+
+.flowPropertyPanel {
+  width: 340px;
+  flex-shrink: 0;
+  background: var(--bg-elevated);
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.flowPropertyPanelHeader {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.flowPropertyPanelHeaderLeft {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.flowPropertyPanelIcon {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.flowPropertyPanelTitle {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+
+.flowPropertyPanelSubtitle {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  margin-top: 1px;
+}
+
+.flowPropertyPanelDelete {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--danger);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.flowPropertyPanelDelete:hover {
+  background: #fef2f2;
+  border-color: rgba(239, 68, 68, 0.2);
+}
+
+.flowPropertyPanelBody {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+}
+
+.flowPropertyPanelEmpty {
+  padding: 60px 24px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.flowPropertyPanelEmpty svg {
+  width: 32px;
+  height: 32px;
+  margin: 0 auto 12px;
+  color: var(--gray-300);
+  display: block;
+}
+
+/* ============================================================
+   Form fields (浅色)
+   ============================================================ */
+
+.flowField {
+  margin-bottom: 14px;
+}
+
+.flowFieldLabel {
+  display: block;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+  margin-bottom: 5px;
+}
+
+.flowFieldHint {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  margin-top: 4px;
+  line-height: 1.5;
+}
+
+.flowFieldError {
+  font-size: 11.5px;
+  color: var(--danger);
+  margin-top: 4px;
+}
+
+.flowInput,
+.flowTextarea,
+.flowSelect {
+  display: block;
+  width: 100%;
+  height: 32px;
+  padding: 0 10px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: 13px;
+  font-family: inherit;
+  transition: all 0.15s;
+}
+
+.flowTextarea {
+  height: auto;
+  min-height: 64px;
+  padding: 8px 10px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.flowInput:focus,
+.flowTextarea:focus,
+.flowSelect:focus {
+  outline: none;
+  border-color: var(--primary-600);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+}
+
+.flowInput::placeholder,
+.flowTextarea::placeholder {
+  color: var(--text-muted);
+}
+
+.flowTextarea.flowMono {
+  font-family: 'SF Mono', Monaco, Menlo, monospace;
+  font-size: 12px;
+}
+
+.flowSelect {
+  appearance: none;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='none' stroke='%2364748b' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round' d='M3 4.5l3 3 3-3'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 28px;
+  cursor: pointer;
+}
+
+.flowCheckbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text);
+  user-select: none;
+}
+
+.flowCheckbox input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--primary-600);
+  cursor: pointer;
+}
+
+.flowSectionDivider {
+  height: 1px;
+  background: var(--border);
+  margin: 14px 0;
+}
+
+.flowSectionTitle {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 10px;
+}
+
+.flowListItem {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.flowListItem .flowInput {
+  flex: 1;
+  min-width: 0;
+}
+
+.flowListRemove {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.flowListRemove:hover {
+  background: #fef2f2;
+  color: var(--danger);
+  border-color: rgba(239, 68, 68, 0.3);
+}
+
+.flowListAdd {
+  width: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 32px;
+  padding: 0 10px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: all 0.15s;
+  margin-top: 4px;
+}
+
+.flowListAdd:hover {
+  background: var(--primary-50);
+  color: var(--primary-700);
+  border-color: var(--primary-300, #93c5fd);
+  border-style: solid;
+}
+
+/* ============================================================
+   Node hover actions (复制 / 删除)
+   ============================================================ */
+
+.flowNodeActions {
+  position: absolute;
+  top: -10px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  z-index: 10;
+}
+
+.flowNodeActionBtn {
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 12px;
+  transition: all 0.12s;
+  box-shadow: var(--shadow-xs);
+}
+
+.flowNodeActionBtn:hover {
+  background: var(--gray-50);
+  color: var(--text);
+}
+
+.flowNodeActionBtn.danger {
+  color: var(--danger);
+}
+
+.flowNodeActionBtn.danger:hover {
+  background: var(--danger-bg);
+  border-color: rgba(239, 68, 68, 0.3);
+}
+
+.flowNodeActionConfirm {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius);
+  padding: 2px 6px;
+  box-shadow: var(--shadow-sm);
+}
+
+.flowNodeActionConfirm span {
+  font-size: 11px;
+  color: var(--danger);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.flowNodeActionConfirm button {
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+}
+
+.flowNodeActionConfirm .confirmYes {
+  background: var(--danger);
+  color: white;
+}
+
+.flowNodeActionConfirm .confirmNo {
+  background: var(--gray-100);
+  color: var(--text-secondary);
+}
+
+/* ============================================================
+   Edge form (连线分支条件编辑)
+   ============================================================ */
+
+.flowEdgeInfo {
+  font-size: 12px;
+  color: var(--text-muted);
+  background: var(--gray-50);
+  border-radius: var(--radius);
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+}
+
+.flowIntentChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.flowIntentChip {
+  font-size: 12px;
+  padding: 3px 8px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.12s;
+}
+
+.flowIntentChip:hover {
+  border-color: var(--border-strong);
+}
+
+.flowIntentChip.active {
+  background: var(--primary-600);
+  border-color: var(--primary-600);
+  color: white;
+}
+
+/* ============================================================
+   Save button (toolbar)
+   ============================================================ */
+
+.flowSaveBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 14px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: white;
+  background: var(--primary-600);
+  border: none;
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: all 0.15s;
+  box-shadow: var(--shadow-xs);
+}
+
+.flowSaveBtn:hover {
+  background: var(--primary-700);
+}

@@ -17,6 +17,7 @@ import { useASR } from '@/hooks/useASR';
 import { useTTS } from '@/hooks/useTTS';
 import { ASRPanel } from './ASRPanel';
 import { TTSPanel } from './TTSPanel';
+import styles from './voice-demo.module.scss';
 
 export function VoiceDemo() {
   const asr = useASR();
@@ -36,7 +37,7 @@ export function VoiceDemo() {
   }, [linkMode, asr.finalTexts, lastFinalCount, tts]);
 
   return (
-    <div className="voice-demo">
+    <div className={styles.voiceDemo}>
       <div className="page-header">
         <div className="page-header-content">
           <h1 className="page-title">语音交互演示</h1>
@@ -45,7 +46,7 @@ export function VoiceDemo() {
           </p>
         </div>
         <div className="page-actions">
-          <label className="link-toggle" style={{
+          <label className={styles.linkToggle} style={{
             display: 'inline-flex',
             alignItems: 'center',
             gap: 8,
@@ -67,7 +68,7 @@ export function VoiceDemo() {
               }}
             />
             <span>语音联动</span>
-            <span className="link-hint" style={{ color: 'var(--text-muted)', fontWeight: 400 }}>
+            <span className={styles.linkHint} style={{ color: 'var(--text-muted)', fontWeight: 400 }}>
               （ASR 自动合成）
             </span>
           </label>
@@ -75,13 +76,13 @@ export function VoiceDemo() {
       </div>
 
       {/* 服务依赖检查 */}
-      <div className="dependency-check">
-        <div className="dep-item">
-          <span className="dep-name">Voice Agent WS</span>
+      <div className={styles.dependencyCheck}>
+        <div className={styles.depItem}>
+          <span className={styles.depName}>Voice Agent WS</span>
           <code>{process.env.NEXT_PUBLIC_VOICE_AGENT_WS_URL ?? 'ws://localhost:8080'}</code>
         </div>
-        <div className="dep-item">
-          <span className="dep-name">FunASR (via Python)</span>
+        <div className={styles.depItem}>
+          <span className={styles.depName}>FunASR (via Python)</span>
           <code>{process.env.NEXT_PUBLIC_FUNASR_WS_URL ?? 'ws://localhost:10095'}</code>
         </div>
       </div>
@@ -92,12 +93,12 @@ export function VoiceDemo() {
       </div>
 
       {/* 技术说明 */}
-      <div className="card tech-notes">
+      <div className={`card ${styles.techNotes}`}>
         <h2 className="card-title">技术架构</h2>
         <div className="grid grid-2">
           <div>
             <h3 className="section-title">ASR 链路</h3>
-            <pre className="arch-flow">{`麦克风 → AudioWorklet
+            <pre className={styles.archFlow}>{`麦克风 → AudioWorklet
   → 降采样 16kHz
   → Float32→PCM16
   → WebSocket /asr-stream

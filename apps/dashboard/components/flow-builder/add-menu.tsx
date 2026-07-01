@@ -7,6 +7,7 @@ import {
   NODE_META,
   RECOMMENDATIONS,
 } from './types/flow';
+import styles from './flow-builder.module.scss';
 
 interface AddMenuProps {
   afterNodeId: string;
@@ -35,19 +36,19 @@ export function AddMenu({ afterNodeId, onSelect }: AddMenuProps) {
   );
 
   return (
-    <div className="flow-add-menu" role="menu">
+    <div className={styles.flowAddMenu} role="menu">
       {recommendedTypes.length > 0 && (
         <>
-          <div className="flow-add-menu-group-label">推荐</div>
+          <div className={styles.flowAddMenuGroupLabel}>推荐</div>
           {recommendedTypes.map((type) => (
             <MenuItem key={type} type={type} onSelect={onSelect} />
           ))}
-          {otherTypes.length > 0 && <div className="flow-add-menu-divider" />}
+          {otherTypes.length > 0 && <div className={styles.flowAddMenuDivider} />}
         </>
       )}
       {otherTypes.length > 0 && (
         <>
-          <div className="flow-add-menu-group-label">其他</div>
+          <div className={styles.flowAddMenuGroupLabel}>其他</div>
           {otherTypes.map((type) => (
             <MenuItem key={type} type={type} onSelect={onSelect} />
           ))}
@@ -71,15 +72,15 @@ function MenuItem({
     <button
       type="button"
       onClick={() => onSelect(type)}
-      className="flow-add-menu-item"
+      className={styles.flowAddMenuItem}
       role="menuitem"
     >
-      <div className={`flow-add-menu-item-icon flow-node-icon-${meta.accent}`}>
+      <div className={`${styles.flowAddMenuItemIcon} flow-node-icon-${meta.accent}`}>
         <Icon />
       </div>
-      <div className="flow-add-menu-item-content">
-        <div className="flow-add-menu-item-title">{meta.title}</div>
-        <div className="flow-add-menu-item-desc">{meta.description}</div>
+      <div className={styles.flowAddMenuItemContent}>
+        <div className={styles.flowAddMenuItemTitle}>{meta.title}</div>
+        <div className={styles.flowAddMenuItemDesc}>{meta.description}</div>
       </div>
     </button>
   );

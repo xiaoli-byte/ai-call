@@ -7,6 +7,7 @@ import type {
   FlowNode,
 } from '@ai-call/shared';
 import { Field, Select, TextArea, TextInput } from './ui';
+import styles from '../flow-builder.module.scss';
 
 interface DecisionFormProps {
   node: FlowNode;
@@ -67,7 +68,7 @@ export function DecisionForm({ node, onUpdate }: DecisionFormProps) {
             }}
             placeholder="response.includes('满意')"
             rows={3}
-            className="flow-mono"
+            className={styles.flowMono}
           />
         </Field>
       )}
@@ -76,7 +77,7 @@ export function DecisionForm({ node, onUpdate }: DecisionFormProps) {
         <Field label="意图列表" hint="每行一个意图，命中后将路由到该分支">
           <div>
             {intents.map((intent, i) => (
-              <div key={i} className="flow-list-item">
+              <div key={i} className={styles.flowListItem}>
                 <TextInput
                   value={intent}
                   onChange={(e) => {
@@ -94,7 +95,7 @@ export function DecisionForm({ node, onUpdate }: DecisionFormProps) {
                     setIntents(next);
                     emit({ intents: next });
                   }}
-                  className="flow-list-remove"
+                  className={styles.flowListRemove}
                   title="删除意图"
                 >
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -111,7 +112,7 @@ export function DecisionForm({ node, onUpdate }: DecisionFormProps) {
                 setIntents(next);
                 emit({ intents: next });
               }}
-              className="flow-list-add"
+              className={styles.flowListAdd}
             >
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <line x1="12" y1="5" x2="12" y2="19" />

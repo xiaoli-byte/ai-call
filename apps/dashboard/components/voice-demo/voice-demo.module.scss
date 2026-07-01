@@ -1,0 +1,296 @@
+/* ============================================================
+   Voice Demo Module Styles
+   从 globals.css Voice Demo 段迁移，CSS Modules 局部化
+   全局类（card/btn/badge/form-*）仍用全局，此处仅模块私有类
+   ============================================================ */
+
+.voiceDemo {
+  /* 容器，无额外样式，仅用于 CSS Modules 隔离标识 */
+}
+
+/* 联动开关（原 inline style 保留在组件中，此处补齐类定义避免 undefined）*/
+.linkToggle {
+  /* 样式由组件 inline style 提供 */
+}
+
+.linkHint {
+  /* 样式由组件 inline style 提供 */
+}
+
+/* 服务依赖检查 */
+.dependencyCheck {
+  display: flex;
+  gap: 24px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+
+.depItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.depName {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.configInfo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.configInfo code {
+  font-size: 12px;
+  background: var(--gray-50);
+  padding: 4px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+}
+
+/* 音频可视化 */
+.audioVisualizer {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 3px;
+  height: 80px;
+  padding: 12px;
+  background: var(--gray-50);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.visualizerBar {
+  flex: 1;
+  max-width: 10px;
+  min-height: 4px;
+  height: 10%;
+  background: var(--primary-500);
+  border-radius: 2px;
+  transition: height 0.08s ease-out, opacity 0.1s;
+  opacity: 0.25;
+}
+
+.visualizerBar.active {
+  opacity: 1;
+}
+
+/* 可视化区域容器（补齐未定义类）*/
+.visualizerSection {
+  margin-bottom: 16px;
+}
+
+.vadIndicator {
+  display: flex;
+  justify-content: center;
+  margin-top: 8px;
+}
+
+.pulse {
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+/* 错误提示 */
+.errorBanner {
+  background: var(--danger-bg);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  color: var(--danger);
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  font-size: 13px;
+  margin-bottom: 16px;
+}
+
+/* ASR 识别结果 */
+.asrResults {
+  background: var(--gray-50);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 16px;
+  margin-bottom: 16px;
+  min-height: 120px;
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.asrSectionLabel {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-bottom: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 600;
+}
+
+.asrFinalText {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--text);
+}
+
+.asrIndex {
+  color: var(--primary-600);
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.asrPartialText {
+  display: flex;
+  gap: 8px;
+  font-size: 14px;
+  color: var(--text-muted);
+  font-style: italic;
+  padding: 4px 0;
+}
+
+.asrCursor {
+  color: var(--primary-500);
+  animation: pulse 1s infinite;
+}
+
+/* 按钮组 */
+.buttonGroup {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.buttonGroup :global(.btn:disabled) {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* 语音参数 */
+.voiceParams {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.voiceParams :global(.form-group) {
+  margin-bottom: 0;
+}
+
+.paramValue {
+  color: var(--primary-600);
+  font-weight: 600;
+  font-size: 12px;
+  margin-left: 4px;
+}
+
+.paramHint {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+/* 滑块 */
+.slider {
+  width: 100%;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--gray-200);
+  outline: none;
+  -webkit-appearance: none;
+  appearance: none;
+  cursor: pointer;
+}
+
+.slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--primary-600);
+  cursor: pointer;
+  border: 2px solid white;
+  box-shadow: var(--shadow-sm);
+  transition: transform 0.1s;
+}
+
+.slider::-webkit-slider-thumb:hover {
+  transform: scale(1.15);
+}
+
+.slider::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--primary-600);
+  cursor: pointer;
+  border: 2px solid white;
+  box-shadow: var(--shadow-sm);
+}
+
+/* 快捷文本 */
+.quickTexts {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+
+.quickLabel {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.quickBtn {
+  padding: 4px 10px !important;
+  height: 28px !important;
+  font-size: 12.5px !important;
+}
+
+/* 架构图 */
+.archFlow {
+  font-family: 'SF Mono', Monaco, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  background: var(--gray-50);
+  padding: 14px 16px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  white-space: pre;
+  overflow-x: auto;
+}
+
+/* 技术说明 */
+.techNotes {
+  margin-top: 8px;
+}
+
+.techNotes :global(.grid) {
+  gap: 24px;
+}
+
+/* 状态徽章（补齐未定义类）*/
+.statusBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.statusLabel {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-weight: 500;
+}

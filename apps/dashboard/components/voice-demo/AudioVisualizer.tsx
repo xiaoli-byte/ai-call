@@ -8,6 +8,7 @@
  */
 
 import { useEffect, useRef } from 'react';
+import styles from './voice-demo.module.scss';
 
 interface AudioVisualizerProps {
   /** 音量级别 0.0 ~ 1.0 */
@@ -53,9 +54,9 @@ export function AudioVisualizer({ level, active, bars = 24 }: AudioVisualizerPro
   }, [level, active, bars]);
 
   return (
-    <div ref={containerRef} className="audio-visualizer">
+    <div ref={containerRef} className={styles.audioVisualizer}>
       {Array.from({ length: bars }).map((_, i) => (
-        <div key={i} className="visualizer-bar" />
+        <div key={i} className={styles.visualizerBar} />
       ))}
     </div>
   );

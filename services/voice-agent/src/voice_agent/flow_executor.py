@@ -1,4 +1,4 @@
-﻿"""Runtime executor for published task-flow snapshots.
+"""Runtime executor for published task-flow snapshots.
 
 The voice agent owns audio, LLM, and session state. This executor only walks the
 flow graph and delegates side effects through callbacks so control-plane actions

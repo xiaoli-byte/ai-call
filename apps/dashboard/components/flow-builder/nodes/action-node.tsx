@@ -12,17 +12,18 @@ const ACTION_LABELS: Record<ActionNodeData['actionType'], string> = {
 };
 
 function getSummary(data: ActionNodeData): string {
-  if (data.actionType === 'transfer' && data.config?.extension) {
-    return `转分机 ${data.config.extension}`;
+  const config = (data.config ?? {}) as Record<string, unknown>;
+  if (data.actionType === 'transfer' && config.extension) {
+    return `转分机 ${config.extension}`;
   }
-  if (data.actionType === 'sms' && data.config?.template) {
-    return `模板: ${data.config.template}`;
+  if (data.actionType === 'sms' && config.template) {
+    return `模板: ${config.template}`;
   }
-  if (data.actionType === 'crm' && data.config?.action) {
-    return `CRM: ${data.config.action}`;
+  if (data.actionType === 'crm' && config.action) {
+    return `CRM: ${config.action}`;
   }
-  if (data.actionType === 'api' && data.config?.url) {
-    return String(data.config.url).slice(0, 40);
+  if (data.actionType === 'api' && config.url) {
+    return String(config.url).slice(0, 40);
   }
   return '';
 }

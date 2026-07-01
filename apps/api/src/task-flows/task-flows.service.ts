@@ -1,12 +1,14 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { FlowStatus, validateFlowDefinition } from '@ai-call/shared';
 import type {
+  ChatMessage,
   FlowEdge,
   FlowNode,
   TaskFlow,
   TaskFlowVersion,
 } from '@ai-call/shared';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { LlmService } from '../llm/llm.service.js';
 import type { CreateTaskFlowDto } from './dto/create-task-flow.dto.js';
 import type { UpdateTaskFlowDto } from './dto/update-task-flow.dto.js';
 
@@ -20,7 +22,10 @@ import type { UpdateTaskFlowDto } from './dto/update-task-flow.dto.js';
 export class TaskFlowsService {
   private readonly logger = new Logger(TaskFlowsService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly llm: LlmService,
+  ) {}
 
   async create(dto: CreateTaskFlowDto): Promise<TaskFlow> {
     const record = await this.prisma.taskFlow.create({
@@ -166,6 +171,80 @@ export class TaskFlowsService {
     });
     this.logger.log(`duplicated task-flow from=${id} to=${record.id}`);
     return this.toDomain(record);
+  }
+
+  /**
+   * 流程测试：找到首个 AI 对话节点，用其 systemPrompt 调 LLM 生成回复。
+   *
+   * 完整流程模拟需通过 Voice Agent 执行（创建带 flowId 的任务 → 派发）。
+   * 此端点用于前端快速预览 AI 对话效果与验证拓扑。
+   */
+  async testFlow(
+    id: string,
+    input: string,
+  ): Promise<{
+    flowId: string;
+    flowName: string;
+    nodeCount: number;
+    edgeCount: number;
+    entryNode?: string;
+    aiDialogNode?: { nodeId: string; systemPrompt?: string; prompt?: string };
+    input: string;
+    reply: string;
+  }> {
+    const flow = await this.get(id);
+    const entry = flow.nodes.find((n) => n.type === 'start');
+    const aiNode = flow.nodes.find(
+      (n) =>
+        n.type === 'dialog' &&
+        (n.data as { mode?: string }).mode === 'ai',
+    );
+
+    const aiData = aiNode?.data as
+      | { systemPrompt?: string; prompt?: string; temperature?: number }
+      | undefined;
+
+    let reply = '';
+    if (!aiNode) {
+      reply = `流程"${flow.name}"未包含 AI 对话节点，无法生成回复。`;
+    } else if (!input.trim()) {
+      reply = `已定位到 AI 对话节点 #${aiNode.id}，请输入文本以测试回复。`;
+    } else {
+      const messages: ChatMessage[] = [
+        { role: 'user', content: input },
+      ];
+      const systemPrompt = aiData?.systemPrompt
+        ? String(aiData.systemPrompt)
+        : undefined;
+      try {
+        reply = await this.llm.chat(messages, {
+          systemPrompt,
+          temperature: aiData?.temperature,
+        });
+      } catch (err) {
+        this.logger.error(
+          `testFlow LLM call failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        reply = `LLM 调用失败：${err instanceof Error ? err.message : String(err)}`;
+      }
+    }
+
+    return {
+      flowId: flow.id,
+      flowName: flow.name,
+      nodeCount: flow.nodes.length,
+      edgeCount: flow.edges.length,
+      entryNode: entry?.id,
+      aiDialogNode: aiNode
+        ? {
+            nodeId: aiNode.id,
+            systemPrompt: aiData?.systemPrompt,
+            prompt: aiData?.prompt,
+          }
+        : undefined,
+      input,
+      reply,
+    };
   }
 
   /** Prisma 记录 → 领域模型 */

@@ -2,11 +2,13 @@
 
 import { useEffect, useState } from 'react';
 import type {
+  ActionConfig,
   ActionType,
   ActionNodeData,
   FlowNode,
 } from '@ai-call/shared';
 import { Field, Select, TextArea, TextInput } from './ui';
+import styles from '../flow-builder.module.scss';
 
 interface ActionFormProps {
   node: FlowNode;
@@ -24,19 +26,19 @@ export function ActionForm({ node, onUpdate }: ActionFormProps) {
   const data = node.data as ActionNodeData;
   const [actionType, setActionType] = useState<ActionType>(data.actionType);
   const [config, setConfig] = useState<Record<string, unknown>>(
-    data.config ?? {},
+    (data.config ?? {}) as Record<string, unknown>,
   );
 
   useEffect(() => {
     setActionType(data.actionType);
-    setConfig(data.config ?? {});
+    setConfig((data.config ?? {}) as Record<string, unknown>);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [node.id]);
 
   function setField(key: string, value: unknown) {
     const next = { ...config, [key]: value };
     setConfig(next);
-    onUpdate({ config: next });
+    onUpdate({ config: next as unknown as ActionConfig });
   }
 
   return (
@@ -48,7 +50,7 @@ export function ActionForm({ node, onUpdate }: ActionFormProps) {
             const next = e.target.value as ActionType;
             setActionType(next);
             setConfig({});
-            onUpdate({ actionType: next, config: {} });
+            onUpdate({ actionType: next, config: {} as ActionConfig });
           }}
         >
           {ACTION_OPTIONS.map((o) => (
@@ -99,7 +101,7 @@ export function ActionForm({ node, onUpdate }: ActionFormProps) {
               }}
               rows={4}
               placeholder='{"product": "Model Y"}'
-              className="flow-mono"
+              className={styles.flowMono}
             />
           </Field>
         </>
@@ -166,7 +168,7 @@ export function ActionForm({ node, onUpdate }: ActionFormProps) {
               }}
               rows={4}
               placeholder='{"key": "value"}'
-              className="flow-mono"
+              className={styles.flowMono}
             />
           </Field>
         </>

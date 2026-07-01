@@ -13,6 +13,7 @@
 import { StatusBadge } from './StatusBadge';
 import { AudioVisualizer } from './AudioVisualizer';
 import type { UseASRReturn } from '@/hooks/useASR';
+import styles from './voice-demo.module.scss';
 
 interface ASRPanelProps {
   asr: UseASRReturn;
@@ -41,17 +42,17 @@ export function ASRPanel({ asr }: ASRPanelProps) {
       </div>
 
       {/* 服务配置提示 */}
-      <div className="config-info">
+      <div className={styles.configInfo}>
         <code>{process.env.NEXT_PUBLIC_VOICE_AGENT_WS_URL ?? 'ws://localhost:8080'}/asr-stream</code>
         <span className="badge badge-dim">{process.env.NEXT_PUBLIC_FUNASR_MODE ?? '2pass'}</span>
       </div>
 
       {/* 音量可视化 */}
-      <div className="visualizer-section">
+      <div className={styles.visualizerSection}>
         <AudioVisualizer level={audioLevel} active={isListening} />
-        <div className="vad-indicator">
+        <div className={styles.vadIndicator}>
           {isSpeaking ? (
-            <span className="badge badge-success pulse">说话中</span>
+            <span className={`badge badge-success ${styles.pulse}`}>说话中</span>
           ) : (
             <span className="badge badge-dim">静音</span>
           )}
@@ -60,33 +61,33 @@ export function ASRPanel({ asr }: ASRPanelProps) {
 
       {/* 错误提示 */}
       {error && (
-        <div className="error-banner">
+        <div className={styles.errorBanner}>
           <strong>错误：</strong> {error}
         </div>
       )}
 
       {/* 识别结果 */}
-      <div className="asr-results">
-        <div className="asr-section-label">识别结果</div>
+      <div className={styles.asrResults}>
+        <div className={styles.asrSectionLabel}>识别结果</div>
         {finalTexts.length === 0 && !partialText && !isListening && (
           <div className="empty">点击"开始监听"后说话，识别结果将实时显示</div>
         )}
         {finalTexts.map((text, i) => (
-          <div key={i} className="asr-final-text">
-            <span className="asr-index">{i + 1}.</span>
+          <div key={i} className={styles.asrFinalText}>
+            <span className={styles.asrIndex}>{i + 1}.</span>
             <span>{text}</span>
           </div>
         ))}
         {partialText && (
-          <div className="asr-partial-text">
-            <span className="asr-cursor">▶</span>
+          <div className={styles.asrPartialText}>
+            <span className={styles.asrCursor}>▶</span>
             {partialText}
           </div>
         )}
       </div>
 
       {/* 操作按钮 */}
-      <div className="button-group">
+      <div className={styles.buttonGroup}>
         {!isListening ? (
           <button className="btn" onClick={start} disabled={state === 'connecting'}>
             {state === 'connecting' ? '连接中...' : '开始监听'}

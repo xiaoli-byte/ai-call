@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { apiClient } from '@/lib/api';
 import { FlowStatus } from '@ai-call/shared';
+import { FlowRowActions } from './FlowRowActions';
 
 const STATUS_LABELS: Record<FlowStatus, string> = {
   draft: '草稿',
@@ -105,11 +106,7 @@ export default async function TaskFlowsPage() {
                       {new Date(f.updatedAt).toLocaleString('zh-CN', { hour12: false })}
                     </td>
                     <td>
-                      <div className="row-actions" style={{ justifyContent: 'flex-end' }}>
-                        <Link href={`/task-flows/${f.id}`} className="btn btn-secondary btn-sm">
-                          编辑
-                        </Link>
-                      </div>
+                      <FlowRowActions id={f.id} status={f.status} name={f.name} />
                     </td>
                   </tr>
                 ))}

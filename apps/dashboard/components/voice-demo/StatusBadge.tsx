@@ -8,6 +8,7 @@
 
 import type { ASRState } from '@/hooks/useASR';
 import type { TTSState } from '@/hooks/useTTS';
+import styles from './voice-demo.module.scss';
 
 type Status = ASRState | TTSState;
 
@@ -29,8 +30,8 @@ const STATUS_MAP: Record<string, { text: string; className: string }> = {
 export function StatusBadge({ label, status }: StatusBadgeProps) {
   const info = STATUS_MAP[status] ?? STATUS_MAP.idle;
   return (
-    <span className="status-badge">
-      <span className="status-label">{label}</span>
+    <span className={styles.statusBadge}>
+      <span className={styles.statusLabel}>{label}</span>
       <span className={`badge ${info.className}`}>{info.text}</span>
     </span>
   );

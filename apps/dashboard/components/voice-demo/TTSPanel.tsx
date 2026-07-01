@@ -13,6 +13,7 @@
 import { useState } from 'react';
 import { StatusBadge } from './StatusBadge';
 import type { UseTTSReturn } from '@/hooks/useTTS';
+import styles from './voice-demo.module.scss';
 
 interface TTSPanelProps {
   tts: UseTTSReturn;
@@ -44,14 +45,14 @@ export function TTSPanel({ tts }: TTSPanelProps) {
       </div>
 
       {/* 服务配置提示 */}
-      <div className="config-info">
+      <div className={styles.configInfo}>
         <code>{process.env.NEXT_PUBLIC_VOICE_AGENT_WS_URL ?? 'ws://localhost:8080'}/tts-stream</code>
         <span className="badge badge-dim">{voiceParams.speaker}</span>
       </div>
 
       {/* 错误提示 */}
       {error && (
-        <div className="error-banner">
+        <div className={styles.errorBanner}>
           <strong>错误：</strong> {error}
         </div>
       )}
@@ -70,7 +71,7 @@ export function TTSPanel({ tts }: TTSPanelProps) {
       </div>
 
       {/* 语音参数 */}
-      <div className="voice-params">
+      <div className={styles.voiceParams}>
         <div className="form-group">
           <label className="form-label">说话人</label>
           <select
@@ -87,7 +88,7 @@ export function TTSPanel({ tts }: TTSPanelProps) {
 
         <div className="form-group">
           <label className="form-label">
-            音量 <span className="param-value">{Math.round(voiceParams.volume * 100)}%</span>
+            音量 <span className={styles.paramValue}>{Math.round(voiceParams.volume * 100)}%</span>
           </label>
           <input
             type="range"
@@ -96,7 +97,7 @@ export function TTSPanel({ tts }: TTSPanelProps) {
             step="0.05"
             value={voiceParams.volume}
             onChange={(e) => updateVoiceParams({ volume: parseFloat(e.target.value) })}
-            className="slider"
+            className={styles.slider}
           />
         </div>
       </div>
@@ -104,7 +105,7 @@ export function TTSPanel({ tts }: TTSPanelProps) {
       {/* 指令文本（可选） */}
       <div className="form-group">
         <label className="form-label">
-          指令文本 <span className="param-hint">（可选，控制语气/情感，需 instruct 模型）</span>
+          指令文本 <span className={styles.paramHint}>（可选，控制语气/情感，需 instruct 模型）</span>
         </label>
         <input
           type="text"
@@ -116,7 +117,7 @@ export function TTSPanel({ tts }: TTSPanelProps) {
       </div>
 
       {/* 操作按钮 */}
-      <div className="button-group">
+      <div className={styles.buttonGroup}>
         <button
           className="btn"
           onClick={handleSpeak}
@@ -134,8 +135,8 @@ export function TTSPanel({ tts }: TTSPanelProps) {
       </div>
 
       {/* 快捷文本 */}
-      <div className="quick-texts">
-        <span className="quick-label">快捷文本：</span>
+      <div className={styles.quickTexts}>
+        <span className={styles.quickLabel}>快捷文本：</span>
         {[
           '您好，欢迎使用语音合成演示系统。',
           'Hello, this is a text-to-speech demo.',
@@ -143,7 +144,7 @@ export function TTSPanel({ tts }: TTSPanelProps) {
         ].map((t, i) => (
           <button
             key={i}
-            className="btn btn-secondary quick-btn"
+            className={`btn btn-secondary ${styles.quickBtn}`}
             onClick={() => setText(t)}
           >
             {t.slice(0, 12)}...

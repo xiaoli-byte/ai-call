@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from 'react';
 import { AddMenu } from './add-menu';
 import { useFlowStore } from './store/flow-store';
 import type { FlowNodeType } from '@ai-call/shared';
+import styles from './flow-builder.module.scss';
 
 interface AddButtonProps {
   afterNodeId: string;
@@ -42,7 +43,7 @@ export function AddButton({ afterNodeId }: AddButtonProps) {
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flow-add-btn"
+        className={styles.flowAddBtn}
         aria-label="添加节点"
       >
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
