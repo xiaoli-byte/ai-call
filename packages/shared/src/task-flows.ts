@@ -67,10 +67,57 @@ export interface DecisionNodeData {
 // --- Action Node（统一业务动作：转人工/发短信/CRM/API）---
 export type ActionType = 'transfer' | 'sms' | 'crm' | 'api';
 
+/** 转人工配置 */
+export interface TransferActionConfig {
+  /** 目标分机号 */
+  extension?: string;
+  /** 转接原因 */
+  reason?: string;
+}
+
+/** 发短信配置（收件人为来电号码，从通话上下文取）*/
+export interface SmsActionConfig {
+  /** 短信模板 ID */
+  template?: string;
+  /** 模板参数 */
+  params?: Record<string, unknown>;
+}
+
+/** CRM 操作配置（映射为工具调用）*/
+export interface CrmActionConfig {
+  /** CRM 动作名 */
+  action?: string;
+  /** 优先级 */
+  priority?: 'low' | 'normal' | 'high';
+  /** 备注 */
+  note?: string;
+}
+
+/** API/Webhook 调用配置 */
+export interface ApiActionConfig {
+  /** 请求 URL */
+  url?: string;
+  /** 请求方法（默认 POST）*/
+  method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+  /** 请求头 */
+  headers?: Record<string, string>;
+  /** 请求体 */
+  body?: unknown;
+  /** 超时秒数（默认 10）*/
+  timeout?: number;
+}
+
+/** 按 actionType 区分的动作配置 */
+export type ActionConfig =
+  | TransferActionConfig
+  | SmsActionConfig
+  | CrmActionConfig
+  | ApiActionConfig;
+
 export interface ActionNodeData {
   actionType: ActionType;
   /** 动作配置（按 actionType 不同结构不同）*/
-  config: Record<string, unknown>;
+  config: ActionConfig;
 }
 
 // --- End Node（统一结束行为：正常结束/挂机）---

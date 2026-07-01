@@ -43,14 +43,15 @@ function formatDuration(seconds?: number) {
   return m > 0 ? `${m}分${s}秒` : `${s}秒`;
 }
 
-export default async function CallsPage() {
-  let tasks: Awaited<ReturnType<typeof apiClient.listTasks>> = [];
+export default async function CallsPage({ searchParams }: { searchParams: { cursor?: string } }) {
+  let page: Awaited<ReturnType<typeof apiClient.listTasks>> = { items: [] };
   let error: string | null = null;
   try {
-    tasks = await apiClient.listTasks();
+    page = await apiClient.listTasks({ cursor: searchParams.cursor });
   } catch (e) {
     error = e instanceof Error ? e.message : '加载失败';
   }
+  const tasks = page.items;
 
   return (
     <div>
@@ -131,7 +132,7 @@ export default async function CallsPage() {
                         <span style={{ color: 'var(--text-muted)' }}>-</span>
                       )}
                     </td>
-                    <td style={{ color: 'var(--text-secondary)' }}>{t.transcript?.length ?? 0}</td>
+                    <td style={{ color: 'var(--text-secondary)' }}>{t.transcriptCount}</td>
                     <td style={{ color: 'var(--text-secondary)', fontSize: '12.5px' }}>
                       {t.calledAt ? new Date(t.calledAt).toLocaleString('zh-CN', { hour12: false }) : '-'}
                     </td>
@@ -140,6 +141,11 @@ export default async function CallsPage() {
               </tbody>
             </table>
           </div>
+        </div>
+      )}
+      {page.nextCursor && (
+        <div className="row-actions" style={{ justifyContent: 'flex-end', marginTop: 16 }}>
+          <a href={`/calls?cursor=${encodeURIComponent(page.nextCursor)}`} className="btn btn-secondary">下一页</a>
         </div>
       )}
     </div>

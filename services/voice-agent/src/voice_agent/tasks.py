@@ -174,5 +174,72 @@ class TaskClient:
         except Exception as err:
             logger.warning("[TaskClient] update_status %s error: %s", task_id, err)
 
+    async def get_task_flow(self, flow_id: str) -> Optional[dict[str, Any]]:
+        """拉取流程配置（GET /api/task-flows/{flow_id}）。
+
+        返回 flow dict（含 nodes/edges），失败返回 None。
+        """
+        url = f"{self._api_base_url}/task-flows/{flow_id}"
+        try:
+            response = await self._request("GET", url)
+            if response.status_code == 404:
+                logger.warning("[TaskClient] flow %s not found", flow_id)
+                return None
+            if response.status_code >= 400:
+                logger.warning(
+                    "[TaskClient] get_task_flow HTTP %s for flow %s",
+                    response.status_code,
+                    flow_id,
+                )
+                return None
+            return response.json()
+        except Exception as err:
+            logger.warning("[TaskClient] get_task_flow %s error: %s", flow_id, err)
+            return None
+
+    async def hangup(self, task_id: str) -> None:
+        """挂机（POST /api/tasks/{task_id}/hangup，202 Accepted）。"""
+        url = f"{self._api_base_url}/tasks/{task_id}/hangup"
+        try:
+            response = await self._request("POST", url, retry=False)
+            if response.status_code != 202:
+                logger.warning(
+                    "[TaskClient] hangup HTTP %s for task %s",
+                    response.status_code,
+                    task_id,
+                )
+        except Exception as err:
+            logger.warning("[TaskClient] hangup %s error: %s", task_id, err)
+
+    async def execute_action(
+        self,
+        task_id: str,
+        action_type: str,
+        config: dict[str, Any],
+        idempotency_key: str,
+    ) -> bool:
+        """将流程动作交给 Nest outbox 执行，返回是否已接收。"""
+        url = f"{self._api_base_url}/tasks/{task_id}/actions"
+        try:
+            response = await self._request(
+                "POST",
+                url,
+                json={"actionType": action_type, "config": config},
+                headers={"Idempotency-Key": idempotency_key},
+                retry=False,
+            )
+            if response.status_code == 202:
+                return True
+            logger.warning(
+                "[TaskClient] execute_action HTTP %s for task %s action %s",
+                response.status_code,
+                task_id,
+                action_type,
+            )
+            return False
+        except Exception as err:
+            logger.warning("[TaskClient] execute_action %s/%s error: %s", task_id, action_type, err)
+            return False
+
     async def close(self) -> None:
         await self._client.aclose()

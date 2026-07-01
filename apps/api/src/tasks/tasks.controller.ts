@@ -12,20 +12,17 @@ import {
   UsePipes,
   ValidationPipe,
 } from '@nestjs/common';
-import {
-  CallOutcome,
-  Scenario,
-  TaskStatus,
-} from '@ai-call/shared';
 import { TasksService } from './tasks.service.js';
 import { CreateTaskDto } from './dto/create-task.dto.js';
 import { ServiceAuthGuard } from '../common/service-auth.guard.js';
 import {
   HangupDto,
+  FlowActionDto,
   SetOutcomeDto,
   TranscriptTurnDto,
   UpdateTaskStatusDto,
 } from './dto/task-events.dto.js';
+import { ListTasksDto } from './dto/list-tasks.dto.js';
 
 /**
  * 外呼任务 Controller
@@ -52,19 +49,15 @@ export class TasksController {
 
   /** 列表查询 */
   @Get()
-  list(
-    @Query('scenario') scenario?: Scenario,
-    @Query('status') status?: TaskStatus,
-    @Query('outcome') outcome?: CallOutcome,
-  ) {
-    return this.tasksService.list({ scenario, status, outcome });
+  list(@Query() query: ListTasksDto) {
+    return this.tasksService.list(query);
   }
 
   /** 获取任务详情 */
   @Get(':id/context')
   @UseGuards(ServiceAuthGuard)
   getContext(@Param('id') id: string) {
-    return this.tasksService.get(id);
+    return this.tasksService.getContext(id);
   }
 
   @Get(':id')
@@ -133,6 +126,18 @@ export class TasksController {
     @Body() body: HangupDto = {},
   ) {
     return this.tasksService.hangup(id, body);
+  }
+
+  /** Voice Agent 将 SMS/API 动作可靠写入 outbox。 */
+  @Post(':id/actions')
+  @HttpCode(202)
+  @UseGuards(ServiceAuthGuard)
+  enqueueAction(
+    @Param('id') id: string,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
+    @Body() body: FlowActionDto,
+  ) {
+    return this.tasksService.enqueueAction(id, body.actionType, body.config, idempotencyKey);
   }
 
   /** 删除任务 */

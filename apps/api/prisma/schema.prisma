@@ -54,12 +54,14 @@ model OutboundTask {
   outcome       String?
   recordingUrl  String?           @map("recording_url")
   intentTags    String[]          @default([]) @map("intent_tags")
+  attemptCount  Int               @default(0) @map("attempt_count")
   flowId        String?           @map("flow_id")
   flow           TaskFlow?        @relation(fields: [flowId], references: [id], onDelete: Restrict)
   flowVersionId String?           @map("flow_version_id")
   flowVersion   TaskFlowVersion?  @relation(fields: [flowVersionId], references: [id], onDelete: Restrict)
   transcripts   TranscriptTurn[]
   events        CallEvent[]
+  attempts      CallAttempt[]
   createdAt     DateTime          @default(now()) @map("created_at")
   updatedAt     DateTime          @updatedAt @map("updated_at")
 
@@ -68,10 +70,37 @@ model OutboundTask {
   @@map("outbound_tasks")
 }
 
+model CallAttempt {
+  id             String            @id @default(uuid())
+  taskId         String            @map("task_id")
+  task           OutboundTask      @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  attemptNo      Int               @map("attempt_no")
+  providerCallId String?           @unique @map("provider_call_id")
+  status         String            @default("calling")
+  startedAt      DateTime          @default(now()) @map("started_at")
+  ringingAt      DateTime?         @map("ringing_at")
+  answeredAt     DateTime?         @map("answered_at")
+  endedAt        DateTime?         @map("ended_at")
+  duration       Int?
+  hangupCause    String?           @map("hangup_cause")
+  recordingUrl   String?           @map("recording_url")
+  transcripts    TranscriptTurn[]
+  events         CallEvent[]
+  createdAt      DateTime          @default(now()) @map("created_at")
+  updatedAt      DateTime          @updatedAt @map("updated_at")
+
+  @@unique([taskId, attemptNo])
+  @@index([taskId, createdAt])
+  @@index([status, startedAt])
+  @@map("call_attempts")
+}
+
 model TranscriptTurn {
   id        String       @id @default(uuid())
   taskId    String       @map("task_id")
   task      OutboundTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  attemptId String?      @map("attempt_id")
+  attempt   CallAttempt? @relation(fields: [attemptId], references: [id], onDelete: SetNull)
   role      String
   content   String
   timestamp Float
@@ -80,6 +109,7 @@ model TranscriptTurn {
   createdAt DateTime     @default(now()) @map("created_at")
 
   @@index([taskId, createdAt])
+  @@index([attemptId, createdAt])
   @@unique([taskId, externalId])
   @@map("transcript_turns")
 }
@@ -88,11 +118,14 @@ model CallEvent {
   id        String       @id @default(uuid())
   taskId    String       @map("task_id")
   task      OutboundTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  attemptId String?      @map("attempt_id")
+  attempt   CallAttempt? @relation(fields: [attemptId], references: [id], onDelete: SetNull)
   type      String
   payload   Json         @default("{}")
   createdAt DateTime     @default(now()) @map("created_at")
 
   @@index([taskId, createdAt])
+  @@index([attemptId, createdAt])
   @@map("call_events")
 }
 
@@ -107,9 +140,14 @@ model OutboxEvent {
   availableAt   DateTime  @default(now()) @map("available_at")
   processedAt   DateTime? @map("processed_at")
   lastError     String?   @map("last_error")
+  lockedAt      DateTime? @map("locked_at")
+  lockedBy      String?   @map("locked_by")
+  deduplicationKey String? @unique @map("deduplication_key")
   createdAt     DateTime  @default(now()) @map("created_at")
   updatedAt     DateTime  @updatedAt @map("updated_at")
 
   @@index([status, availableAt])
+  @@index([lockedAt])
+  @@index([aggregateType, aggregateId])
   @@map("outbox_events")
 }

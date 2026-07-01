@@ -154,123 +154,19 @@ class VoiceAgent:
     async def _run_flow(self, call_id: str, flow: dict[str, Any]) -> None:
         """执行发布时锁定的流程快照。
 
-        发布端保证拓扑合法；运行端仍设置步数上限，防止循环流程失控。
-        判断节点按出口标签匹配最近一次用户回复，并支持 default/默认兜底。
+        委托给 FlowExecutor（flow_executor.py），支持 5 节点系统的完整执行：
+        - Dialog: script/question/ai 三模式 + retryCount 重试
+        - Decision: condition 表达式 + intent LLM 分类
+        - Action: transfer/sms/crm/api 四类显式分发
+        - End: complete vs hangup
         """
-        nodes = {node["id"]: node for node in flow.get("nodes", [])}
-        edges = flow.get("edges", [])
-        start = next((node for node in nodes.values() if node.get("type") == "start"), None)
-        if not start:
-            raise ValueError(f"flow version {flow.get('id')} has no start node")
+        from .flow_executor import FlowExecutor
+        from .flow_types import TaskFlow as TaskFlowModel
 
-        current_id = start["id"]
-        last_response = ""
-        for _step in range(max(100, len(nodes) * 4)):
-            if call_id in self._ended:
-                return
-            node = nodes.get(current_id)
-            if not node:
-                raise ValueError(f"flow node not found: {current_id}")
-            node_type = node.get("type")
-            data = node.get("data") or {}
-
-            if node_type == "dialog":
-                last_response = await self._execute_dialog_node(call_id, data, last_response)
-            elif node_type == "action":
-                await self._execute_action_node(call_id, data)
-            elif node_type == "end":
-                farewell = data.get("farewell")
-                if farewell:
-                    variables = self._sessions[call_id].variables
-                    await self._speak(call_id, fill_template(str(farewell), variables))
-                self._ended.add(call_id)
-                return
-
-            candidates = [edge for edge in edges if edge.get("source") == current_id]
-            if node_type == "decision":
-                selected = self._select_decision_edge(candidates, last_response)
-            else:
-                selected = candidates[0] if candidates else None
-            if not selected:
-                raise ValueError(f"flow node {current_id} has no matching outgoing edge")
-            current_id = selected["target"]
-
-        raise RuntimeError(f"flow version {flow.get('id')} exceeded execution step limit")
-
-    async def _execute_dialog_node(
-        self,
-        call_id: str,
-        data: dict[str, Any],
-        previous_response: str,
-    ) -> str:
-        session = self._sessions[call_id]
-        variables = session.variables
-        mode = data.get("mode", "script")
-        prompt = data.get("text") if mode == "script" else data.get("prompt")
-        if prompt:
-            await self._speak(call_id, fill_template(str(prompt), variables))
-
-        response = previous_response
-        if data.get("waitForResponse", mode == "question"):
-            response = await self._wait_for_user_speech(call_id)
-            if response.strip():
-                callbacks = self._callbacks.get(call_id)
-                if callbacks:
-                    await callbacks.on_caller_speech(response)
-                session.messages.append(ChatMessage(role="user", content=response))
-
-        if mode == "ai" and response.strip():
-            system_prompt = data.get("systemPrompt")
-            messages = list(session.messages)
-            if system_prompt:
-                messages.append(
-                    ChatMessage(
-                        role="system",
-                        content=fill_template(str(system_prompt), variables),
-                    )
-                )
-            reply = await self._generate_reply(call_id, messages, session.tools)
-            if reply:
-                session.messages.append(ChatMessage(role="assistant", content=reply))
-                await self._speak(call_id, reply)
-        return response
-
-    async def _execute_action_node(self, call_id: str, data: dict[str, Any]) -> None:
-        action_type = str(data.get("actionType", "api"))
-        config = data.get("config") or {}
-        callbacks = self._callbacks.get(call_id)
-        if action_type == "transfer":
-            if callbacks:
-                await callbacks.on_escalate(str(config.get("reason", "流程触发转人工")))
-            self._escalated.add(call_id)
-            return
-
-        tool_name = str(config.get("toolName", action_type))
-        arguments = config.get("arguments", config)
-        call = ToolCall(id=str(uuid4()), name=tool_name, arguments=dict(arguments))
-        result = await self._tools.dispatch(call)
-        if callbacks:
-            await callbacks.on_tool_call(call, result)
-        if result.should_escalate:
-            if callbacks:
-                await callbacks.on_escalate(f"工具 {tool_name} 触发转人工")
-            self._escalated.add(call_id)
-
-    @staticmethod
-    def _select_decision_edge(
-        edges: list[dict[str, Any]], response: str
-    ) -> Optional[dict[str, Any]]:
-        normalized = response.casefold()
-        fallback: Optional[dict[str, Any]] = None
-        for edge in edges:
-            label = str(edge.get("label", "")).strip()
-            if label.casefold() in {"default", "else", "默认", "其他"}:
-                fallback = edge
-            else:
-                tokens = [item.strip().casefold() for item in re.split(r"[/|,，]", label)]
-                if any(token and token in normalized for token in tokens):
-                    return edge
-        return fallback
+        flow_model = TaskFlowModel.from_dict(flow)
+        adapter = _FlowExecutorAdapter(self, call_id)
+        executor = FlowExecutor(flow_model, adapter)
+        await executor.run(call_id)
 
     async def _conversation_loop(self, call_id: str) -> None:
         """对话主循环 - 最多 max_turns 轮。"""
@@ -564,3 +460,77 @@ class VoiceAgent:
             await self._llm.close()
         if self._tts:
             await self._tts.close()
+
+
+class _FlowExecutorAdapter:
+    """将 VoiceAgent 方法适配为 FlowExecutorCallbacks 接口。"""
+
+    def __init__(self, agent: "VoiceAgent", call_id: str) -> None:
+        self._agent = agent
+        self._call_id = call_id
+
+    async def speak(self, call_id: str, text: str) -> None:
+        await self._agent._speak(call_id, text)
+
+    async def wait_for_user_speech(self, call_id: str) -> str:
+        return await self._agent._wait_for_user_speech(call_id)
+
+    async def generate_reply(
+        self, call_id: str, messages: list[ChatMessage], tools: list = None
+    ) -> str:
+        return await self._agent._generate_reply(call_id, messages, tools or [])
+
+    async def generate_llm_text(
+        self, call_id: str, messages: list[ChatMessage], options: dict = None
+    ) -> str:
+        return await self._agent._generate_llm_text(call_id, messages, [])
+
+    async def on_caller_speech(self, call_id: str, text: str) -> None:
+        callbacks = self._agent._callbacks.get(call_id)
+        if callbacks:
+            await callbacks.on_caller_speech(text)
+
+    async def on_escalate(self, call_id: str, reason: str) -> bool:
+        callbacks = self._agent._callbacks.get(call_id)
+        if callbacks:
+            await callbacks.on_escalate(reason)
+        return True
+
+    async def on_tool_call(self, call_id: str, call: ToolCall, result: Any) -> None:
+        callbacks = self._agent._callbacks.get(call_id)
+        if callbacks:
+            await callbacks.on_tool_call(call, result)
+
+    def get_session_messages(self, call_id: str) -> list[ChatMessage]:
+        return self._agent._sessions[call_id].messages
+
+    def get_session_variables(self, call_id: str) -> dict[str, str]:
+        return self._agent._sessions[call_id].variables
+
+    def get_session_tools(self, call_id: str) -> list:
+        return self._agent._sessions[call_id].tools
+
+    def is_ended(self, call_id: str) -> bool:
+        return call_id in self._agent._ended
+
+    def mark_ended(self, call_id: str) -> None:
+        self._agent._ended.add(call_id)
+
+    def mark_escalated(self, call_id: str) -> None:
+        self._agent._escalated.add(call_id)
+
+    async def dispatch_tool(self, call_id: str, call: ToolCall) -> Any:
+        return await self._agent._tools.dispatch(call)
+
+    async def dispatch_action(
+        self, call_id: str, action_type: str, config: dict[str, Any], idempotency_key: str
+    ) -> bool:
+        return await self._agent._tasks.execute_action(
+            call_id, action_type, config, idempotency_key
+        )
+
+    async def hangup_call(self, call_id: str) -> None:
+        try:
+            await self._agent._tasks.hangup(call_id)
+        except Exception as err:
+            logger.warning("[FlowExecutor] hangup failed: %s", err)

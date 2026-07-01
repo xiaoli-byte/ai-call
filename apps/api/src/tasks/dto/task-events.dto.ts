@@ -3,6 +3,7 @@ import {
   IsEnum,
   IsIn,
   IsOptional,
+  IsObject,
   IsString,
 } from 'class-validator';
 import { CallOutcome, TaskStatus } from '@ai-call/shared';
@@ -43,4 +44,12 @@ export class HangupDto {
   @IsArray()
   @IsString({ each: true })
   tags?: string[];
+}
+
+export class FlowActionDto {
+  @IsIn(['sms', 'api'])
+  actionType!: 'sms' | 'api';
+
+  @IsObject()
+  config!: Record<string, unknown>;
 }

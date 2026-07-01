@@ -37,15 +37,23 @@ const SCENARIO_BADGE: Record<Scenario, string> = {
 export default async function TasksPage({
   searchParams,
 }: {
-  searchParams: { scenario?: Scenario; status?: TaskStatus };
+  searchParams: { scenario?: Scenario; status?: TaskStatus; cursor?: string };
 }) {
-  let tasks: Awaited<ReturnType<typeof apiClient.listTasks>> = [];
+  let page: Awaited<ReturnType<typeof apiClient.listTasks>> = { items: [] };
   let error: string | null = null;
   try {
-    tasks = await apiClient.listTasks(searchParams);
+    page = await apiClient.listTasks(searchParams);
   } catch (e) {
     error = e instanceof Error ? e.message : '加载失败';
   }
+  const tasks = page.items;
+  const nextHref = page.nextCursor
+    ? `/tasks?${new URLSearchParams({
+        ...(searchParams.scenario ? { scenario: searchParams.scenario } : {}),
+        ...(searchParams.status ? { status: searchParams.status } : {}),
+        cursor: page.nextCursor,
+      }).toString()}`
+    : undefined;
 
   return (
     <div>
@@ -152,6 +160,11 @@ export default async function TasksPage({
               </tbody>
             </table>
           </div>
+        </div>
+      )}
+      {nextHref && (
+        <div className="row-actions" style={{ justifyContent: 'flex-end', marginTop: 16 }}>
+          <Link href={nextHref} className="btn btn-secondary">下一页</Link>
         </div>
       )}
     </div>

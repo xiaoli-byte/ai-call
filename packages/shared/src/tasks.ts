@@ -69,6 +69,10 @@ export interface OutboundTask {
   recordingUrl?: string;
   /** 意向标签 */
   intentTags?: string[];
+  /** 已创建的实际拨打次数。 */
+  attemptCount: number;
+  /** 详情响应中的拨打尝试记录。 */
+  attempts?: CallAttempt[];
   /** 关联的流程配置 ID（可选，指定后 Voice Agent 按流程执行） */
   flowId?: string;
   /** 创建任务时锁定的不可变流程版本。 */
@@ -79,6 +83,47 @@ export interface OutboundTask {
   createdAt: string;
   /** 更新时间 */
   updatedAt: string;
+}
+
+export interface CallAttempt {
+  id: string;
+  taskId: string;
+  attemptNo: number;
+  providerCallId?: string;
+  status: TaskStatus;
+  startedAt: string;
+  ringingAt?: string;
+  answeredAt?: string;
+  endedAt?: string;
+  duration?: number;
+  hangupCause?: string;
+  recordingUrl?: string;
+}
+
+/** 列表页专用轻量模型，不包含流程快照和完整转写。 */
+export interface OutboundTaskListItem {
+  id: string;
+  to: string;
+  from: string;
+  scenario: Scenario;
+  status: TaskStatus;
+  scheduledAt: string;
+  calledAt?: string;
+  endedAt?: string;
+  duration?: number;
+  outcome?: CallOutcome;
+  intentTags?: string[];
+  flowId?: string;
+  flowVersionId?: string;
+  attemptCount: number;
+  transcriptCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TaskListPage {
+  items: OutboundTaskListItem[];
+  nextCursor?: string;
 }
 
 /** 对话转写条目 */
@@ -108,6 +153,6 @@ export interface TaskQueryDto {
   scenario?: Scenario;
   status?: TaskStatus;
   outcome?: CallOutcome;
-  page?: number;
-  pageSize?: number;
+  cursor?: string;
+  limit?: number;
 }

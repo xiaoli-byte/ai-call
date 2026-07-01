@@ -1,9 +1,11 @@
 import {
   OutboundTask,
+  type TaskListPage,
   Scenario,
   ScenarioConfig,
   type CreateTaskFlowDto,
   type TaskFlow,
+  type TaskFlowVersion,
   type UpdateTaskFlowDto,
 } from '@ai-call/shared';
 
@@ -37,12 +39,15 @@ export const apiClient = {
   getScenario: (s: Scenario) => api<ScenarioConfig>(`/scenarios/${s}`),
 
   // 任务
-  listTasks: (params?: { scenario?: Scenario; status?: string }) => {
+  listTasks: (params?: { scenario?: Scenario; status?: string; outcome?: string; cursor?: string; limit?: number }) => {
     const q = new URLSearchParams();
     if (params?.scenario) q.set('scenario', params.scenario);
     if (params?.status) q.set('status', params.status);
+    if (params?.outcome) q.set('outcome', params.outcome);
+    if (params?.cursor) q.set('cursor', params.cursor);
+    if (params?.limit) q.set('limit', String(params.limit));
     const qs = q.toString();
-    return api<OutboundTask[]>(`/tasks${qs ? `?${qs}` : ''}`);
+    return api<TaskListPage>(`/tasks${qs ? `?${qs}` : ''}`);
   },
   getTask: (id: string) => api<OutboundTask>(`/tasks/${id}`),
   createTask: (dto: {
@@ -95,5 +100,19 @@ export const apiClient = {
       api<TaskFlow>(`/task-flows/${id}/archive`, { method: 'POST' }),
     duplicate: (id: string) =>
       api<TaskFlow>(`/task-flows/${id}/duplicate`, { method: 'POST' }),
+    versions: (id: string) =>
+      api<TaskFlowVersion[]>(`/task-flows/${id}/versions`),
+    test: (id: string, input: string) =>
+      api<{
+        flowId: string;
+        flowName: string;
+        nodeId: string;
+        nodeName: string;
+        input: string;
+        reply: string;
+      }>(`/task-flows/${id}/test`, {
+        method: 'POST',
+        body: JSON.stringify({ input }),
+      }),
   },
 };
