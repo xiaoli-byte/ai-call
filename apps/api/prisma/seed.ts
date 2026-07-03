@@ -1,6 +1,6 @@
 /* eslint-disable no-console */
 /**
- * Seed 脚本 - 创建示例外呼任务流程
+ * Seed 脚本 - 创建示例外呼任务流程、默认权限/角色/管理员
  *
  * 用法：
  *   pnpm prisma:seed
@@ -10,9 +10,11 @@
  */
 import { config } from 'dotenv';
 import { resolve } from 'path';
+import { hash } from 'bcryptjs';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '../src/generated/prisma/client.js';
-import type { FlowEdge, FlowNode } from '@ai-call/shared';
+import { PERMISSIONS, ROLE_TEMPLATES } from '@ai-call/shared';
+import type { FlowEdge, FlowNode, PermissionCode } from '@ai-call/shared';
 
 config({ path: resolve(process.cwd(), '..', '..', '.env') });
 
@@ -278,10 +280,98 @@ function buildPresaleFlow(): { nodes: FlowNode[]; edges: FlowEdge[] } {
 }
 
 // ============================================================
+// 权限 / 角色 / 默认管理员
+// ============================================================
+
+async function seedAuth(): Promise<void> {
+  console.log('🌱 Seeding permissions & roles...');
+
+  const permissionMap = new Map<PermissionCode, string>();
+  for (const code of Object.values(PERMISSIONS)) {
+    const existing = await prisma.permission.findUnique({ where: { code } });
+    if (existing) {
+      permissionMap.set(code, existing.id);
+      continue;
+    }
+    const created = await prisma.permission.create({
+      data: { code, description: code },
+    });
+    permissionMap.set(code, created.id);
+    console.log(`  ✅ [创建] permission ${code}`);
+  }
+
+  const roleNames = Object.keys(ROLE_TEMPLATES) as Array<
+    keyof typeof ROLE_TEMPLATES
+  >;
+  for (const key of roleNames) {
+    const template = ROLE_TEMPLATES[key];
+    let role = await prisma.role.findUnique({ where: { name: template.name } });
+    if (!role) {
+      role = await prisma.role.create({
+        data: {
+          name: template.name,
+          description: template.description,
+        },
+      });
+      console.log(`  ✅ [创建] role ${role.name}`);
+    }
+
+    const existingPermissionIds = new Set(
+      (
+        await prisma.rolePermission.findMany({
+          where: { roleId: role.id },
+          select: { permissionId: true },
+        })
+      ).map((rp) => rp.permissionId),
+    );
+
+    const permissionIds = template.permissions.map((code) => permissionMap.get(code)!);
+    for (const permissionId of permissionIds) {
+      if (existingPermissionIds.has(permissionId)) continue;
+      await prisma.rolePermission.create({
+        data: { roleId: role.id, permissionId },
+      });
+    }
+  }
+
+  const adminRole = await prisma.role.findUniqueOrThrow({
+    where: { name: ROLE_TEMPLATES.admin.name },
+  });
+
+  const adminEmail =
+    process.env.DEFAULT_ADMIN_EMAIL ?? 'admin@ai-call.local';
+  const adminPassword =
+    process.env.DEFAULT_ADMIN_PASSWORD ?? 'admin123';
+
+  const existingAdmin = await prisma.user.findUnique({
+    where: { email: adminEmail },
+  });
+  if (!existingAdmin) {
+    const passwordHash = await hash(adminPassword, 10);
+    await prisma.user.create({
+      data: {
+        email: adminEmail,
+        passwordHash,
+        name: '系统管理员',
+        status: 'active',
+        roles: {
+          create: { roleId: adminRole.id },
+        },
+      },
+    });
+    console.log(`  ✅ [创建] admin user ${adminEmail}`);
+  } else {
+    console.log(`  ⏭️  [跳过] admin user ${adminEmail} 已存在`);
+  }
+}
+
+// ============================================================
 // 主函数
 // ============================================================
 
 async function main(): Promise<void> {
+  await seedAuth();
+
   console.log('🌱 Seeding task flows...');
 
   const seeds = [

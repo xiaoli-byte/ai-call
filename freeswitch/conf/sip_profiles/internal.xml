@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 内部 SIP Profile - 监听 5060，接受软电话注册 -->
+<profile name="internal">
+  <settings>
+    <!-- 监听地址与端口 -->
+    <!-- local_ip_v4 是 FreeSWITCH 运行时动态变量，直接在 param 中引用即可解析为容器 IP -->
+    <!-- 不通过 vars.xml set 间接引用，因为预处理阶段 local_ip_v4 尚未赋值 -->
+    <param name="sip-ip" value="$${local_ip_v4}"/>
+    <param name="sip-port" value="$${sip_port}"/>
+    <param name="ext-sip-ip" value="$${external_sip_ip}"/>
+    <param name="ext-rtp-ip" value="$${external_rtp_ip}"/>
+
+    <!-- NAT 穿透 -->
+    <param name="nat-options-ping" value="true"/>
+    <param name="apply-nat-acl" value="nat.auto"/>
+
+    <!-- 注册与认证 -->
+    <param name="accept-blind-reg" value="false"/>
+    <param name="auth-calls" value="true"/>
+
+    <!-- 上下文 -->
+    <param name="context" value="default"/>
+
+    <!-- 拨号字符串 -->
+    <param name="dialplan" value="xml"/>
+
+    <!-- 编解码 -->
+    <param name="codec-prefs" value="opus,PCMU,PCMA"/>
+
+    <!-- RTP -->
+    <param name="rtp-ip" value="$${local_ip_v4}"/>
+    <param name="rtp-timeout-sec" value="300"/>
+    <param name="rtp-auto-detect" value="true"/>
+
+    <!-- DTMF -->
+    <param name="dtmf-type" value="rfc2833"/>
+
+    <!-- TLS（关闭，本地开发） -->
+    <param name="tls" value="false"/>
+  </settings>
+</profile>

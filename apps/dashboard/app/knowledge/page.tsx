@@ -1,4 +1,4 @@
-import { apiClient } from '@/lib/api';
+import { apiServer } from '@/lib/api/server';
 
 const KB_BADGE: Record<string, string> = {
   collection: 'badge-warning',
@@ -7,10 +7,10 @@ const KB_BADGE: Record<string, string> = {
 };
 
 export default async function KnowledgePage() {
-  let kbs: Awaited<ReturnType<typeof apiClient.listKnowledgeBases>> = [];
+  let kbs: Awaited<ReturnType<typeof apiServer.listKnowledgeBases>> = [];
   let error: string | null = null;
   try {
-    kbs = await apiClient.listKnowledgeBases();
+    kbs = await apiServer.listKnowledgeBases();
   } catch (e) {
     error = e instanceof Error ? e.message : '加载失败';
   }

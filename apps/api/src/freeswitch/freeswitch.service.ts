@@ -32,6 +32,10 @@ export class FreeSwitchService {
   private readonly password: string;
   private readonly gateway: string;
   private readonly context: string;
+  private readonly dialString: string;
+  private readonly audioForkEnabled: boolean;
+  private readonly audioForkUrl: string;
+  private readonly audioModule: 'audio_fork' | 'audio_stream';
 
   constructor() {
     this.host = process.env.FREESWITCH_ESL_HOST ?? 'localhost';
@@ -39,6 +43,19 @@ export class FreeSwitchService {
     this.password = process.env.FREESWITCH_ESL_PASSWORD ?? 'ClueCon';
     this.gateway = process.env.FREESWITCH_GATEWAY ?? 'default';
     this.context = process.env.FREESWITCH_CONTEXT ?? 'default';
+    this.dialString =
+      process.env.FREESWITCH_DIAL_STRING ??
+      `sofia/gateway/${this.gateway}/{to}`;
+    this.audioForkEnabled =
+      process.env.FREESWITCH_AUDIO_FORK_ENABLED === 'true';
+    this.audioForkUrl =
+      process.env.FREESWITCH_AUDIO_FORK_URL ??
+      'ws://127.0.0.1:8090/audio-stream';
+    const audioModule = process.env.FREESWITCH_AUDIO_MODULE ?? 'audio_fork';
+    if (audioModule !== 'audio_fork' && audioModule !== 'audio_stream') {
+      throw new Error(`Unsupported FreeSWITCH audio module: ${audioModule}`);
+    }
+    this.audioModule = audioModule;
   }
 
   /**
@@ -49,14 +66,43 @@ export class FreeSwitchService {
    * @returns FreeSWITCH originate 命令的响应
    */
   async originate(to: string, callId: string): Promise<string> {
-    // originate 命令格式：
-    //   originate {gateway}/{number} &xml({context}) inline
-    // 通过 &xml 触发 dialplan 中的 audio_fork 扩展
-    const callerId = process.env.FROM_NUMBER ?? '+10000000000';
-    const target = `{origination_uuid=${callId},origination_caller_id_number=${callerId}}sofia/gateway/${this.gateway}/${to}`;
-    const cmd = `originate ${target} &xml(${this.context}) inline`;
+    if (!/^[0-9+*#-]+$/.test(to)) {
+      throw new Error(`Invalid FreeSWITCH destination: ${to}`);
+    }
+    if (!/^[0-9a-f-]{36}$/i.test(callId)) {
+      throw new Error(`Invalid FreeSWITCH call ID: ${callId}`);
+    }
 
-    this.logger.log(`originate callId=${callId} to=${to} via ${this.gateway}`);
+    const callerId = process.env.FROM_NUMBER ?? '+10000000000';
+    const channelVariables = [
+      `origination_uuid=${callId}`,
+      `origination_caller_id_number=${callerId}`,
+    ];
+
+    if (this.audioForkEnabled) {
+      const apiCommand =
+        this.audioModule === 'audio_stream'
+          ? 'uuid_audio_stream'
+          : 'uuid_audio_fork';
+      const responseFormat =
+        this.audioModule === 'audio_stream' ? 'base64-json' : 'esl-file';
+      const metadata = Buffer.from(
+        JSON.stringify({
+          dialog_id: callId,
+          audio_response_format: responseFormat,
+        }),
+      ).toString('base64');
+      channelVariables.push('STREAM_PLAYBACK=true', 'STREAM_SAMPLE_RATE=16000');
+      channelVariables.push(
+        `api_on_answer='${apiCommand} ${callId} start ${this.audioForkUrl} mono 16k base64:${metadata}'`,
+      );
+    }
+
+    const endpoint = this.dialString.replace('{to}', to);
+    const target = `{${channelVariables.join(',')}}${endpoint}`;
+    const cmd = `originate ${target} &park()`;
+
+    this.logger.log(`originate callId=${callId} to=${to} endpoint=${endpoint}`);
     return this.sendApiCommand(cmd);
   }
 

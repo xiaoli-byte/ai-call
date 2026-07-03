@@ -1,9 +1,11 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { FlowStatus, Scenario, type TaskFlow } from '@ai-call/shared';
-import { apiClient } from '@/lib/api';
+import { useTaskFlows } from '@/hooks/use-task-flows';
+import { useTaskMutations } from '@/hooks/use-tasks';
+import { appToast } from '@/lib/toast';
 
 const SCENARIO_LABELS: Record<Scenario, string> = {
   collection: '贷后催收',
@@ -20,18 +22,14 @@ const SCENARIO_DESC: Record<Scenario, string> = {
 export default function NewTaskPage() {
   const router = useRouter();
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [scenario, setScenario] = useState<Scenario>(Scenario.ECOMMERCE);
-  const [flows, setFlows] = useState<TaskFlow[]>([]);
-
-  useEffect(() => {
-    apiClient.taskFlows.list(FlowStatus.PUBLISHED).then(setFlows).catch(() => setFlows([]));
-  }, []);
+  const { data: flowsData } = useTaskFlows(FlowStatus.PUBLISHED);
+  const flows: TaskFlow[] = flowsData ?? [];
+  const { create } = useTaskMutations();
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setSubmitting(true);
-    setError(null);
     const formData = new FormData(e.currentTarget);
     const dto = {
       to: String(formData.get('to') ?? ''),
@@ -45,10 +43,11 @@ export default function NewTaskPage() {
       },
     };
     try {
-      await apiClient.createTask(dto);
+      await create(dto);
+      appToast.success('任务创建成功');
       router.push('/tasks');
     } catch (err) {
-      setError(err instanceof Error ? err.message : '创建失败');
+      appToast.error(err);
     } finally {
       setSubmitting(false);
     }
@@ -147,10 +146,6 @@ export default function NewTaskPage() {
             <label className="form-label">活动名称（售前场景）</label>
             <input name="activity" className="form-input" placeholder="夏日试驾季" />
           </div>
-
-          {error && (
-            <div className="error-banner">{error}</div>
-          )}
 
           <div className="row-actions" style={{ marginTop: 8 }}>
             <button type="submit" className="btn" disabled={submitting}>

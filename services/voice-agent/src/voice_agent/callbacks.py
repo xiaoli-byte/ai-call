@@ -40,6 +40,18 @@ class AgentCallbacks(Protocol):
         """TTS 音频输出回调 - 把 PCM 音频推回 FreeSWITCH 播放。"""
         ...
 
+    async def on_audio_output_complete(self) -> None:
+        """一轮 TTS 音频输出完成。"""
+        ...
+
+    async def on_node_enter(self, node_id: str, node_name: str) -> None:
+        """节点进入回调（调试用，流程执行到新节点时触发）。"""
+        ...
+
+    async def on_action(self, action_type: str, config: dict) -> None:
+        """动作节点回调（调试用，dry_run 模式下替代真实动作执行）。"""
+        ...
+
     async def on_end(self, reason: str) -> None:
         """会话结束回调。"""
         ...
@@ -61,6 +73,15 @@ class NoopCallbacks:
         pass
 
     async def on_audio_output(self, audio: bytes) -> None:
+        pass
+
+    async def on_audio_output_complete(self) -> None:
+        pass
+
+    async def on_node_enter(self, node_id: str, node_name: str) -> None:
+        pass
+
+    async def on_action(self, action_type: str, config: dict) -> None:
         pass
 
     async def on_end(self, reason: str) -> None:

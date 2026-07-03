@@ -1,4 +1,4 @@
-import { apiClient } from '@/lib/api';
+import { apiServer } from '@/lib/api/server';
 import { Scenario, TaskStatus } from '@ai-call/shared';
 
 const STATUS_LABELS: Record<TaskStatus, string> = {
@@ -44,10 +44,10 @@ function formatDuration(seconds?: number) {
 }
 
 export default async function CallsPage({ searchParams }: { searchParams: { cursor?: string } }) {
-  let page: Awaited<ReturnType<typeof apiClient.listTasks>> = { items: [] };
+  let page: Awaited<ReturnType<typeof apiServer.listTasks>> = { items: [] };
   let error: string | null = null;
   try {
-    page = await apiClient.listTasks({ cursor: searchParams.cursor });
+    page = await apiServer.listTasks({ cursor: searchParams.cursor });
   } catch (e) {
     error = e instanceof Error ? e.message : '加载失败';
   }

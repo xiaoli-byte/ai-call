@@ -1,25 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!--
-  Event Socket 配置
-
-  让 NestJS 后端通过 ESL（Event Socket Library）控制 FreeSWITCH：
-    - 发起外呼
-    - 监听通话事件（ANSWER/HANGUP/DTMF）
-    - 桥接/转接通话
-    - 触发 AMD 检测
-
-  NestJS 集成示例（modesl 库）：
-    import { Connection } from 'modesl';
-    const conn = new Connection('127.0.0.1', 8021, 'ClueCon', () => {
-      conn.api(`originate {origination_caller_id_number=${from}}sofia/gateway/twilio/${to} &park`);
-    });
--->
 <configuration name="event_socket.conf" description="Socket Client">
   <settings>
     <param name="nat-map" value="false"/>
     <param name="listen-ip" value="0.0.0.0"/>
     <param name="listen-port" value="8021"/>
     <param name="password" value="ClueCon"/>
-    <param name="apply-inbound-acl" value="domains"/>
+    <param name="apply-inbound-acl" value="socket_acl"/>
   </settings>
 </configuration>

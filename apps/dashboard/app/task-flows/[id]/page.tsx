@@ -1,23 +1,19 @@
-'use client';
-
-import { useEffect, useState } from 'react';
-import { useParams } from 'next/navigation';
-import { apiClient } from '@/lib/api';
+import { apiServer } from '@/lib/api/server';
 import type { TaskFlow } from '@ai-call/shared';
 import { FlowBuilderClient } from './FlowBuilderClient';
 
-export default function FlowEditorPage() {
-  const params = useParams<{ id: string }>();
-  const [flow, setFlow] = useState<TaskFlow | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!params?.id) return;
-    apiClient.taskFlows
-      .get(params.id)
-      .then(setFlow)
-      .catch((e) => setError(e instanceof Error ? e.message : '加载失败'));
-  }, [params?.id]);
+export default async function FlowEditorPage({
+  params,
+}: {
+  params: { id: string };
+}) {
+  let flow: TaskFlow | null = null;
+  let error: string | null = null;
+  try {
+    flow = await apiServer.taskFlows.get(params.id);
+  } catch (e) {
+    error = e instanceof Error ? e.message : '加载失败';
+  }
 
   if (error) {
     return (

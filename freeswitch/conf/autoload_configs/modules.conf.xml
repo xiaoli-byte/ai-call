@@ -12,36 +12,23 @@
     <!-- 音频编解码 -->
     <load module="mod_pcm"/>
     <load module="mod_opus"/>
-    <load module="mod_g723"/>
     <load module="mod_g722"/>
-    <load module="mod_g726"/>
-    <load module="mod_amr"/>
 
     <!-- 拨号计划与脚本 -->
     <load module="mod_dialplan_xml"/>
     <load module="mod_commands"/>
     <load module="mod_expr"/>
+    <load module="mod_dptools"/>
 
     <!-- 应用与编解码工具 -->
     <load module="mod_applications"/>
-    <load module="mod_av"/>
     <load module="mod_sndfile"/>
     <load module="mod_native_file"/>
     <load module="mod_tone_stream"/>
 
-    <!-- 录音 -->
-    <load module="mod_rec"/>
-    <load module="mod_voicemail"/>
-
-    <!-- 关键：音频 fork 模块，把通话 RTP 实时转发到 WebSocket 服务器 -->
-    <!-- 需要单独编译安装：https://github.com/iorc/mod_audio_fork -->
-    <!-- 安装后将 mod_audio_fork.so 放到 /usr/lib/freeswitch/mod/ -->
+    <!-- 关键：音频流模块，把通话 RTP 实时转发到 Voice Agent WebSocket -->
+    <!-- 使用 drachtio/drachtio-freeswitch-mrf 镜像预装的 mod_audio_fork -->
+    <!-- API：uuid_audio_fork <uuid> start <ws-url> <mix-type> <rate> [metadata] -->
     <load module="mod_audio_fork"/>
-
-    <!-- WebRTC（可选，用于浏览器软电话测试） -->
-    <load module="mod_verto"/>
-
-    <!-- 应答机检测（外呼场景必备：区分人工接听 vs 录音留言） -->
-    <load module="mod_amd"/>
   </modules>
 </configuration>

@@ -65,7 +65,7 @@ def _build_agent() -> tuple[VoiceAgent, TaskClient, Any]:
     funasr_mode = os.getenv("FUNASR_MODE", "2pass")
     funasr_hotwords = os.getenv("FUNASR_HOTWORDS", "")
     vad_aggressiveness = int(os.getenv("VAD_AGGRESSIVENESS", "3"))
-    vad_frame_ms = int(os.getenv("VAD_FRAME_MS", "30"))
+    vad_frame_ms = int(os.getenv("VAD_FRAME_MS", "20"))
     vad_pre_buffer_ms = int(os.getenv("VAD_PRE_BUFFER_MS", "300"))
     vad_silence_confirm = int(os.getenv("VAD_SILENCE_CONFIRM_FRAMES", "10"))
     vad_speech_confirm = int(os.getenv("VAD_SPEECH_CONFIRM_FRAMES", "3"))
@@ -109,7 +109,8 @@ def _build_agent() -> tuple[VoiceAgent, TaskClient, Any]:
 async def ws_main() -> None:
     """WebSocket 模式 - 接收 FreeSWITCH mod_audio_fork 连接 + Demo 端点。"""
     agent, tasks, demo = _build_agent()
-    host = os.getenv("VOICE_AGENT_WS_HOST", "0.0.0.0")
+    # 空字符串/未设置 → None（asyncio 绑定所有接口，IPv4 + IPv6 双栈）
+    host = os.getenv("VOICE_AGENT_WS_HOST") or None
     port = int(os.getenv("VOICE_AGENT_WS_PORT", "8080"))
     path = os.getenv("VOICE_AGENT_WS_PATH", "/audio-stream")
 
@@ -194,6 +195,15 @@ class CLICallbacks:
 
     async def on_audio_output(self, audio: bytes) -> None:
         pass  # CLI 不播放音频
+
+    async def on_audio_output_complete(self) -> None:
+        pass
+
+    async def on_node_enter(self, node_id: str, node_name: str) -> None:
+        print(f"[Node] → {node_name} ({node_id})")
+
+    async def on_action(self, action_type: str, config: dict) -> None:
+        print(f"[Action] {action_type}: {config} (调试模式未真实执行)")
 
     async def on_end(self, reason: str) -> None:
         print(f"\n📞 {reason}")

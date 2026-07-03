@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 核心交换配置 - RTP 端口范围 -->
+<configuration name="switch.conf" description="Core Configuration">
+  <settings>
+    <param name="rtp-start-port" value="$${rtp_start_port}"/>
+    <param name="rtp-end-port" value="$${rtp_end_port}"/>
+    <param name="rtp-timer-name" value="soft"/>
+    <param name="max-sessions" value="10"/>
+  </settings>
+</configuration>

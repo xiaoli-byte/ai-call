@@ -4,72 +4,57 @@
 
   本文件演示 AI 外呼场景下的呼叫控制流程：
     1. 外呼任务发起 → 拨打被叫号码
-    2. 应答机检测（AMD）- 区分人工接听 vs 录音留言
-    3. 通话建立后启动 mod_audio_fork 把音频桥接到 Voice Agent
-    4. 通话中事件通过 ESL 上报给 NestJS 后端
+    2. 通话建立后启动 mod_audio_stream 把音频桥接到 Voice Agent
+    3. 通话中事件通过 ESL 上报给 NestJS 后端
 
   测试分机：
-    9999 - 自测，连接后启动 audio_fork（不拨真实号码也能验证音频流）
+    9999 - 自测，连接后启动 audio_stream（不拨真实号码也能验证音频流）
 -->
 <include>
   <context name="default">
 
     <!-- ============== 测试分机：9999 ============== -->
-    <!-- 软电话拨 9999 即可触发音频 fork 流程，无需真实外呼 -->
-    <extension name="test_audio_fork">
+    <!-- 软电话拨 9999 即可触发音频流流程，无需真实外呼 -->
+    <extension name="test_audio_stream">
       <condition field="destination_number" expression="^9999$">
+        <!-- 通道变量：在 answer 之前设置 -->
+        <action application="set" data="STREAM_PLAYBACK=true"/>
+        <action application="set" data="STREAM_SAMPLE_RATE=16000"/>
+
+        <!-- execute_on_answer：应答时执行 API 命令 -->
+        <!-- api 前缀让 FreeSWITCH 将其作为 API 命令而非 dialplan application 执行 -->
+        <!-- JSON metadata 必须用 &quot; 转义双引号，且不能含空格 -->
+        <action application="set" data="execute_on_answer=api uuid_audio_fork ${uuid} start $${voice_agent_ws_url} mono 16k {&quot;dialog_id&quot;:&quot;${uuid}&quot;,&quot;caller_id&quot;:&quot;${caller_id_number}&quot;}"/>
+
+        <!-- 应答（触发 execute_on_answer） -->
         <action application="answer"/>
-        <action application="sleep" data="500"/>
-        <action application="playback" data="phrase:welcome"/>
-        <!-- 启动音频 fork，session_id 作为 dialog_id -->
-        <action application="audio_fork" data="session_id=${uuid}"/>
-        <!-- 播放等待音，模拟通话中 -->
-        <action application="playback" data="tone_stream://%(${wait_time}1000,400,640);loops=-1"/>
+        <!-- park 保持通话不挂断 -->
+        <action application="park" data=""/>
       </condition>
     </extension>
 
     <!-- ============== 外呼模式：从 API 触发 ============== -->
     <!--
       NestJS 后端通过 ESL 发起外呼：
-        bgapi originate {origination_caller_id_number=主叫号,execute_on_answer='audio_fork session_id=CALL_ID'}sofia/gateway/运营商网关/被叫号 &park
-
-      或使用 ESL API：
-        const esl = require('modesl');
-        const conn = new esl.Connection('127.0.0.1', 8021, 'ClueCon', () => {
-          conn.api(`originate ...`);
-        });
+        bgapi originate {origination_caller_id_number=主叫号,execute_on_answer='uuid_audio_fork CALL_ID start ws-url mono 16k metadata'}sofia/gateway/运营商网关/被叫号 &park
     -->
     <extension name="outbound_ai_call">
       <condition field="destination_number" expression="^(\d+)$">
-        <!-- 应答机检测：判断是人接还是机器接 -->
+        <action application="set" data="STREAM_PLAYBACK=true"/>
+        <action application="set" data="STREAM_SAMPLE_RATE=16000"/>
+        <action application="set" data="execute_on_answer=api uuid_audio_fork ${uuid} start $${voice_agent_ws_url} mono 16k {&quot;dialog_id&quot;:&quot;${uuid}&quot;,&quot;caller_id&quot;:&quot;${caller_id_number}&quot;}"/>
         <action application="answer"/>
-        <action application="amd" data="default"/>
-
-        <!-- 根据 AMD 结果分支：
-             HUMAN → 启动 AI 通话
-             MACHINE → 留言后挂断
-        -->
-        <condition field="${amd_result}" expression="^HUMAN$">
-          <action application="log" data="INFO Human answered, starting AI session"/>
-          <!-- 启动 mod_audio_fork，将音频流转发到 Voice Agent -->
-          <action application="audio_fork" data="session_id=${uuid}"/>
-          <!-- 等待 Voice Agent 通过播放队列推送 TTS 音频 -->
-          <action application="park" data=""/>
-        </condition>
-
-        <anti-action application="log" data="WARNING Machine or voicemail detected"/>
-        <anti-action application="playback" data="phrase:voicemail_message"/>
-        <anti-action application="hangup" data="NO_ANSWER"/>
+        <action application="park" data=""/>
       </condition>
     </extension>
 
-    <!-- ============== 转人工 ============== -->
+    <!-- ============== 转人工：9000 ============== -->
     <!-- Voice Agent 通过 API 调用 ESL 把通话转接到人工队列 -->
     <extension name="transfer_to_human">
       <condition field="destination_number" expression="^9000$">
         <action application="answer"/>
         <action application="log" data="INFO Transferring to human agent queue"/>
-        <action application="queue" data="human_support@default"/>
+        <action application="park" data=""/>
       </condition>
     </extension>
 

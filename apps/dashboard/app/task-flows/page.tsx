@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { apiClient } from '@/lib/api';
+import { apiServer } from '@/lib/api/server';
 import { FlowStatus } from '@ai-call/shared';
 import { FlowRowActions } from './FlowRowActions';
 
@@ -16,10 +16,10 @@ const STATUS_BADGE: Record<FlowStatus, string> = {
 };
 
 export default async function TaskFlowsPage() {
-  let flows: Awaited<ReturnType<typeof apiClient.taskFlows.list>> = [];
+  let flows: Awaited<ReturnType<typeof apiServer.taskFlows.list>> = [];
   let error: string | null = null;
   try {
-    flows = await apiClient.taskFlows.list();
+    flows = await apiServer.taskFlows.list();
   } catch (e) {
     error = e instanceof Error ? e.message : '加载失败';
   }

@@ -270,7 +270,7 @@ NEXT_PUBLIC_QWEN_TTS_VOICE=Cherry
 NEXT_PUBLIC_TTS_SAMPLE_RATE=16000
 
 # NestJS API
-NEXT_PUBLIC_API_URL=http://localhost:3001/api
+API_INTERNAL_URL=http://localhost:3001/api
 ```
 
 ### 4. 启动 Dashboard

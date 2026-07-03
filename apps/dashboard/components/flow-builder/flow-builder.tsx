@@ -4,19 +4,13 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ReactFlowProvider } from '@xyflow/react';
 import type { FlowEdge, FlowNode, FlowStatus } from '@ai-call/shared';
-import { apiClient } from '@/lib/api';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-  DialogFooter,
-} from '@/components/ui/dialog';
+import { useTaskFlowMutations } from '@/hooks/use-task-flows';
+import { appToast } from '@/lib/toast';
 
 import { Toolbar } from './toolbar';
 import { FlowCanvas } from './flow-canvas';
 import { PropertyPanel } from './property-panel';
+import { FlowDebugPanel } from './flow-debug-panel';
 import { useFlowStorage } from './hooks/use-flow-storage';
 import { useFlowStore } from './store/flow-store';
 import styles from './flow-builder.module.scss';
@@ -63,13 +57,10 @@ function FlowBuilderInner({
   const router = useRouter();
   const setFlow = useFlowStore((s) => s.setFlow);
   const { status, saveNow } = useFlowStorage(flowId);
+  const { publish } = useTaskFlowMutations();
 
   const [publishError, setPublishError] = useState<string | null>(null);
-  const [testOpen, setTestOpen] = useState(false);
-  const [testInput, setTestInput] = useState('');
-  const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState<string | null>(null);
-  const [testError, setTestError] = useState<string | null>(null);
+  const [debugOpen, setDebugOpen] = useState(false);
 
   useEffect(() => {
     setFlow(initialNodes, initialEdges);
@@ -79,24 +70,13 @@ function FlowBuilderInner({
     setPublishError(null);
     try {
       await saveNow();
-      await apiClient.taskFlows.publish(flowId);
+      await publish(flowId);
+      appToast.success('流程已发布');
       router.refresh();
     } catch (e) {
-      setPublishError(e instanceof Error ? e.message : '发布失败');
-    }
-  }
-
-  async function handleTestSubmit() {
-    setTesting(true);
-    setTestError(null);
-    setTestResult(null);
-    try {
-      const res = await apiClient.taskFlows.test(flowId, testInput);
-      setTestResult(res.reply);
-    } catch (e) {
-      setTestError(e instanceof Error ? e.message : '测试失败');
-    } finally {
-      setTesting(false);
+      const msg = e instanceof Error ? e.message : '发布失败';
+      setPublishError(msg);
+      appToast.error(e);
     }
   }
 
@@ -109,12 +89,7 @@ function FlowBuilderInner({
         onSave={saveNow}
         saveStatus={status}
         onPublish={handlePublish}
-        onTest={() => {
-          setTestResult(null);
-          setTestError(null);
-          setTestInput('');
-          setTestOpen(true);
-        }}
+        onTest={() => setDebugOpen(true)}
       />
       {publishError && (
         <div className="error-banner" style={{ margin: 0, borderRadius: 0 }}>
@@ -124,67 +99,14 @@ function FlowBuilderInner({
       <div className={styles.flowEditorMain}>
         <FlowCanvas />
         <PropertyPanel />
+        <FlowDebugPanel
+          flowId={flowId}
+          flowName={flowName}
+          open={debugOpen}
+          onClose={() => setDebugOpen(false)}
+          onSaveFlow={saveNow}
+        />
       </div>
-
-      <Dialog open={testOpen} onOpenChange={setTestOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>测试 AI 对话</DialogTitle>
-            <DialogDescription>
-              输入文本，将调用流程中首个 AI 对话节点的 systemPrompt 生成回复。
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3">
-            <textarea
-              className="form-input"
-              rows={3}
-              placeholder="例如：你好，我想咨询一下"
-              value={testInput}
-              onChange={(e) => setTestInput(e.target.value)}
-              disabled={testing}
-            />
-            {testResult !== null && (
-              <div
-                style={{
-                  background: 'var(--bg-elevated)',
-                  border: '1px solid var(--border)',
-                  borderRadius: 8,
-                  padding: 12,
-                  fontSize: 13,
-                  whiteSpace: 'pre-wrap',
-                  maxHeight: 240,
-                  overflowY: 'auto',
-                }}
-              >
-                {testResult || '（空回复）'}
-              </div>
-            )}
-            {testError && (
-              <div className="error-banner" style={{ margin: 0 }}>
-                {testError}
-              </div>
-            )}
-          </div>
-          <DialogFooter>
-            <button
-              type="button"
-              className="btn btn-secondary btn-sm"
-              onClick={() => setTestOpen(false)}
-              disabled={testing}
-            >
-              关闭
-            </button>
-            <button
-              type="button"
-              className="btn btn-sm"
-              onClick={handleTestSubmit}
-              disabled={testing || !testInput.trim()}
-            >
-              {testing ? '调用中…' : '生成回复'}
-            </button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

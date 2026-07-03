@@ -41,6 +41,8 @@ class FlowExecutorCallbacks(Protocol):
     async def on_caller_speech(self, call_id: str, text: str) -> None: ...
     async def on_escalate(self, call_id: str, reason: str) -> bool: ...
     async def on_tool_call(self, call_id: str, call: ToolCall, result: Any) -> None: ...
+    async def on_node_enter(self, call_id: str, node_id: str, node_name: str) -> None: ...
+    async def on_action(self, call_id: str, action_type: str, config: dict[str, Any]) -> None: ...
     def get_session_messages(self, call_id: str) -> list[ChatMessage]: ...
     def get_session_variables(self, call_id: str) -> dict[str, str]: ...
     def get_session_tools(self, call_id: str) -> list: ...
@@ -68,6 +70,30 @@ class FlowExecutor:
         self._flow = flow
         self._cb = callbacks
 
+    def _node_label(self, node: FlowNode) -> str:
+        """计算节点的中文显示名称（用于调试信息展示）。"""
+        if node.type == NodeType.START:
+            return "开始"
+        if node.type == NodeType.DIALOG:
+            data = node.as_dialog()
+            content = ""
+            if data.mode == DialogMode.SCRIPT:
+                content = (data.text or "")[:20]
+            else:
+                content = (data.prompt or "")[:20]
+            suffix = f": {content}" if content else ""
+            return f"对话({data.mode.value}){suffix}"
+        if node.type == NodeType.DECISION:
+            data = node.as_decision()
+            return f"判断({data.mode.value})"
+        if node.type == NodeType.ACTION:
+            data = node.as_action()
+            return f"动作({data.action_type.value})"
+        if node.type == NodeType.END:
+            data = node.as_end()
+            return f"结束({data.mode.value})"
+        return str(node.type)
+
     async def run(self, call_id: str) -> None:
         entry = self._flow.find_entry()
         if not entry:
@@ -85,6 +111,7 @@ class FlowExecutor:
             if not node:
                 raise ValueError(f"flow node not found: {current_id}")
 
+            await self._cb.on_node_enter(call_id, node.id, self._node_label(node))
             node_response = await self._execute_node(call_id, node, last_response)
             if node_response is not None:
                 last_response = node_response

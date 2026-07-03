@@ -3,7 +3,8 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { apiClient } from '@/lib/api';
+import { useTaskFlowMutations } from '@/hooks/use-task-flows';
+import { appToast } from '@/lib/toast';
 import { TASK_FLOW_TEMPLATES } from '@ai-call/shared';
 import type { FlowNodeType, TaskFlowTemplate } from '@ai-call/shared';
 
@@ -16,7 +17,6 @@ const NODE_COLORS: Record<string, string> = {
 };
 
 function TemplatePreview({ template }: { template: TaskFlowTemplate }) {
-  // 简易水平布局预览：按 node.type 顺序展示彩色方块 + 连接线
   const nodes = template.nodes;
   if (nodes.length === 0) {
     return (
@@ -48,21 +48,21 @@ function TemplatePreview({ template }: { template: TaskFlowTemplate }) {
 export default function NewTaskFlowPage() {
   const router = useRouter();
   const [submitting, setSubmitting] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const { create } = useTaskFlowMutations();
 
   async function createFromTemplate(tpl: TaskFlowTemplate) {
     setSubmitting(tpl.id);
-    setError(null);
     try {
-      const created = await apiClient.taskFlows.create({
+      const created = await create({
         name: tpl.name,
         description: tpl.description,
         nodes: tpl.nodes,
         edges: tpl.edges,
       });
+      appToast.success('流程创建成功');
       router.push(`/task-flows/${created.id}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : '创建失败');
+      appToast.error(err);
       setSubmitting(null);
     }
   }
@@ -84,8 +84,6 @@ export default function NewTaskFlowPage() {
           </Link>
         </div>
       </div>
-
-      {error && <div className="error-banner">{error}</div>}
 
       <div className="grid grid-2" style={{ maxWidth: 920 }}>
         {TASK_FLOW_TEMPLATES.map((tpl) => (

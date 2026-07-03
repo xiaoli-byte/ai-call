@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 本地开发 ACL；ESL 仅发布到宿主机 127.0.0.1:18021。 -->
+<configuration name="acl.conf" description="Network Lists">
+  <network-lists>
+    <list name="domains" default="allow"/>
+    <list name="socket_acl" default="deny">
+      <node type="allow" cidr="172.16.0.0/12"/>
+    </list>
+  <list name="socket_acl" default="deny"><node type="allow" cidr="0.0.0.0/0"/></list></network-lists>
+</configuration>

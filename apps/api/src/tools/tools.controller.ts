@@ -1,5 +1,6 @@
 import { Body, Controller, Post } from '@nestjs/common';
 import { ToolsService } from './tools.service.js';
+import { Public } from '../auth/decorators/public.decorator.js';
 
 /**
  * 业务工具 Controller - Voice Agent Function Calling 的后端实现
@@ -17,6 +18,7 @@ import { ToolsService } from './tools.service.js';
  *  - 与现有业务系统集成成本低
  */
 @Controller('tools')
+@Public()
 export class ToolsController {
   constructor(private readonly toolsService: ToolsService) {}
 

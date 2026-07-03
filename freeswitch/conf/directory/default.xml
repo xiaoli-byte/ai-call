@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 域定义 - include 所有分机 -->
+<include>
+  <domain name="$${domain}">
+    <params>
+      <param name="dial-string" value="{presence_id=${presence_id}}${sofia_contact(${dialed_user}@${dialed_domain})}"/>
+    </params>
+    <groups>
+      <group name="default">
+        <users>
+          <X-PRE-PROCESS cmd="include" data="default/*.xml"/>
+        </users>
+      </group>
+    </groups>
+  </domain>
+</include>

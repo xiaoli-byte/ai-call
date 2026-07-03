@@ -20,6 +20,7 @@ import asyncio
 import base64
 import logging
 import threading
+import time
 from typing import Awaitable, Callable, Optional
 
 from . import audio
@@ -107,27 +108,56 @@ class QwenTTS:
 
             dashscope.api_key = self._api_key
             finished_event = threading.Event()
+            audio_chunks = 0
+            audio_bytes = 0
+            response_completed = False
+            started_at = time.monotonic()
 
             class Callback(QwenTtsRealtimeCallback):
                 def on_open(self) -> None:
-                    logger.debug("[QwenTTS] connection opened")
+                    logger.info("[QwenTTS] connection opened model=%s voice=%s", self_outer._model, speaker or self_outer._voice)
 
                 def on_close(self, code: int, msg: str) -> None:
-                    logger.debug("[QwenTTS] connection closed: %s %s", code, msg)
+                    nonlocal response_completed
+                    logger.info("[QwenTTS] connection closed code=%s message=%s", code, msg)
+                    if not response_completed and not cancel_event.is_set():
+                        push(
+                            (
+                                "error",
+                                f"connection closed before response.done: {code} {msg}".encode(),
+                            )
+                        )
                     finished_event.set()
 
                 def on_event(self, response: dict) -> None:
+                    nonlocal audio_chunks, audio_bytes, response_completed
                     event_type = response.get("type", "")
                     if event_type == "response.audio.delta":
                         delta = response.get("delta", "")
                         if delta:
                             try:
                                 pcm = base64.b64decode(delta)
+                                audio_chunks += 1
+                                audio_bytes += len(pcm)
+                                if audio_chunks == 1:
+                                    logger.info(
+                                        "[QwenTTS] first audio chunk bytes=%d latency_ms=%d",
+                                        len(pcm),
+                                        int((time.monotonic() - started_at) * 1000),
+                                    )
                                 push(("audio", pcm))
                             except Exception as err:
                                 logger.warning("[QwenTTS] base64 decode failed: %s", err)
-                    elif event_type == "session.finished":
+                    elif event_type == "response.done":
+                        response_completed = True
+                        logger.info(
+                            "[QwenTTS] response done chunks=%d bytes=%d",
+                            audio_chunks,
+                            audio_bytes,
+                        )
                         push(("finished", None))
+                        finished_event.set()
+                    elif event_type == "session.finished":
                         finished_event.set()
                     elif event_type == "error":
                         err_msg = response.get("error", {}).get("message", "unknown")
@@ -135,6 +165,7 @@ class QwenTTS:
                         push(("error", err_msg.encode()))
                         finished_event.set()
 
+            self_outer = self
             synth = QwenTtsRealtime(
                 model=self._model,
                 callback=Callback(),
@@ -145,7 +176,7 @@ class QwenTTS:
                 session_kwargs: dict = {
                     "voice": speaker or self._voice,
                     "response_format": AudioFormat.PCM_24000HZ_MONO_16BIT,
-                    "mode": "server_commit",
+                    "mode": "commit",
                 }
                 if instruct_text:
                     # 指令模式需 qwen3-tts-instruct-flash-realtime 模型
@@ -153,13 +184,15 @@ class QwenTTS:
                     session_kwargs["optimize_instructions"] = True
                 synth.update_session(**session_kwargs)
                 synth.append_text(text)
-                synth.finish()
+                synth.commit()
 
-                # 阻塞等待合成完成或取消信号（每 0.5s 检查一次 cancel）
+                # 等 response.done 后再 finish；提前 finish 会终止尚未提交完成的合成。
                 while not finished_event.wait(timeout=0.5):
                     if cancel_event.is_set():
                         logger.info("[QwenTTS] synthesis cancelled (barge-in)")
                         break
+                if not cancel_event.is_set():
+                    synth.finish()
             except Exception as err:
                 logger.exception("[QwenTTS] sync synthesis failed: %s", err)
                 push(("error", str(err).encode()))
@@ -173,6 +206,8 @@ class QwenTTS:
 
         try:
             # 消费队列，把 PCM 块回调给调用方
+            output_chunks = 0
+            output_bytes = 0
             while True:
                 kind, data = await queue.get()
                 if kind == "audio" and data:
@@ -180,6 +215,8 @@ class QwenTTS:
                         data, _QWEN_SOURCE_SAMPLE_RATE, self._target_sr
                     )
                     if resampled:
+                        output_chunks += 1
+                        output_bytes += len(resampled)
                         await on_chunk(
                             TTSChunk(
                                 audio=resampled,
@@ -188,6 +225,12 @@ class QwenTTS:
                             )
                         )
                 elif kind == "finished":
+                    logger.info(
+                        "[QwenTTS] output complete chunks=%d bytes=%d sample_rate=%d",
+                        output_chunks,
+                        output_bytes,
+                        self._target_sr,
+                    )
                     await on_chunk(
                         TTSChunk(audio=b"", sample_rate=self._target_sr, is_final=True)
                     )

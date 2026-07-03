@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { apiClient } from '@/lib/api';
+import { apiServer } from '@/lib/api/server';
 import { Scenario, TaskStatus, CallOutcome } from '@ai-call/shared';
 
 const STATUS_LABELS: Record<TaskStatus, string> = {
@@ -39,10 +39,10 @@ export default async function TasksPage({
 }: {
   searchParams: { scenario?: Scenario; status?: TaskStatus; cursor?: string };
 }) {
-  let page: Awaited<ReturnType<typeof apiClient.listTasks>> = { items: [] };
+  let page: Awaited<ReturnType<typeof apiServer.tasks.list>> = { items: [] };
   let error: string | null = null;
   try {
-    page = await apiClient.listTasks(searchParams);
+    page = await apiServer.tasks.list(searchParams);
   } catch (e) {
     error = e instanceof Error ? e.message : '加载失败';
   }

@@ -18,11 +18,14 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import os
 import secrets
 import time
+import wave
+from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import parse_qs, urlparse
 
@@ -40,12 +43,14 @@ from .scenarios import (
     scenario_from_contract,
 )
 from .tasks import TaskClient
+from .text_test_callbacks import TextTestCallbacks
 from .types import ToolCall, ToolResult
+from uuid import uuid4
 
 logger = logging.getLogger(__name__)
 
 # 所有合法的 WebSocket 路径
-_VALID_PATHS = {"/audio-stream", "/asr-stream", "/tts-stream"}
+_VALID_PATHS = {"/audio-stream", "/asr-stream", "/tts-stream", "/text-test"}
 
 
 def _ws_is_open(ws: Any) -> bool:
@@ -77,15 +82,21 @@ class VoiceAgentServer:
 
     async def start(self) -> None:
         """启动 WebSocket 服务端，永久运行。"""
+        try:
+            await _get_shared_esl_client()
+            logger.info("[ESL] persistent control connection ready")
+        except Exception as err:
+            logger.warning("[ESL] preconnect failed, will retry on playback: %s", err)
         async with websockets.serve(
             self._handle,
             self._host,
             self._port,
             process_request=self._check_path,
         ):
+            display_host = self._host if self._host else "*"
             logger.info(
                 "[VoiceAgentServer] listening on ws://%s:%s (paths: %s)",
-                self._host,
+                display_host,
                 self._port,
                 ", ".join(sorted(_VALID_PATHS)),
             )
@@ -138,14 +149,117 @@ class VoiceAgentServer:
             await self._demo.handle_tts(ws)
             return
 
+        if pathname == "/text-test":
+            await self._handle_text_test(ws)
+            return
+
         # 默认：/audio-stream 走 FreeSWITCH Agent 链路
         await self._handle_audio_stream(ws)
+
+    async def _handle_text_test(self, ws: Any) -> None:
+        """处理 /text-test 连接 — 文本调试会话。
+
+        协议：
+        - 第一帧 JSON: {type: 'start', flowId, variables?}
+        - 后续帧: {type: 'user_input', text} 或 {type: 'hangup'}
+        - 服务端推送: connected / node_enter / agent_speech / action / end / error
+        """
+        call_id: Optional[str] = None
+        session_task: Optional[asyncio.Task[None]] = None
+
+        logger.info("[VoiceAgentServer] new /text-test connection")
+        try:
+            first_msg = await ws.recv() if _ws_is_open(ws) else None
+            if not first_msg:
+                return
+
+            try:
+                start_data = json.loads(first_msg)
+            except (json.JSONDecodeError, TypeError) as err:
+                logger.error("[VoiceAgentServer] parse start frame failed: %s", err)
+                return
+
+            if start_data.get("type") != "start":
+                logger.warning("[VoiceAgentServer] expected start frame, got: %s", start_data.get("type"))
+                return
+
+            flow_id = str(start_data.get("flowId", ""))
+            if not flow_id:
+                await self._send_json(ws, {"type": "error", "message": "flowId is required"})
+                return
+
+            # 从 DB 拉取流程（前端已在发送前自动保存）
+            flow = await self._tasks.get_task_flow(flow_id)
+            if not flow:
+                await self._send_json(ws, {"type": "error", "message": f"flow not found: {flow_id}"})
+                return
+
+            # 构造调试 session
+            call_id = f"test-{uuid4().hex[:12]}"
+            await self._send_json(ws, {"type": "connected", "sessionId": call_id})
+
+            scenario_config = get_scenario("ecommerce")
+            variables: dict[str, str] = dict(DEFAULT_VARIABLES)
+            variables.update(start_data.get("variables") or {})
+
+            callbacks = TextTestCallbacks(ws, call_id)
+
+            # 异步启动 agent 会话（dry_run=True）
+            session_task = asyncio.create_task(
+                self._agent.start_session(
+                    call_id,
+                    scenario_config,
+                    variables,
+                    callbacks,
+                    flow_version=flow,
+                    dry_run=True,
+                )
+            )
+
+            # 循环接收前端消息
+            async for msg in ws:
+                try:
+                    data = json.loads(msg)
+                except (json.JSONDecodeError, TypeError):
+                    continue
+
+                msg_type = data.get("type")
+                if msg_type == "user_input":
+                    text = str(data.get("text", ""))
+                    if text and call_id:
+                        await self._agent.inject_user_text(call_id, text)
+                elif msg_type == "hangup":
+                    if call_id:
+                        await self._agent.end_session(call_id)
+                    break
+
+        except Exception as err:
+            logger.exception("[VoiceAgentServer] /text-test error: %s", err)
+        finally:
+            if session_task and not session_task.done():
+                session_task.cancel()
+                try:
+                    await session_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+            if call_id:
+                await self._agent.end_session(call_id)
+                logger.info("[VoiceAgentServer] text-test callId=%s disconnected", call_id)
+
+    async def _send_json(self, ws: Any, obj: dict[str, Any]) -> None:
+        try:
+            if _ws_is_open(ws):
+                await ws.send(json.dumps(obj, ensure_ascii=False))
+        except Exception as err:
+            logger.warning("[VoiceAgentServer] send_json failed: %s", err)
 
     async def _handle_audio_stream(self, ws: Any) -> None:
         """处理 FreeSWITCH /audio-stream 连接。"""
         call_id: Optional[str] = None
         metadata: Optional[dict[str, Any]] = None
         session_task: Optional[asyncio.Task[None]] = None
+        inbound_chunks = 0
+        inbound_bytes = 0
 
         logger.info("[VoiceAgentServer] new /audio-stream connection")
         try:
@@ -153,8 +267,20 @@ class VoiceAgentServer:
                 if metadata is None:
                     # 第一帧 JSON metadata
                     try:
-                        metadata = json.loads(msg)
-                    except (json.JSONDecodeError, TypeError) as err:
+                        raw_metadata = (
+                            msg.decode("utf-8") if isinstance(msg, bytes) else msg
+                        )
+                        if raw_metadata.startswith("base64:"):
+                            raw_metadata = base64.b64decode(
+                                raw_metadata.removeprefix("base64:")
+                            ).decode("utf-8")
+                        metadata = json.loads(raw_metadata)
+                    except (
+                        ValueError,
+                        UnicodeDecodeError,
+                        json.JSONDecodeError,
+                        TypeError,
+                    ) as err:
                         logger.error(
                             "[VoiceAgentServer] parse metadata failed: %s", err
                         )
@@ -182,6 +308,14 @@ class VoiceAgentServer:
                 else:
                     # 后续二进制 PCM 帧
                     if isinstance(msg, bytes) and call_id:
+                        inbound_chunks += 1
+                        inbound_bytes += len(msg)
+                        if inbound_chunks == 1:
+                            logger.info(
+                                "[MediaIn] callId=%s first PCM chunk bytes=%d",
+                                call_id,
+                                len(msg),
+                            )
                         await self._agent.receive_audio(call_id, msg)
         except Exception as err:
             logger.exception("[VoiceAgentServer] connection error: %s", err)
@@ -193,6 +327,12 @@ class VoiceAgentServer:
                 except (asyncio.CancelledError, Exception):
                     pass
             if call_id:
+                logger.info(
+                    "[MediaIn] callId=%s complete chunks=%d bytes=%d",
+                    call_id,
+                    inbound_chunks,
+                    inbound_bytes,
+                )
                 await self._agent.end_session(call_id)
                 logger.info("[VoiceAgentServer] callId=%s disconnected", call_id)
 
@@ -244,7 +384,14 @@ class VoiceAgentServer:
                 variables[var] = metadata.get(var, DEFAULT_VARIABLES.get(var, ""))
 
         # 3) 构造 callbacks 并启动会话
-        callbacks = WebSocketCallbacks(ws, call_id, self._tasks)
+        callbacks = WebSocketCallbacks(
+            ws,
+            call_id,
+            self._tasks,
+            audio_response_format=str(
+                metadata.get("audio_response_format", "raw-pcm")
+            ),
+        )
         try:
             await self._agent.start_session(
                 call_id,
@@ -273,20 +420,40 @@ class WebSocketCallbacks:
     - on_escalate: fire-and-forget POST /api/tasks/{id}/transfer
     """
 
-    def __init__(self, ws: Any, call_id: str, tasks: TaskClient) -> None:
+    def __init__(
+        self,
+        ws: Any,
+        call_id: str,
+        tasks: TaskClient,
+        audio_response_format: str = "raw-pcm",
+    ) -> None:
         self._ws = ws
         self._call_id = call_id
         self._tasks = tasks
+        if audio_response_format not in {"raw-pcm", "base64-json", "esl-file"}:
+            raise ValueError(
+                f"Unsupported audio response format: {audio_response_format}"
+            )
+        self._audio_response_format = audio_response_format
+        self._output_chunks = 0
+        self._output_bytes = 0
+        self._playback_sequence = 0
+        self._playback_esl: Optional[_ESLClient] = None
+        self._playback_started_at = time.monotonic()
+        self._playback_buffer = bytearray()
+        playback_chunk_ms = int(os.getenv("FREESWITCH_PLAYBACK_CHUNK_MS", "960"))
+        self._playback_chunk_bytes = max(3200, playback_chunk_ms * 32)
 
     async def on_agent_speech(self, text: str) -> None:
         logger.info("[Agent] 🤖 %s", text)
-        await self._send_json({"type": "agent_speech", "text": text})
-        # fire-and-forget 上报 transcript
+        # 不通过 WS 发送 JSON 字幕：STREAM_PLAYBACK=true 时 JSON 会被当作音频播放产生噪声
+        # 仅通过 NestJS API 上报 transcript
         await self._tasks.append_transcript(self._call_id, "agent", text)
 
     async def on_caller_speech(self, text: str) -> None:
         logger.info("[Caller] 👤 %s", text)
-        await self._send_json({"type": "caller_speech", "text": text})
+        # 不通过 WS 发送 JSON 字幕：STREAM_PLAYBACK=true 时 JSON 会被当作音频播放产生噪声
+        # 仅通过 NestJS API 上报 transcript
         await self._tasks.append_transcript(self._call_id, "caller", text)
 
     async def on_tool_call(self, call: ToolCall, result: ToolResult) -> None:
@@ -299,10 +466,105 @@ class WebSocketCallbacks:
 
     async def on_audio_output(self, audio: bytes) -> None:
         """把 TTS 合成的 PCM 音频推回给 FreeSWITCH 播放。"""
+        self._output_chunks += 1
+        self._output_bytes += len(audio)
+        if self._audio_response_format == "esl-file":
+            self._playback_buffer.extend(audio)
+            while len(self._playback_buffer) >= self._playback_chunk_bytes:
+                chunk = bytes(self._playback_buffer[: self._playback_chunk_bytes])
+                del self._playback_buffer[: self._playback_chunk_bytes]
+                await self._play_audio_chunk(chunk)
+            return
+        if self._output_chunks == 1 or self._output_chunks % 50 == 0:
+            logger.info(
+                "[MediaOut] callId=%s chunks=%d bytes=%d format=%s",
+                self._call_id,
+                self._output_chunks,
+                self._output_bytes,
+                self._audio_response_format,
+            )
+        if self._audio_response_format == "base64-json":
+            await self._send_json(
+                {
+                    "type": "streamAudio",
+                    "data": {
+                        "audioDataType": "raw",
+                        "sampleRate": 16000,
+                        "audioData": base64.b64encode(audio).decode("ascii"),
+                    },
+                }
+            )
+            return
         await self._send_bytes(audio)
 
+    async def on_audio_output_complete(self) -> None:
+        """结束当前流式文件播放批次。"""
+        if self._audio_response_format == "esl-file":
+            if self._playback_buffer:
+                chunk = bytes(self._playback_buffer)
+                self._playback_buffer.clear()
+                await self._play_audio_chunk(chunk)
+            logger.info(
+                "[Playback] callId=%s stream complete source_chunks=%d files=%d bytes=%d",
+                self._call_id,
+                self._output_chunks,
+                self._playback_sequence,
+                self._output_bytes,
+            )
+
+    async def _play_audio_chunk(self, audio: bytes) -> None:
+        """将一个聚合 PCM 分片写为 WAV 并排队到 FreeSWITCH。"""
+        self._playback_sequence += 1
+        host_dir = Path(
+            os.getenv(
+                "FREESWITCH_SHARED_RECORDINGS_HOST",
+                str(Path(__file__).resolve().parents[4] / "freeswitch" / "recordings"),
+            )
+        )
+        host_dir.mkdir(parents=True, exist_ok=True)
+        filename = f"tts-{self._call_id}-{self._playback_sequence}.wav"
+        host_path = host_dir / filename
+        container_dir = os.getenv(
+            "FREESWITCH_SHARED_RECORDINGS_CONTAINER",
+            "/var/lib/freeswitch/recordings",
+        ).rstrip("/")
+        container_path = f"{container_dir}/{filename}"
+
+        def write_wav() -> None:
+            with wave.open(str(host_path), "wb") as wav:
+                wav.setnchannels(1)
+                wav.setsampwidth(2)
+                wav.setframerate(16000)
+                wav.writeframes(audio)
+
+        await asyncio.to_thread(write_wav)
+        if self._playback_esl is None:
+            self._playback_esl = await _get_shared_esl_client()
+        response = await self._playback_esl.api(
+            f"uuid_broadcast {self._call_id} {container_path} aleg"
+        )
+        if self._playback_sequence == 1:
+            logger.info(
+                "[Playback] callId=%s first chunk bytes=%d latency_ms=%d ESL=%s",
+                self._call_id,
+                len(audio),
+                int((time.monotonic() - self._playback_started_at) * 1000),
+                response,
+            )
+
+    async def on_node_enter(self, node_id: str, node_name: str) -> None:
+        pass
+
+    async def on_action(self, action_type: str, config: dict) -> None:
+        pass
+
     async def on_end(self, reason: str) -> None:
-        logger.info("[End] 📞 %s", reason)
+        logger.info(
+            "[End] 📞 %s media_out_chunks=%d media_out_bytes=%d",
+            reason,
+            self._output_chunks,
+            self._output_bytes,
+        )
 
     async def _send_json(self, obj: dict[str, Any]) -> None:
         try:
@@ -317,3 +579,81 @@ class WebSocketCallbacks:
                 await self._ws.send(data)
         except Exception as err:
             logger.warning("[WebSocketCallbacks] send_bytes failed: %s", err)
+
+
+async def _read_esl_frame(reader: asyncio.StreamReader) -> tuple[dict[str, str], bytes]:
+    raw_headers = await reader.readuntil(b"\n\n")
+    headers: dict[str, str] = {}
+    for raw_line in raw_headers.decode("utf-8", errors="replace").splitlines():
+        if ":" in raw_line:
+            key, value = raw_line.split(":", 1)
+            headers[key.strip().lower()] = value.strip()
+    length = int(headers.get("content-length", "0"))
+    body = await reader.readexactly(length) if length else b""
+    return headers, body
+
+
+class _ESLClient:
+    def __init__(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
+        self._reader = reader
+        self._writer = writer
+        self._command_lock = asyncio.Lock()
+
+    @classmethod
+    async def connect(cls) -> "_ESLClient":
+        host = os.getenv("FREESWITCH_ESL_HOST", "127.0.0.1")
+        port = int(os.getenv("FREESWITCH_ESL_PORT", "18021"))
+        password = os.getenv("FREESWITCH_ESL_PASSWORD", "ClueCon")
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(host, port), timeout=5
+        )
+        headers, _ = await asyncio.wait_for(_read_esl_frame(reader), timeout=5)
+        if headers.get("content-type") != "auth/request":
+            raise RuntimeError(f"unexpected ESL greeting: {headers}")
+        writer.write(f"auth {password}\n\n".encode())
+        await writer.drain()
+        auth_headers, _ = await asyncio.wait_for(_read_esl_frame(reader), timeout=5)
+        if not auth_headers.get("reply-text", "").startswith("+OK"):
+            raise RuntimeError("ESL authentication failed")
+        return cls(reader, writer)
+
+    async def api(self, command: str) -> str:
+        async with self._command_lock:
+            self._writer.write(f"api {command}\n\n".encode())
+            await self._writer.drain()
+            _, body = await asyncio.wait_for(_read_esl_frame(self._reader), timeout=5)
+            response = body.decode("utf-8", errors="replace").strip()
+            if response.startswith("-ERR"):
+                raise RuntimeError(response)
+            return response
+
+    @property
+    def is_open(self) -> bool:
+        return not self._writer.is_closing()
+
+    async def close(self) -> None:
+        self._writer.close()
+        await self._writer.wait_closed()
+
+
+async def _send_esl_api(command: str) -> str:
+    client = await _get_shared_esl_client()
+    return await client.api(command)
+
+
+_shared_esl_client: Optional[_ESLClient] = None
+_shared_esl_connect_lock: Optional[asyncio.Lock] = None
+
+
+async def _get_shared_esl_client() -> _ESLClient:
+    global _shared_esl_client, _shared_esl_connect_lock
+    if _shared_esl_client is not None and _shared_esl_client.is_open:
+        return _shared_esl_client
+    if _shared_esl_connect_lock is None:
+        _shared_esl_connect_lock = asyncio.Lock()
+    async with _shared_esl_connect_lock:
+        if _shared_esl_client is None or not _shared_esl_client.is_open:
+            _shared_esl_client = await _ESLClient.connect()
+        return _shared_esl_client

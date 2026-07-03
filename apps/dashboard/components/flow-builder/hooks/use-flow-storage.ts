@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useFlowStore } from '../store/flow-store';
-import { apiClient } from '@/lib/api';
+import { useTaskFlowMutations } from '@/hooks/use-task-flows';
+import { appToast } from '@/lib/toast';
 
 export type SaveStatus = 'idle' | 'saving' | 'saved' | 'error';
 
@@ -15,6 +16,7 @@ export type SaveStatus = 'idle' | 'saving' | 'saved' | 'error';
 export function useFlowStorage(flowId: string) {
   const nodes = useFlowStore((s) => s.nodes);
   const edges = useFlowStore((s) => s.edges);
+  const { update } = useTaskFlowMutations();
   const [status, setStatus] = useState<SaveStatus>('idle');
   const firstLoadRef = useRef(true);
 
@@ -30,7 +32,7 @@ export function useFlowStorage(flowId: string) {
     setStatus('saving');
     const timer = setTimeout(async () => {
       try {
-        await apiClient.taskFlows.update(flowId, { nodes, edges });
+        await update(flowId, { nodes, edges });
         setStatus('saved');
       } catch (err) {
         console.error('Auto-save failed:', err);
@@ -39,15 +41,16 @@ export function useFlowStorage(flowId: string) {
     }, 2000);
 
     return () => clearTimeout(timer);
-  }, [nodes, edges, flowId]);
+  }, [nodes, edges, flowId, update]);
 
   const saveNow = async () => {
     setStatus('saving');
     try {
-      await apiClient.taskFlows.update(flowId, { nodes, edges });
+      await update(flowId, { nodes, edges });
       setStatus('saved');
     } catch (err) {
       console.error('Save failed:', err);
+      appToast.error(err);
       setStatus('error');
     }
   };

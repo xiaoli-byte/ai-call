@@ -1,5 +1,6 @@
 import { Controller, Get, Param } from '@nestjs/common';
 import { Scenario, SCENARIO_CONFIGS } from '@ai-call/shared';
+import { Public } from '../auth/decorators/public.decorator.js';
 
 /**
  * 场景配置 Controller
@@ -8,6 +9,7 @@ import { Scenario, SCENARIO_CONFIGS } from '@ai-call/shared';
  * 工具白名单、转人工规则。
  */
 @Controller('scenarios')
+@Public()
 export class ScenariosController {
   /** 列出所有场景配置 */
   @Get()

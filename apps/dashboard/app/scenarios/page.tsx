@@ -1,4 +1,4 @@
-import { apiClient } from '@/lib/api';
+import { apiServer } from '@/lib/api/server';
 
 const SCENARIO_BADGE: Record<string, string> = {
   collection: 'badge-warning',
@@ -7,9 +7,9 @@ const SCENARIO_BADGE: Record<string, string> = {
 };
 
 export default async function ScenariosPage() {
-  let scenarios: Awaited<ReturnType<typeof apiClient.listScenarios>> = [];
+  let scenarios: Awaited<ReturnType<typeof apiServer.listScenarios>> = [];
   try {
-    scenarios = await apiClient.listScenarios();
+    scenarios = await apiServer.listScenarios();
   } catch {
     // 后端未启动时使用内置配置展示
   }

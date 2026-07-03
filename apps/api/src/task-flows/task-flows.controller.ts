@@ -11,10 +11,11 @@ import {
   UsePipes,
   ValidationPipe,
 } from '@nestjs/common';
-import { FlowStatus } from '@ai-call/shared';
+import { FlowStatus, PERMISSIONS } from '@ai-call/shared';
 import { TaskFlowsService } from './task-flows.service.js';
 import { CreateTaskFlowDto } from './dto/create-task-flow.dto.js';
 import { UpdateTaskFlowDto } from './dto/update-task-flow.dto.js';
+import { Permissions } from '../auth/decorators/permissions.decorator.js';
 
 /**
  * 外呼任务流程 Controller
@@ -30,10 +31,12 @@ import { UpdateTaskFlowDto } from './dto/update-task-flow.dto.js';
  *  - POST   /api/task-flows/:id/duplicate 复制（基于现有创建新草稿）
  */
 @Controller('task-flows')
+@Permissions(PERMISSIONS.FLOW_READ)
 export class TaskFlowsController {
   constructor(private readonly taskFlowsService: TaskFlowsService) {}
 
   @Post()
+  @Permissions(PERMISSIONS.FLOW_CREATE)
   @UsePipes(new ValidationPipe({ transform: true }))
   create(@Body() dto: CreateTaskFlowDto) {
     return this.taskFlowsService.create(dto);
@@ -60,6 +63,7 @@ export class TaskFlowsController {
   }
 
   @Patch(':id')
+  @Permissions(PERMISSIONS.FLOW_UPDATE)
   @UsePipes(new ValidationPipe({ transform: true }))
   update(@Param('id') id: string, @Body() dto: UpdateTaskFlowDto) {
     return this.taskFlowsService.update(id, dto);
@@ -67,27 +71,32 @@ export class TaskFlowsController {
 
   @Delete(':id')
   @HttpCode(204)
+  @Permissions(PERMISSIONS.FLOW_DELETE)
   async remove(@Param('id') id: string) {
     await this.taskFlowsService.remove(id);
   }
 
   @Post(':id/publish')
+  @Permissions(PERMISSIONS.FLOW_PUBLISH)
   publish(@Param('id') id: string) {
     return this.taskFlowsService.publish(id);
   }
 
   @Post(':id/archive')
+  @Permissions(PERMISSIONS.FLOW_UPDATE)
   archive(@Param('id') id: string) {
     return this.taskFlowsService.archive(id);
   }
 
   @Post(':id/duplicate')
+  @Permissions(PERMISSIONS.FLOW_CREATE)
   duplicate(@Param('id') id: string) {
     return this.taskFlowsService.duplicate(id);
   }
 
   @Post(':id/test')
   @HttpCode(200)
+  @Permissions(PERMISSIONS.FLOW_UPDATE)
   async test(@Param('id') id: string, @Body() body: { input?: string }) {
     return this.taskFlowsService.testFlow(id, body?.input ?? '');
   }

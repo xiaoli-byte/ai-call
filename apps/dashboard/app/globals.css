@@ -152,11 +152,83 @@ body {
   position: sticky;
   top: 0;
   height: 100vh;
+  transition: width 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.sidebar-collapsed {
+  width: 64px;
 }
 
 .sidebar-header {
   padding: 20px 20px 16px;
   border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.sidebar-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.sidebar-toggle:hover {
+  background: var(--gray-100);
+  color: var(--text);
+}
+
+.sidebar-collapsed .sidebar-header {
+  padding: 16px 8px;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.sidebar-collapsed .brand {
+  justify-content: center;
+}
+
+.sidebar-collapsed .brand-text,
+.sidebar-collapsed .nav-group-label,
+.sidebar-collapsed .nav-item span,
+.sidebar-collapsed .user-info {
+  display: none;
+}
+
+.sidebar-collapsed .nav-item {
+  justify-content: center;
+  padding: 10px 8px;
+}
+
+.sidebar-collapsed .nav-group {
+  margin-top: 8px;
+}
+
+.sidebar-collapsed .sidebar-nav {
+  padding: 12px 8px;
+}
+
+.sidebar-collapsed .user-card {
+  justify-content: center;
+  padding: 8px;
+}
+
+.sidebar-collapsed .user-card .topbar-action {
+  display: none;
+}
+
+.sidebar-collapsed .sidebar-footer {
+  padding: 8px;
 }
 
 .brand {

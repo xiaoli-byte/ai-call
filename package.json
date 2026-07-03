@@ -26,7 +26,11 @@
     "dev:funasr:test": "cd services/funasr-server && .venv/Scripts/python.exe -m pytest tests/ -v",
     "dev:dashboard": "turbo run dev --filter=@ai-call/dashboard",
     "freeswitch:up": "docker compose -f freeswitch/docker-compose.yml up -d",
-    "freeswitch:down": "docker compose -f freeswitch/docker-compose.yml down"
+    "freeswitch:down": "docker compose -f freeswitch/docker-compose.yml down",
+    "freeswitch:local:start": "powershell -ExecutionPolicy Bypass -File freeswitch/local/start.ps1",
+    "freeswitch:local:check": "powershell -ExecutionPolicy Bypass -File freeswitch/local/check.ps1",
+    "freeswitch:local:call": "powershell -ExecutionPolicy Bypass -File freeswitch/local/call.ps1",
+    "freeswitch:docker:call-audio": "powershell -ExecutionPolicy Bypass -File freeswitch/local/call-audio.ps1"
   },
   "devDependencies": {
     "turbo": "^2.1.0",

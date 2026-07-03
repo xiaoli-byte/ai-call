@@ -1,9 +1,9 @@
 'use client';
 
 import { useState } from 'react';
-import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { apiClient } from '@/lib/api';
+import { useTaskFlowMutations } from '@/hooks/use-task-flows';
+import { appToast } from '@/lib/toast';
 import type { FlowStatus } from '@ai-call/shared';
 import {
   Dialog,
@@ -23,19 +23,17 @@ interface FlowRowActionsProps {
 type Action = 'publish' | 'archive' | 'duplicate' | 'delete' | null;
 
 export function FlowRowActions({ id, status, name }: FlowRowActionsProps) {
-  const router = useRouter();
   const [pending, setPending] = useState<Action>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { publish, archive, duplicate, remove } = useTaskFlowMutations();
 
-  async function run(action: Action, fn: () => Promise<unknown>) {
+  async function run(action: Action, fn: () => Promise<unknown>, successMsg: string) {
     setPending(action);
-    setError(null);
     try {
       await fn();
-      router.refresh();
+      appToast.success(successMsg);
     } catch (e) {
-      setError(e instanceof Error ? e.message : '操作失败');
+      appToast.error(e);
     } finally {
       setPending(null);
       setConfirmDelete(false);
@@ -47,11 +45,6 @@ export function FlowRowActions({ id, status, name }: FlowRowActionsProps) {
 
   return (
     <div className="row-actions" style={{ justifyContent: 'flex-end' }}>
-      {error && (
-        <span className="badge badge-danger" style={{ marginRight: 8 }}>
-          {error}
-        </span>
-      )}
       <Link href={`/task-flows/${id}`} className="btn btn-secondary btn-sm">
         编辑
       </Link>
@@ -60,7 +53,7 @@ export function FlowRowActions({ id, status, name }: FlowRowActionsProps) {
           type="button"
           className="btn btn-sm"
           disabled={pending !== null}
-          onClick={() => run('publish', () => apiClient.taskFlows.publish(id))}
+          onClick={() => run('publish', () => publish(id), '流程已发布')}
         >
           {pending === 'publish' ? '发布中…' : '发布'}
         </button>
@@ -70,7 +63,7 @@ export function FlowRowActions({ id, status, name }: FlowRowActionsProps) {
           type="button"
           className="btn btn-secondary btn-sm"
           disabled={pending !== null}
-          onClick={() => run('archive', () => apiClient.taskFlows.archive(id))}
+          onClick={() => run('archive', () => archive(id), '流程已归档')}
         >
           {pending === 'archive' ? '归档中…' : '归档'}
         </button>
@@ -79,7 +72,7 @@ export function FlowRowActions({ id, status, name }: FlowRowActionsProps) {
         type="button"
         className="btn btn-secondary btn-sm"
         disabled={pending !== null}
-        onClick={() => run('duplicate', () => apiClient.taskFlows.duplicate(id))}
+        onClick={() => run('duplicate', () => duplicate(id), '流程已复制')}
       >
         {pending === 'duplicate' ? '复制中…' : '复制'}
       </button>
@@ -113,9 +106,7 @@ export function FlowRowActions({ id, status, name }: FlowRowActionsProps) {
               type="button"
               className="btn btn-danger btn-sm"
               disabled={pending !== null}
-              onClick={() =>
-                run('delete', () => apiClient.taskFlows.remove(id))
-              }
+              onClick={() => run('delete', () => remove(id), '流程已删除')}
             >
               {pending === 'delete' ? '删除中…' : '确认删除'}
             </button>

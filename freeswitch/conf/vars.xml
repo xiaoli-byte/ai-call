@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 全局变量定义：被 include 的文件必须用 include 根节点，不能用 document，
+     否则 FreeSWITCH 预处理器无法正确执行 set 指令 -->
+<include>
+  <!-- ==================== IP 与域名 ==================== -->
+  <!-- local_ip_v4 是 FreeSWITCH 内置动态变量，启动时自动检测容器 IP，无需 set 覆盖 -->
+  <!-- 如果用 set data="local_ip_v4=auto" 会把它变成字符串 "auto"，破坏自动检测 -->
+  <X-PRE-PROCESS cmd="set" data="domain=192.168.0.104"/>
+
+  <!-- Docker Desktop 对外发布地址：SIP/SDP 必须声明宿主机 LAN IP，不能声明容器 IP -->
+  <X-PRE-PROCESS cmd="set" data="external_sip_ip=192.168.0.104"/>
+  <X-PRE-PROCESS cmd="set" data="external_rtp_ip=192.168.0.104"/>
+
+  <!-- 其他机器联调时将上述地址改为实际宿主机 LAN IP；公网环境再改为 STUN。 -->
+  <!-- 注意：不要把 X-PRE-PROCESS 指令放进 XML 注释，FreeSWITCH 仍可能执行它。 -->
+
+  <!-- ==================== SIP 端口 ==================== -->
+  <X-PRE-PROCESS cmd="set" data="sip_port=5060"/>
+
+  <!-- ==================== RTP 端口范围 ==================== -->
+  <X-PRE-PROCESS cmd="set" data="rtp_start_port=16384"/>
+  <X-PRE-PROCESS cmd="set" data="rtp_end_port=16394"/>
+
+  <!-- ==================== 分机密码 ==================== -->
+  <X-PRE-PROCESS cmd="set" data="default_password=1234"/>
+
+  <!-- ==================== Voice Agent WebSocket ==================== -->
+  <X-PRE-PROCESS cmd="set" data="voice_agent_ws_url=ws://host.docker.internal:8090/audio-stream"/>
+</include>

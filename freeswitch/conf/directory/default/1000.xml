@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<user id="1000">
+  <params>
+    <param name="password" value="$${default_password}"/>
+  </params>
+  <variables>
+    <variable name="accountcode" value="1000"/>
+    <variable name="user_context" value="default"/>
+    <variable name="effective_caller_id_name" value="Extension 1000"/>
+    <variable name="effective_caller_id_number" value="1000"/>
+  </variables>
+</user>

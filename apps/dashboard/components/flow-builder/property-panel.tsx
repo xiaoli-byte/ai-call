@@ -10,6 +10,23 @@ import { NODE_META } from './types/flow';
 import type { FlowNode } from '@ai-call/shared';
 import styles from './flow-builder.module.scss';
 
+function CloseButton({ onClose }: { onClose: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClose}
+      className={styles.flowPropertyPanelClose}
+      title="关闭"
+      aria-label="关闭"
+    >
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+        <line x1="18" y1="6" x2="6" y2="18" />
+        <line x1="6" y1="6" x2="18" y2="18" />
+      </svg>
+    </button>
+  );
+}
+
 export function PropertyPanel() {
   const nodes = useFlowStore((s) => s.nodes);
   const edges = useFlowStore((s) => s.edges);
@@ -17,9 +34,12 @@ export function PropertyPanel() {
   const selectedEdgeId = useFlowStore((s) => s.selectedEdgeId);
   const updateNode = useFlowStore((s) => s.updateNode);
   const deleteNode = useFlowStore((s) => s.deleteNode);
+  const setSelectedNode = useFlowStore((s) => s.setSelectedNode);
 
   const node = nodes.find((n) => n.id === selectedNodeId);
   const edge = edges.find((e) => e.id === selectedEdgeId);
+
+  const close = () => setSelectedNode(undefined);
 
   // 优先：边选中 → 显示 Edge 表单（分支条件）
   if (edge) {
@@ -43,6 +63,9 @@ export function PropertyPanel() {
               </div>
             </div>
           </div>
+          <div className={styles.flowPropertyPanelHeaderActions}>
+            <CloseButton onClose={close} />
+          </div>
         </div>
         <div className={styles.flowPropertyPanelBody}>
           <EdgeForm edge={edge} sourceNode={sourceNode} targetNode={targetNode} />
@@ -51,24 +74,8 @@ export function PropertyPanel() {
     );
   }
 
-  if (!node) {
-    return (
-      <aside className={styles.flowPropertyPanel}>
-        <div className={styles.flowPropertyPanelBody}>
-          <div className={styles.flowPropertyPanelEmpty}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-              <rect x="3" y="3" width="18" height="18" rx="2" />
-              <path d="M9 9h6v6H9z" />
-            </svg>
-            <div>选择节点查看属性</div>
-            <div style={{ marginTop: 4, fontSize: 12 }}>
-              点击节点编辑配置，点击连线编辑分支条件
-            </div>
-          </div>
-        </div>
-      </aside>
-    );
-  }
+  // 无节点选中时不占位，画布占满
+  if (!node) return null;
 
   const meta = NODE_META[node.type];
   const Icon = meta.icon;
@@ -85,19 +92,22 @@ export function PropertyPanel() {
             <div className={styles.flowPropertyPanelSubtitle}>#{node.id.slice(0, 8)}</div>
           </div>
         </div>
-        {node.type !== 'start' && (
-          <button
-            type="button"
-            onClick={() => deleteNode(node.id)}
-            className={styles.flowPropertyPanelDelete}
-            title="删除节点"
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-              <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
-            </svg>
-            删除
-          </button>
-        )}
+        <div className={styles.flowPropertyPanelHeaderActions}>
+          {node.type !== 'start' && (
+            <button
+              type="button"
+              onClick={() => deleteNode(node.id)}
+              className={styles.flowPropertyPanelDelete}
+              title="删除节点"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+              </svg>
+              删除
+            </button>
+          )}
+          <CloseButton onClose={close} />
+        </div>
       </div>
 
       <div className={styles.flowPropertyPanelBody}>

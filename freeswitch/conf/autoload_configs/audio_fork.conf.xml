@@ -1,36 +1,41 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  mod_audio_fork 配置
+  [文档参考] mod_audio_fork 配置说明
 
-  模块功能：把通话双方的 RTP 音频实时 fork 到 WebSocket 服务器
-  下游：Voice Agent（services/voice-agent，Python）的 WebSocket 接收端
+  本项目使用 drachtio/drachtio-freeswitch-mrf:v1.10.1-full 镜像预装的 mod_audio_fork。
+  选择原因：signalwire/freeswitch:1.10.11-release 国内无法拉取（Docker Hub 限速+仓库可能私有）；
+            drachtio 镜像开箱即用，预装 mod_audio_fork.so，免编译免 apt install。
 
-  安装说明：
-    1. mod_audio_fork 不在 FreeSWITCH 默认镜像中，需单独编译
-    2. 源码：https://github.com/iorc/mod_audio_fork
-    3. 编译后复制 mod_audio_fork.so 到 /usr/lib/freeswitch/mod/
-    4. 也可改用 signalwire 商业版 mod_audio_socket
+  mod_audio_fork 不读取此文件，其配置方式为：
 
-  数据格式：
+  1. 通道变量（dialplan 中 set）：
+     - STREAM_PLAYBACK=true        启用回播（Voice Agent 推回 TTS 音频）
+     - STREAM_SAMPLE_RATE=16000    采样率
+     - STREAM_SUPPRESS_LOG=true    抑制日志
+     - STREAM_BUFFER_SIZE=20       缓冲时长（ms，可被 20 整除）
+
+  2. API 命令（drachtio 版 mod_audio_fork 注册的 API）：
+     uuid_audio_fork <uuid> start <ws-url> <mix-type> <rate> [metadata]
+     uuid_audio_fork <uuid> stop [metadata]
+     uuid_audio_fork <uuid> pause
+     uuid_audio_fork <uuid> resume
+     uuid_audio_fork <uuid> send_text <metadata>
+
+  3. 镜像信息：
+     - 仓库：docker.io/drachtio/drachtio-freeswitch-mrf:v1.10.1-full
+     - 基础系统：Debian 9 (stretch)
+     - FreeSWITCH 版本：1.10.1-release (2019-08)
+     - 配置路径：/usr/local/freeswitch/conf/
+     - 二进制：/usr/local/freeswitch/bin/freeswitch
+     - 模块路径：/usr/local/freeswitch/mod/
+     - 依赖：libwebsockets.so.15
+
+  数据格式（与 Voice Agent server.py 协议一致）：
     - 第一帧为 JSON metadata（dialog_id, caller_id 等）
-    - 后续帧为 16-bit PCM 音频，8kHz/16kHz 可选
-    - 双向音频，可区分 caller 与 callee
+    - 后续帧为 16-bit PCM 音频，16kHz mono
+    - 双向音频：STREAM_PLAYBACK=true 时接收二进制 PCM 自动播放
+
+  此文件保留仅作文档参考，不会被任何模块读取。
 -->
-<configuration name="audio_fork.conf" description="Audio Fork Module">
-  <settings>
-    <!-- WebSocket 目标地址（Voice Agent 接收音频的端点） -->
-    <param name="ws-url" value="ws://host.docker.internal:8090/audio-stream"/>
-
-    <!-- 采样率：电话语音用 8000，VoIP/WebRTC 用 16000 -->
-    <param name="sample-rate" value="16000"/>
-
-    <!-- 启用 SSL（生产环境） -->
-    <!-- <param name="ssl-cert" value="/path/to/cert.pem"/> -->
-
-    <!-- 重连间隔（秒） -->
-    <param name="reconnect-interval" value="5"/>
-
-    <!-- 调试日志 -->
-    <param name="debug" value="true"/>
-  </settings>
+<configuration name="audio_fork.conf" description="[DOC-ONLY] mod_audio_fork reference">
 </configuration>

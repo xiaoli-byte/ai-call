@@ -107,6 +107,7 @@
   flex-direction: row;
   min-height: 0;
   overflow: hidden;
+  position: relative;
 }
 
 .flowEditorCanvas {
@@ -453,13 +454,24 @@
    ============================================================ */
 
 .flowPropertyPanel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
   width: 340px;
-  flex-shrink: 0;
   background: var(--bg-elevated);
   border-left: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  z-index: 20;
+  box-shadow: var(--shadow-md);
+  animation: propertyPanelSlideIn 0.2s ease-out;
+}
+
+@keyframes propertyPanelSlideIn {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
 }
 
 .flowPropertyPanelHeader {
@@ -520,6 +532,32 @@
 .flowPropertyPanelDelete:hover {
   background: #fef2f2;
   border-color: rgba(239, 68, 68, 0.2);
+}
+
+.flowPropertyPanelHeaderActions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.flowPropertyPanelClose {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.flowPropertyPanelClose:hover {
+  background: var(--gray-100);
+  color: var(--text);
 }
 
 .flowPropertyPanelBody {

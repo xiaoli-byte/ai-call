@@ -104,6 +104,7 @@ class VoiceAgent:
         self._speaking: dict[str, bool] = {}
         self._ended: set[str] = set()
         self._escalated: set[str] = set()  # 标记本次会话是否触发过转人工
+        self._dry_run: dict[str, bool] = {}  # 调试模式标记（按 call_id）
 
     async def start_session(
         self,
@@ -112,6 +113,7 @@ class VoiceAgent:
         variables: dict[str, str],
         callbacks: AgentCallbacks,
         flow_version: Optional[dict[str, Any]] = None,
+        dry_run: bool = False,
     ) -> None:
         """启动新通话会话。"""
         # 初始化 session
@@ -129,6 +131,8 @@ class VoiceAgent:
         self._sessions[call_id] = session
         self._scenario_configs[call_id] = scenario
         self._callbacks[call_id] = callbacks
+        if dry_run:
+            self._dry_run[call_id] = True
 
         if flow_version:
             await self._run_flow(call_id, flow_version)
@@ -139,15 +143,16 @@ class VoiceAgent:
             await self._conversation_loop(call_id)
 
         # 会话结束上报
-        outcome = (
-            CallOutcome.ESCALATED
-            if call_id in self._escalated
-            else CallOutcome.COMPLETED
-        )
-        try:
-            await self._tasks.set_outcome(call_id, outcome.value)
-        except Exception as err:
-            logger.warning("[VoiceAgent] set_outcome failed: %s", err)
+        if not self._dry_run.get(call_id):
+            outcome = (
+                CallOutcome.ESCALATED
+                if call_id in self._escalated
+                else CallOutcome.COMPLETED
+            )
+            try:
+                await self._tasks.set_outcome(call_id, outcome.value)
+            except Exception as err:
+                logger.warning("[VoiceAgent] set_outcome failed: %s", err)
 
         await callbacks.on_end("对话结束")
 
@@ -164,7 +169,7 @@ class VoiceAgent:
         from .flow_types import TaskFlow as TaskFlowModel
 
         flow_model = TaskFlowModel.from_dict(flow)
-        adapter = _FlowExecutorAdapter(self, call_id)
+        adapter = _FlowExecutorAdapter(self, call_id, dry_run=self._dry_run.get(call_id, False))
         executor = FlowExecutor(flow_model, adapter)
         await executor.run(call_id)
 
@@ -323,7 +328,8 @@ class VoiceAgent:
         self._endpoint_waiters[call_id] = future
 
         try:
-            return await asyncio.wait_for(future, timeout=self._turn_timeout_s)
+            timeout = None if self._dry_run.get(call_id) else self._turn_timeout_s
+            return await asyncio.wait_for(future, timeout=timeout)
         except asyncio.TimeoutError:
             return ""
         finally:
@@ -335,20 +341,36 @@ class VoiceAgent:
         if callbacks:
             await callbacks.on_agent_speech(text)
 
+        if self._dry_run.get(call_id):
+            return
+
         if self._tts is None:
             return
 
         self._speaking[call_id] = True
         try:
+            tts_chunks = 0
+            tts_bytes = 0
 
             async def on_chunk(chunk: TTSChunk) -> None:
+                nonlocal tts_chunks, tts_bytes
                 # barge-in：speaking 标志为 False 时停止推送
                 if not self._speaking.get(call_id):
                     return
                 if callbacks and chunk.audio:
+                    tts_chunks += 1
+                    tts_bytes += len(chunk.audio)
                     await callbacks.on_audio_output(chunk.audio)
 
             await self._tts.synthesize(text, on_chunk)
+            if callbacks:
+                await callbacks.on_audio_output_complete()
+            logger.info(
+                "[VoiceAgent] call_id=%s TTS delivered chunks=%d bytes=%d",
+                call_id,
+                tts_chunks,
+                tts_bytes,
+            )
         except asyncio.CancelledError:
             logger.info("[VoiceAgent] call_id=%s TTS cancelled (barge-in)", call_id)
         finally:
@@ -404,6 +426,8 @@ class VoiceAgent:
         # VAD 切片（30ms 帧，frame_ms 决定每帧字节数）
         for frame in audio.split_into_frames(audio_bytes, self._vad_frame_ms, 16000):
             state, frames_to_send = vad.feed(frame)
+            if state in {"speech_start", "speech_end"}:
+                logger.info("[VAD] call_id=%s state=%s", call_id, state)
             for f in frames_to_send:
                 await stt.send_audio(f)
             if state == "speech_end":
@@ -411,6 +435,9 @@ class VoiceAgent:
 
     async def _on_stt_event(self, call_id: str, event: STTEvent) -> None:
         """STT 事件处理。"""
+        logger.info(
+            "[ASR] call_id=%s type=%s text=%s", call_id, event.type, event.text
+        )
         if event.type == "partial" and event.text:
             # 用户开始说话 → barge-in
             self._interrupt_speaking(call_id)
@@ -450,6 +477,7 @@ class VoiceAgent:
         self._callbacks.pop(call_id, None)
         self._injected_text.pop(call_id, None)
         self._speaking.pop(call_id, None)
+        self._dry_run.pop(call_id, None)
 
     async def close(self) -> None:
         """关闭所有共享资源（应用退出时调用）。"""
@@ -465,9 +493,10 @@ class VoiceAgent:
 class _FlowExecutorAdapter:
     """将 VoiceAgent 方法适配为 FlowExecutorCallbacks 接口。"""
 
-    def __init__(self, agent: "VoiceAgent", call_id: str) -> None:
+    def __init__(self, agent: "VoiceAgent", call_id: str, dry_run: bool = False) -> None:
         self._agent = agent
         self._call_id = call_id
+        self._dry_run = dry_run
 
     async def speak(self, call_id: str, text: str) -> None:
         await self._agent._speak(call_id, text)
@@ -501,6 +530,11 @@ class _FlowExecutorAdapter:
         if callbacks:
             await callbacks.on_tool_call(call, result)
 
+    async def on_node_enter(self, call_id: str, node_id: str, node_name: str) -> None:
+        callbacks = self._agent._callbacks.get(call_id)
+        if callbacks:
+            await callbacks.on_node_enter(node_id, node_name)
+
     def get_session_messages(self, call_id: str) -> list[ChatMessage]:
         return self._agent._sessions[call_id].messages
 
@@ -525,11 +559,18 @@ class _FlowExecutorAdapter:
     async def dispatch_action(
         self, call_id: str, action_type: str, config: dict[str, Any], idempotency_key: str
     ) -> bool:
+        if self._dry_run:
+            callbacks = self._agent._callbacks.get(call_id)
+            if callbacks:
+                await callbacks.on_action(action_type, dict(config))
+            return True
         return await self._agent._tasks.execute_action(
             call_id, action_type, config, idempotency_key
         )
 
     async def hangup_call(self, call_id: str) -> None:
+        if self._dry_run:
+            return
         try:
             await self._agent._tasks.hangup(call_id)
         except Exception as err:

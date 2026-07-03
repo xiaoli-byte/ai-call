@@ -373,7 +373,25 @@ async def ws_handler(websocket: WebSocket) -> None:
     )
 
     try:
-        async for message in websocket.iter_data():
+        while True:
+            try:
+                raw = await websocket.receive()
+            except WebSocketDisconnect:
+                break
+
+            if raw["type"] == "websocket.disconnect":
+                break
+
+            if raw["type"] != "websocket.receive":
+                continue
+
+            if "text" in raw:
+                message: str | bytes = raw["text"]
+            elif "bytes" in raw:
+                message = raw["bytes"]
+            else:
+                continue
+
             # ========== 1) JSON 配置帧 ==========
             if isinstance(message, str):
                 try:

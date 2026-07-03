@@ -39,6 +39,7 @@ Thumbs.db
 freeswitch/recordings/
 freeswitch/logs/
 freeswitch/db/
+freeswitch/runtime/
 
 # docker
 freeswitch/data/

@@ -12,9 +12,12 @@ import {
   UsePipes,
   ValidationPipe,
 } from '@nestjs/common';
+import { PERMISSIONS } from '@ai-call/shared';
 import { TasksService } from './tasks.service.js';
 import { CreateTaskDto } from './dto/create-task.dto.js';
 import { ServiceAuthGuard } from '../common/service-auth.guard.js';
+import { Permissions } from '../auth/decorators/permissions.decorator.js';
+import { Public } from '../auth/decorators/public.decorator.js';
 import {
   HangupDto,
   FlowActionDto,
@@ -42,6 +45,7 @@ export class TasksController {
 
   /** 创建外呼任务 */
   @Post()
+  @Permissions(PERMISSIONS.TASK_CREATE)
   @UsePipes(new ValidationPipe({ transform: true }))
   create(@Body() dto: CreateTaskDto) {
     return this.tasksService.create(dto);
@@ -49,18 +53,21 @@ export class TasksController {
 
   /** 列表查询 */
   @Get()
+  @Permissions(PERMISSIONS.TASK_READ)
   list(@Query() query: ListTasksDto) {
     return this.tasksService.list(query);
   }
 
   /** 获取任务详情 */
   @Get(':id/context')
+  @Public()
   @UseGuards(ServiceAuthGuard)
   getContext(@Param('id') id: string) {
     return this.tasksService.getContext(id);
   }
 
   @Get(':id')
+  @Permissions(PERMISSIONS.TASK_READ)
   get(@Param('id') id: string) {
     return this.tasksService.get(id);
   }
@@ -68,12 +75,14 @@ export class TasksController {
   /** 派发外呼任务 - 通过 FreeSWITCH ESL originate 发起呼叫 */
   @Post(':id/dispatch')
   @HttpCode(202)
+  @Permissions(PERMISSIONS.TASK_DISPATCH)
   async dispatch(@Param('id') id: string) {
     return this.tasksService.dispatch(id);
   }
 
   /** 更新任务状态 */
   @Patch(':id/status')
+  @Public()
   @UseGuards(ServiceAuthGuard)
   updateStatus(
     @Param('id') id: string,
@@ -84,6 +93,7 @@ export class TasksController {
 
   /** 上报对话转写条目（Voice Agent 调用） */
   @Patch(':id/transcript')
+  @Public()
   @UseGuards(ServiceAuthGuard)
   appendTranscript(
     @Param('id') id: string,
@@ -98,6 +108,7 @@ export class TasksController {
 
   /** 上报通话结果（Voice Agent 调用） */
   @Patch(':id/outcome')
+  @Public()
   @UseGuards(ServiceAuthGuard)
   setOutcome(
     @Param('id') id: string,
@@ -109,6 +120,7 @@ export class TasksController {
   /** 转人工（Voice Agent 在 onEscalate 时调用） */
   @Post(':id/transfer')
   @HttpCode(202)
+  @Public()
   @UseGuards(ServiceAuthGuard)
   async transfer(
     @Param('id') id: string,
@@ -120,6 +132,7 @@ export class TasksController {
   /** 挂机（Voice Agent 通话结束时调用）*/
   @Post(':id/hangup')
   @HttpCode(200)
+  @Public()
   @UseGuards(ServiceAuthGuard)
   hangup(
     @Param('id') id: string,
@@ -131,6 +144,7 @@ export class TasksController {
   /** Voice Agent 将 SMS/API 动作可靠写入 outbox。 */
   @Post(':id/actions')
   @HttpCode(202)
+  @Public()
   @UseGuards(ServiceAuthGuard)
   enqueueAction(
     @Param('id') id: string,
@@ -143,6 +157,7 @@ export class TasksController {
   /** 删除任务 */
   @Post(':id/delete')
   @HttpCode(204)
+  @Permissions(PERMISSIONS.TASK_DELETE)
   async remove(@Param('id') id: string) {
     await this.tasksService.remove(id);
   }

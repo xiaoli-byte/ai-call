@@ -6,49 +6,46 @@
 #
 # 验证：
 #   docker compose -f freeswitch/docker-compose.yml logs -f freeswitch
-#   docker compose -f freeswitch/docker-compose.yml logs -f funasr
+#   docker exec ai-call-freeswitch fs_cli -x "sofia status"
 #
-# 连接 SIP 软电话（如 Zoiper/Linphone）：
-#   - 服务器地址：本机 IP
+# 连接 SIP 软电话（MicroSIP）：
+#   - 服务器地址：localhost
 #   - 端口：5060
-#   - 用户名：1000 / 1001（默认配置在 conf/directory/default.xml）
+#   - 用户名：1000 / 1001（默认配置在 conf/directory/default/）
 #   - 密码：1234
 #
 # 拨打测试分机 9999：
 #   拨号后 FreeSWITCH 会将 RTP 音频 fork 到 mod_audio_fork 配置的 WebSocket 服务器
-#   （Voice Agent 端监听该 WebSocket 接收音频流）
+#   （Voice Agent 端监听 ws://host.docker.internal:8090/audio-stream 接收音频流）
 #
 # FunASR STT 服务（:10095）：
 #   Voice Agent 通过 STT_PROVIDER=funasr 连接 ws://localhost:10095
 # ============================================================
 services:
   freeswitch:
-    image: signalwire/freeswitch:1.10.11-release
+    build: .
     container_name: ai-call-freeswitch
     restart: unless-stopped
-    network_mode: host
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
-      # 配置文件挂载
-      - ./conf:/etc/freeswitch/conf.d:ro
+      # 配置文件挂载（完整替换镜像默认配置）
+      # drachtio 镜像配置路径为 /usr/local/freeswitch/conf/
+      - ./conf:/usr/local/freeswitch/conf
       # 录音与日志
       - ./recordings:/var/lib/freeswitch/recordings
       - ./logs:/var/log/freeswitch
-      # mod_audio_fork 模块（如需自编译，否则用镜像内置）
-      # - ./mods/mod_audio_fork.so:/usr/lib/freeswitch/mod/mod_audio_fork.so:ro
     environment:
       - TZ=Asia/Shanghai
-      - FREESWITCH_DOMAIN=192.168.1.100
     # ESL 外部访问（用于 NestJS 后端通过 ESL 控制呼叫）
     ports:
       - "5060:5060/udp"   # SIP UDP
       - "5060:5060/tcp"   # SIP TCP
-      - "8021:8021/tcp"   # ESL Event Socket
-      - "7443:7443/tcp"   # WebRTC（可选，用于浏览器软电话）
-      - "16384-32768:16384-32768/udp"  # RTP 媒体流端口范围
-    command: >
-      freeswitch -nf -nc
-      -nf
-      -c
+      - "127.0.0.1:18021:8021/tcp" # ESL Event Socket（避开 Windows 本机 8021 代理冲突）
+      - "16384-16394:16384-16394/udp"  # RTP 媒体流端口范围（缩小到10个端口，足够单通话测试）
+    # drachtio 镜像二进制路径为 /usr/local/freeswitch/bin/freeswitch
+    # 禁用镜像内置 STUN/UPnP，避免覆盖 vars.xml 中的宿主机 SIP/RTP 地址
+    command: /usr/local/freeswitch/bin/freeswitch -nf -nc -c -nonat -nonatmap
 
   # FunASR 语音识别服务（开源，本地部署）
   # 镜像 tag 请按需选择：online-cpu / online-gpu / offline-cpu
