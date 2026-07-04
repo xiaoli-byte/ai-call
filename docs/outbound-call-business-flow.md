@@ -133,9 +133,9 @@ flowchart LR
 
 ## 4. 当前实现注意项
 
-1. `scheduledAt` 当前只写入数据库，尚无定时扫描任务自动派发，到点外呼仍需人工触发或新增调度器。
-2. 转人工节点中的 `extension` 尚未完整传递到 NestJS，当前可能回落到默认分机 `9000`。
-3. Python 挂机客户端按 HTTP `202` 判断成功，而 NestJS 挂机接口当前返回 HTTP `200`，双方契约需要统一。
+1. `scheduledAt` 会由 API 进程内的 `TaskSchedulerService` 扫描，到点的 `pending` 任务自动进入 `dispatch()`，并写入 `CallAttempt` 与 `OutboxEvent`。可通过 `TASK_SCHEDULER_ENABLED=false` 关闭。
+2. 转人工节点中的 `extension` / `queueId` 会经 Python FlowExecutor、WebSocketCallbacks 传递到 NestJS `POST /tasks/:id/transfer`，未配置时才回落到默认分机 `9000`。
+3. 流程 `hangup` 结束节点会调用 NestJS `POST /tasks/:id/hangup`；NestJS 尝试执行 FreeSWITCH `uuid_kill`，并在数据库记录 `completed`、时长和 `call.hung_up` 事件。Python 客户端兼容同步 `200` 和异步 `202`。
 
 ## 5. 主要代码位置
 
@@ -146,3 +146,45 @@ flowchart LR
 - Python 流程执行器：`services/voice-agent/src/voice_agent/flow_executor.py`
 - Python 会话入口：`services/voice-agent/src/voice_agent/agent.py`
 - 数据模型：`apps/api/prisma/schema.prisma`
+
+## 6. 自动化验证
+
+无真实线路时可先跑控制面闭环 smoke test，验证创建任务、锁定流程版本、到点派发、Outbox 投递、接通状态、转写、转人工和挂机事件：
+
+```bash
+pnpm test:outbound-flow
+```
+
+或直接运行：
+
+```bash
+I:\ai-call\apps\api\node_modules\.bin\tsx.CMD --test I:\ai-call\apps\api\src\tasks\outbound-business-flow.spec.ts
+```
+
+完整回归建议同时运行：
+
+```bash
+I:\ai-call\node_modules\.bin\tsc.CMD -p I:\ai-call\apps\api\tsconfig.json --noEmit
+I:\ai-call\apps\api\node_modules\.bin\tsx.CMD --test I:\ai-call\apps\api\src\**\*.spec.ts
+python -m pytest services/voice-agent/tests/test_vad.py services/voice-agent/tests/test_server_callbacks.py services/voice-agent/tests/test_agent.py -q
+```
+
+其中 `services/voice-agent/tests/test_server_callbacks.py` 覆盖 FreeSWITCH `attemptId`
+进入 `/audio-stream` 后，Voice Agent 拉任务上下文、回写 `in_call`、执行锁定流程并触发
+`transfer` / `hangup` 的服务级链路。
+
+服务启动后可运行本机 runtime smoke，检查 PostgreSQL、API、Dashboard、Voice Agent、
+FunASR、FreeSWITCH ESL 端口，并通过 API 创建一个绑定已发布流程的 `1001` 外呼任务：
+
+```bash
+pnpm smoke:outbound-runtime
+```
+
+如果只想检查端口，不创建任务：
+
+```bash
+powershell -ExecutionPolicy Bypass -File scripts/outbound-runtime-check.ps1 -SkipTask
+```
+
+默认使用 seed 管理员 `admin@ai-call.local` / `admin123` 登录；可通过
+`-AdminEmail`、`-AdminPassword`、`-To` 和 `-DispatchNow` 覆盖。

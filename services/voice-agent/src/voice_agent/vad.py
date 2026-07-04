@@ -129,9 +129,13 @@ class VoiceActivityDetector:
 
         self._silence_count += 1
         if self._silence_count >= self._silence_confirm:
-            # speech → silence：本帧仍发送（可能含末尾语音），然后标记 speech_end
-            self._state = "speech_end"
+            # speech → silence：本帧仍发送（可能含末尾语音），但 speech_end
+            # 只是一次性事件；内部状态立即回到 silence，避免后续静音帧
+            # 周期性重复触发 end_speech()。
+            self._state = "silence"
+            self._speech_count = 0
             self._silence_count = 0
+            self._pre_buffer.clear()
             return "speech_end", [frame]
 
         # 静音帧但未达确认阈值：继续发送（防止短停顿误断句）

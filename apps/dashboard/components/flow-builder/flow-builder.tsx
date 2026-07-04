@@ -56,7 +56,7 @@ function FlowBuilderInner({
 }: FlowBuilderProps) {
   const router = useRouter();
   const setFlow = useFlowStore((s) => s.setFlow);
-  const { status, saveNow } = useFlowStorage(flowId);
+  const { status, saveNow } = useFlowStorage(flowId, initialNodes, initialEdges);
   const { publish } = useTaskFlowMutations();
 
   const [publishError, setPublishError] = useState<string | null>(null);

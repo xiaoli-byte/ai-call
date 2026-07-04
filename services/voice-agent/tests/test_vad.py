@@ -110,6 +110,33 @@ def test_speech_to_silence_transition(vad: VoiceActivityDetector) -> None:
     assert state == "speech_end"
     # speech_end 时本帧仍发送
     assert len(frames) == 1
+    # speech_end 是一次性事件，内部状态应立即回到 silence。
+    assert vad.state == "silence"
+
+
+def test_speech_end_does_not_repeat_during_following_silence(
+    vad: VoiceActivityDetector,
+) -> None:
+    """speech_end 后持续静音不应反复触发 end_speech。"""
+    # 进入 speech 状态
+    vad._vad.is_speech.return_value = True
+    for _ in range(3):
+        vad.feed(_voice_frame())
+
+    # 连续静音触发一次 speech_end
+    vad._vad.is_speech.return_value = False
+    for _ in range(4):
+        state, _ = vad.feed(_silent_frame())
+        assert state == "speech"
+    state, frames = vad.feed(_silent_frame())
+    assert state == "speech_end"
+    assert len(frames) == 1
+
+    # 后续静音应保持 silence，不再每隔 silence_confirm_frames 重复 speech_end。
+    for _ in range(10):
+        state, frames = vad.feed(_silent_frame())
+        assert state == "silence"
+        assert frames == []
 
 
 def test_short_pause_does_not_trigger_end(vad: VoiceActivityDetector) -> None:

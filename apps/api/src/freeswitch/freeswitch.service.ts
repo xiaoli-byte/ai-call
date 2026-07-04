@@ -103,7 +103,7 @@ export class FreeSwitchService {
     const cmd = `originate ${target} &park()`;
 
     this.logger.log(`originate callId=${callId} to=${to} endpoint=${endpoint}`);
-    return this.sendApiCommand(cmd);
+    return this.sendBackgroundApiCommand(cmd);
   }
 
   /**
@@ -136,6 +136,18 @@ export class FreeSwitchService {
    * 高并发场景可改为连接池。
    */
   private sendApiCommand(command: string): Promise<string> {
+    return this.sendEslCommand(`api ${command}`, 'api/response', command);
+  }
+
+  private sendBackgroundApiCommand(command: string): Promise<string> {
+    return this.sendEslCommand(`bgapi ${command}`, 'command/reply', command);
+  }
+
+  private sendEslCommand(
+    wireCommand: string,
+    responseType: 'api/response' | 'command/reply',
+    description: string,
+  ): Promise<string> {
     return new Promise((resolve, reject) => {
       const socket: Socket = connect(this.port, this.host);
       let buffer = '';
@@ -143,7 +155,7 @@ export class FreeSwitchService {
       let commandSent = false;
       const timeout = setTimeout(() => {
         socket.destroy();
-        reject(new Error(`ESL command timeout: ${command}`));
+        reject(new Error(`ESL command timeout: ${description}`));
       }, 5000);
 
       socket.on('data', (data: Buffer) => {
@@ -162,7 +174,7 @@ export class FreeSwitchService {
         // 阶段 2：等待 auth 成功
         if (!commandSent) {
           if (buffer.includes('+OK')) {
-            socket.write(`api ${command}\n\n`);
+            socket.write(`${wireCommand}\n\n`);
             buffer = '';
             commandSent = true;
           } else if (buffer.includes('-ERR')) {
@@ -175,8 +187,24 @@ export class FreeSwitchService {
 
         // 阶段 3：等待 api 响应
         // 响应格式：Content-Type: api/response\nContent-Length: N\n\n<body>
+        if (responseType === 'command/reply') {
+          const headerEnd = buffer.search(/\r?\n\r?\n/);
+          if (headerEnd === -1) return;
+          clearTimeout(timeout);
+          socket.destroy();
+          const headers = buffer.slice(0, headerEnd);
+          const replyText = headers.match(/^Reply-Text:\s*(.*)$/im)?.[1]?.trim();
+          const response = replyText ?? headers.trim();
+          if (response.startsWith('-ERR')) {
+            reject(new Error(`ESL command failed: ${response}`));
+            return;
+          }
+          resolve(response);
+          return;
+        }
+
         const bodyMatch = buffer.match(
-          /Content-Type:\s*api\/response[\s\S]*?Content-Length:\s*(\d+)\n\n([\s\S]*)/,
+          /Content-Type:\s*api\/response[\s\S]*?Content-Length:\s*(\d+)\r?\n\r?\n([\s\S]*)/,
         );
         if (bodyMatch) {
           clearTimeout(timeout);
@@ -184,7 +212,12 @@ export class FreeSwitchService {
           const body = bodyMatch[2];
           if (body.length >= expectedLen) {
             socket.destroy();
-            resolve(body.slice(0, expectedLen).trim());
+            const response = body.slice(0, expectedLen).trim();
+            if (response.startsWith('-ERR')) {
+              reject(new Error(`ESL command failed: ${response}`));
+              return;
+            }
+            resolve(response);
           }
         } else if (buffer.includes('-ERR')) {
           clearTimeout(timeout);

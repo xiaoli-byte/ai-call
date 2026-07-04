@@ -24,10 +24,12 @@ class TextTestCallbacks:
     def __init__(self, ws: Any, call_id: str) -> None:
         self._ws = ws
         self._call_id = call_id
+        self._current_node_id = ""
+        self._current_node_name = ""
 
     async def on_agent_speech(self, text: str) -> None:
         logger.info("[TextTest] 🤖 %s", text)
-        await self._send({"type": "agent_speech", "text": text})
+        await self._send(self._with_node({"type": "agent_speech", "text": text}))
 
     async def on_caller_speech(self, text: str) -> None:
         logger.info("[TextTest] 👤 %s", text)
@@ -40,16 +42,19 @@ class TextTestCallbacks:
             "name": call.name,
             "arguments": call.arguments,
             "result": str(result.result),
-        })
+        } | self._node_payload())
 
-    async def on_escalate(self, reason: str) -> None:
+    async def on_escalate(self, reason: str, extension: str | None = None) -> None:
         logger.info("[TextTest] ⚠️ 转人工: %s", reason)
+        config: dict[str, Any] = {"reason": reason}
+        if extension:
+            config["extension"] = extension
         await self._send({
             "type": "action",
             "actionType": "transfer",
-            "config": {"reason": reason},
+            "config": config,
             "note": "调试模式未真实执行",
-        })
+        } | self._node_payload())
 
     async def on_audio_output(self, audio: bytes) -> None:
         pass
@@ -59,6 +64,8 @@ class TextTestCallbacks:
 
     async def on_node_enter(self, node_id: str, node_name: str) -> None:
         logger.info("[TextTest] → 节点: %s (%s)", node_name, node_id)
+        self._current_node_id = node_id
+        self._current_node_name = node_name
         await self._send({"type": "node_enter", "nodeId": node_id, "nodeName": node_name})
 
     async def on_action(self, action_type: str, config: dict) -> None:
@@ -68,7 +75,7 @@ class TextTestCallbacks:
             "actionType": action_type,
             "config": config,
             "note": "调试模式未真实执行",
-        })
+        } | self._node_payload())
 
     async def on_end(self, reason: str) -> None:
         logger.info("[TextTest] 📞 结束: %s", reason)
@@ -80,6 +87,17 @@ class TextTestCallbacks:
                 await self._ws.send(json.dumps(obj, ensure_ascii=False))
         except Exception as err:
             logger.warning("[TextTestCallbacks] send failed: %s", err)
+
+    def _with_node(self, obj: dict[str, Any]) -> dict[str, Any]:
+        return obj | self._node_payload()
+
+    def _node_payload(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {}
+        if self._current_node_id:
+            payload["nodeId"] = self._current_node_id
+        if self._current_node_name:
+            payload["nodeName"] = self._current_node_name
+        return payload
 
     def _is_open(self) -> bool:
         ws = self._ws

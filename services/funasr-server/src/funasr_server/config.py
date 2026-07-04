@@ -47,7 +47,7 @@ class Config:
     # 服务监听
     host: str = "0.0.0.0"
     port: int = 10095
-    cors_origins: str = "http://localhost:3000"
+    cors_origins: str = "http://localhost:3000,http://localhost:8888,http://localhost:9999"
 
     # 设备（默认 GPU；无 GPU 时 resolve_device 会自动降级到 cpu）
     device: str = "cuda"

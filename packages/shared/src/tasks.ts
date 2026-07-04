@@ -41,7 +41,7 @@ export enum CallOutcome {
 /** 外呼任务 */
 export interface OutboundTask {
   id: string;
-  /** 被叫号码（E.164 格式，如 +8613800138000） */
+  /** 被叫号码（E.164，如 +8613800138000）或本机联调 SIP 分机（如 1001） */
   to: string;
   /** 主叫号码 */
   from: string;
@@ -116,6 +116,7 @@ export interface OutboundTaskListItem {
   flowId?: string;
   flowVersionId?: string;
   attemptCount: number;
+  latestAttemptId?: string;
   transcriptCount: number;
   createdAt: string;
   updatedAt: string;
@@ -124,6 +125,53 @@ export interface OutboundTaskListItem {
 export interface TaskListPage {
   items: OutboundTaskListItem[];
   nextCursor?: string;
+}
+
+/** 外呼历史列表项：以实际拨打尝试为维度。 */
+export interface CallHistoryItem {
+  id: string;
+  taskId: string;
+  attemptNo: number;
+  providerCallId?: string;
+  to: string;
+  from: string;
+  scenario: Scenario;
+  status: TaskStatus;
+  startedAt: string;
+  ringingAt?: string;
+  answeredAt?: string;
+  endedAt?: string;
+  duration?: number;
+  hangupCause?: string;
+  recordingUrl?: string;
+  outcome?: CallOutcome;
+  intentTags?: string[];
+  transcriptCount: number;
+  eventCount: number;
+  taskCreatedAt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CallHistoryPage {
+  items: CallHistoryItem[];
+  nextCursor?: string;
+}
+
+export interface CallEventRecord {
+  id: string;
+  type: string;
+  payload: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface CallHistoryDetail extends CallHistoryItem {
+  scheduledAt: string;
+  flowId?: string;
+  flowVersionId?: string;
+  variables: Record<string, string>;
+  transcript: TranscriptTurn[];
+  events: CallEventRecord[];
 }
 
 /** 对话转写条目 */
@@ -156,3 +204,5 @@ export interface TaskQueryDto {
   cursor?: string;
   limit?: number;
 }
+
+export interface CallHistoryQueryDto extends TaskQueryDto {}

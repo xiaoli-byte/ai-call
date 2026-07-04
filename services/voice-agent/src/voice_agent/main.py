@@ -41,6 +41,14 @@ def _load_env() -> None:
     )
 
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    """读取布尔环境变量。"""
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
 def _build_agent() -> tuple[VoiceAgent, TaskClient, Any]:
     """根据环境变量构造 VoiceAgent 实例。
 
@@ -69,6 +77,11 @@ def _build_agent() -> tuple[VoiceAgent, TaskClient, Any]:
     vad_pre_buffer_ms = int(os.getenv("VAD_PRE_BUFFER_MS", "300"))
     vad_silence_confirm = int(os.getenv("VAD_SILENCE_CONFIRM_FRAMES", "10"))
     vad_speech_confirm = int(os.getenv("VAD_SPEECH_CONFIRM_FRAMES", "3"))
+    asr_tts_gate_enabled = _env_bool("ASR_TTS_GATE_ENABLED", True)
+    asr_tts_tail_guard_ms = int(os.getenv("ASR_TTS_TAIL_GUARD_MS", "500"))
+    barge_in_during_tts_enabled = _env_bool("BARGE_IN_DURING_TTS_ENABLED", False)
+    barge_in_min_ms = int(os.getenv("BARGE_IN_MIN_MS", "500"))
+    barge_in_rms_threshold = float(os.getenv("BARGE_IN_RMS_THRESHOLD", "0.08"))
 
     agent = VoiceAgent(
         llm=llm,
@@ -86,6 +99,11 @@ def _build_agent() -> tuple[VoiceAgent, TaskClient, Any]:
         vad_speech_confirm_frames=vad_speech_confirm,
         max_turns=int(os.getenv("MAX_TURNS", "30")),
         turn_timeout_s=int(os.getenv("TURN_TIMEOUT_S", "30")),
+        asr_tts_gate_enabled=asr_tts_gate_enabled,
+        asr_tts_tail_guard_ms=asr_tts_tail_guard_ms,
+        barge_in_during_tts_enabled=barge_in_during_tts_enabled,
+        barge_in_min_ms=barge_in_min_ms,
+        barge_in_rms_threshold=barge_in_rms_threshold,
     )
 
     # 构造 DemoServer（/asr-stream + /tts-stream），共享 agent 的 VAD/STT/TTS 配置
@@ -190,8 +208,9 @@ class CLICallbacks:
     async def on_tool_call(self, call: ToolCall, result: ToolResult) -> None:
         print(f"🔧 {call.name} → {result.result}")
 
-    async def on_escalate(self, reason: str) -> None:
-        print(f"⚠️ 转人工: {reason}")
+    async def on_escalate(self, reason: str, extension: str | None = None) -> None:
+        target = f" -> {extension}" if extension else ""
+        print(f"⚠️ 转人工{target}: {reason}")
 
     async def on_audio_output(self, audio: bytes) -> None:
         pass  # CLI 不播放音频

@@ -8,6 +8,7 @@ import {
   Patch,
   Post,
   Query,
+  UseGuards,
   UsePipes,
   ValidationPipe,
 } from '@nestjs/common';
@@ -15,7 +16,9 @@ import { FlowStatus, PERMISSIONS } from '@ai-call/shared';
 import { TaskFlowsService } from './task-flows.service.js';
 import { CreateTaskFlowDto } from './dto/create-task-flow.dto.js';
 import { UpdateTaskFlowDto } from './dto/update-task-flow.dto.js';
+import { ServiceAuthGuard } from '../common/service-auth.guard.js';
 import { Permissions } from '../auth/decorators/permissions.decorator.js';
+import { Public } from '../auth/decorators/public.decorator.js';
 
 /**
  * 外呼任务流程 Controller
@@ -24,6 +27,7 @@ import { Permissions } from '../auth/decorators/permissions.decorator.js';
  *  - POST   /api/task-flows            创建流程
  *  - GET    /api/task-flows            列表（支持 status 过滤）
  *  - GET    /api/task-flows/:id        详情
+ *  - GET    /api/task-flows/:id/runtime  Voice Agent 运行时读取（service-token）
  *  - PATCH  /api/task-flows/:id        更新
  *  - DELETE /api/task-flows/:id        删除
  *  - POST   /api/task-flows/:id/publish   发布（status → published, version++）
@@ -45,6 +49,14 @@ export class TaskFlowsController {
   @Get()
   list(@Query('status') status?: FlowStatus) {
     return this.taskFlowsService.list({ status });
+  }
+
+  @Get(':id/runtime')
+  @Public()
+  @Permissions()
+  @UseGuards(ServiceAuthGuard)
+  getRuntime(@Param('id') id: string) {
+    return this.taskFlowsService.get(id);
   }
 
   @Get(':id')

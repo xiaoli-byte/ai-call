@@ -1,9 +1,10 @@
 import { IsEnum, IsISO8601, IsObject, IsOptional, IsString, IsUUID, Matches } from 'class-validator';
 import { Scenario } from '@ai-call/shared';
+import { TASK_DESTINATION_PATTERN } from '../task-destination.js';
 
 export class CreateTaskDto {
   @IsString()
-  @Matches(/^\+?\d{6,15}$/)
+  @Matches(TASK_DESTINATION_PATTERN)
   to!: string;
 
   @IsEnum(Scenario)

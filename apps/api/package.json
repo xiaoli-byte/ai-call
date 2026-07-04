@@ -11,6 +11,7 @@
     "start:outbox": "node dist/outbox-worker.main.js",
     "lint": "tsc --noEmit",
     "test": "tsx --test \"src/**/*.spec.ts\"",
+    "test:outbound-flow": "tsx --test \"src/tasks/outbound-business-flow.spec.ts\"",
     "test:typecheck": "tsc --noEmit",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",

@@ -34,7 +34,7 @@ VAD（Voice Activity Detection）位置选择的 4 个核心原因：
 
 ```
 FreeSWITCH mod_audio_fork
-  ↓ WebSocket ws://host:8080/audio-stream（二进制 PCM 16kHz mono）
+  ↓ WebSocket ws://host:8090/audio-stream（二进制 PCM 16kHz mono）
 server.py _handle
   ↓ ws 二进制帧转发
 agent.receive_audio(call_id, audio_bytes)

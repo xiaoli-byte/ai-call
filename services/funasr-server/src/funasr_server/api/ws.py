@@ -372,6 +372,53 @@ async def ws_handler(websocket: WebSocket) -> None:
         save_offline=config.save_offline_segments,
     )
 
+    async def finalize_offline(reason: str) -> None:
+        """Run offline ASR for the current utterance and reset per-utterance buffers.
+
+        The client can end an utterance by sending a JSON control frame
+        {"is_speaking": false}. In that case no further binary frame may arrive, so
+        finalization must happen immediately instead of waiting for the next PCM
+        packet to pass through the binary-frame branch.
+        """
+        nonlocal frames, frames_asr, frames_asr_online, speech_start, speech_end_i
+
+        if state.mode in ("2pass", "offline"):
+            # Prefer the server-side VAD utterance buffer. If the upstream client
+            # already gates audio with its own VAD, the local server VAD may not
+            # have opened speech_start yet; fall back to all frames received for
+            # this utterance so {is_speaking:false} can still produce a final.
+            audio_in = b"".join(frames_asr or frames)
+
+            if config.save_offline_segments and audio_in:
+                try:
+                    await models.run_blocking(
+                        _save_offline_wav_sync,
+                        state,
+                        audio_in,
+                        reason,
+                        sem=semaphores["wav"],
+                    )
+                except Exception:
+                    logger.exception("ws.save_offline_failed")
+
+            try:
+                await _async_asr_offline(websocket, state, models, semaphores, audio_in)
+            except Exception:
+                logger.exception("ws.asr_offline_error")
+
+        frames_asr = []
+        speech_start = False
+        frames_asr_online = []
+        state.status_asr_online["cache"] = {}
+
+        if reason == "not_speaking":
+            state.vad_pre_idx = 0
+            frames = []
+            state.status_vad["cache"] = {}
+            speech_end_i = -1
+        else:
+            frames = frames[-20:]
+
     try:
         while True:
             try:
@@ -433,6 +480,9 @@ async def ws_handler(websocket: WebSocket) -> None:
                 if "audio_fs" in msg:
                     state.audio_fs = _safe_int(msg["audio_fs"], 16000)
 
+                if "is_speaking" in msg and not state.is_speaking:
+                    await finalize_offline("not_speaking")
+
                 # itn 字段被 stt.py 发送但服务端不处理（与原 wss_server 一致）
                 continue
 
@@ -490,38 +540,8 @@ async def ws_handler(websocket: WebSocket) -> None:
 
             # ========== 3) 2pass offline 触发（VAD end 或 is_speaking=false）==========
             if (speech_end_i != -1) or (not state.is_speaking):
-                if state.mode in ("2pass", "offline"):
-                    audio_in = b"".join(frames_asr)
-                    reason = "vad_end" if speech_end_i != -1 else "not_speaking"
-
-                    # 保存离线片段（调试用）
-                    if config.save_offline_segments and audio_in:
-                        try:
-                            await models.run_blocking(
-                                _save_offline_wav_sync, state, audio_in, reason,
-                                sem=semaphores["wav"],
-                            )
-                        except Exception:
-                            logger.exception("ws.save_offline_failed")
-
-                    try:
-                        await _async_asr_offline(websocket, state, models, semaphores, audio_in)
-                    except Exception:
-                        logger.exception("ws.asr_offline_error")
-
-                # 重置状态
-                frames_asr = []
-                speech_start = False
-                frames_asr_online = []
-                state.status_asr_online["cache"] = {}
-
-                if not state.is_speaking:
-                    state.vad_pre_idx = 0
-                    frames = []
-                    state.status_vad["cache"] = {}
-                    speech_end_i = -1
-                else:
-                    frames = frames[-20:]
+                reason = "vad_end" if speech_end_i != -1 else "not_speaking"
+                await finalize_offline(reason)
 
     except WebSocketDisconnect:
         logger.info("ws.disconnected")

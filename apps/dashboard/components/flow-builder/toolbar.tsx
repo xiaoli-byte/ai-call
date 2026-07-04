@@ -141,7 +141,7 @@ export function Toolbar({ flowName, flowVersion, flowStatus, onSave, saveStatus,
             type="button"
             onClick={onTest}
             className="btn btn-secondary btn-sm"
-            title="测试首个 AI 对话节点"
+            title="测试完整流程"
           >
             测试
           </button>

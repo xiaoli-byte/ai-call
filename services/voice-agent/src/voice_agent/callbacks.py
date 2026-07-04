@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+from typing import Optional, Protocol, runtime_checkable
 
 from .types import ToolCall, ToolResult
 
@@ -32,7 +32,7 @@ class AgentCallbacks(Protocol):
         """工具调用回调。"""
         ...
 
-    async def on_escalate(self, reason: str) -> None:
+    async def on_escalate(self, reason: str, extension: Optional[str] = None) -> None:
         """转人工回调。"""
         ...
 
@@ -69,7 +69,7 @@ class NoopCallbacks:
     async def on_tool_call(self, call: ToolCall, result: ToolResult) -> None:
         pass
 
-    async def on_escalate(self, reason: str) -> None:
+    async def on_escalate(self, reason: str, extension: Optional[str] = None) -> None:
         pass
 
     async def on_audio_output(self, audio: bytes) -> None:

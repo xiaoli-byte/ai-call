@@ -175,10 +175,10 @@ export class TaskFlowsService {
   }
 
   /**
-   * 流程测试：找到首个 AI 对话节点，用其 systemPrompt 调 LLM 生成回复。
+   * 旧版 AI 节点预览：找到首个 AI 对话节点，用其 systemPrompt 调 LLM 生成回复。
    *
-   * 完整流程模拟需通过 Voice Agent 执行（创建带 flowId 的任务 → 派发）。
-   * 此端点用于前端快速预览 AI 对话效果与验证拓扑。
+   * 完整流程模拟由 Voice Agent 的 /text-test 执行，确保按节点和连线推进。
+   * 此端点仅保留用于兼容旧的单节点 AI 预览。
    */
   async testFlow(
     id: string,

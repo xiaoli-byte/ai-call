@@ -6,7 +6,7 @@ AI 外呼机器人语音代理服务 — FreeSWITCH WebSocket 直连 + WebRTC VA
 
 ```
 电话用户 → SIP/PSTN → FreeSWITCH (mod_audio_fork)
-                            ↓ WebSocket ws://host:8080/audio-stream
+                            ↓ WebSocket ws://host:8090/audio-stream
                      Python Voice Agent
                      ├── 第一帧 JSON metadata 解析
                      ├── WebRTC VAD 粗筛（前置门控，节省 ASR 算力）
@@ -20,13 +20,13 @@ AI 外呼机器人语音代理服务 — FreeSWITCH WebSocket 直连 + WebRTC VA
                      FreeSWITCH 播放给通话方
 
 前端 Demo → 浏览器麦克风
-                ↓ WebSocket ws://host:8080/asr-stream
+                ↓ WebSocket ws://host:8090/asr-stream
            DemoServer.handle_asr（复用 WebRTC VAD + FunASR）
                 ↓ JSON {partial|final|vad_state}
            浏览器显示识别结果
 
 前端 Demo → 文本输入
-                ↓ WebSocket ws://host:8080/tts-stream
+                ↓ WebSocket ws://host:8090/tts-stream
            DemoServer.handle_tts（复用 Qwen-TTS / CosyVoice）
                 ↓ 二进制 PCM + JSON {final}
            浏览器 Web Audio API 播放
@@ -38,7 +38,7 @@ AI 外呼机器人语音代理服务 — FreeSWITCH WebSocket 直连 + WebRTC VA
 
 | 服务 | 用途 | 默认地址 |
 | ---- | ---- | ------ |
-| FreeSWITCH | 电话接入 + mod_audio_fork 音频双向流 | `ws://host.docker.internal:8080/audio-stream` |
+| FreeSWITCH | 电话接入 + mod_audio_fork 音频双向流 | `ws://host.docker.internal:8090/audio-stream` |
 | FunASR | 流式语音识别 | `ws://localhost:10095` |
 | Qwen-TTS | 流式语音合成（云端，TTS_PROVIDER=qwen） | `wss://dashscope.aliyuncs.com/api-ws/v1/realtime` |
 | CosyVoice | 流式语音合成（本地，TTS_PROVIDER=cosyvoice） | `http://localhost:50000` |
@@ -83,7 +83,7 @@ pnpm dev:agent-py:cli    # CLI 模式
 | 变量 | 默认值 | 说明 |
 | ---- | ----- | ---- |
 | `VOICE_AGENT_WS_HOST` | `0.0.0.0` | WS 监听地址 |
-| `VOICE_AGENT_WS_PORT` | `8080` | WS 监听端口（与 FreeSWITCH 配置一致） |
+| `VOICE_AGENT_WS_PORT` | `8090` | WS 监听端口（与 FreeSWITCH 配置一致） |
 | `VOICE_AGENT_WS_PATH` | `/audio-stream` | WS 路径 |
 | `LLM_API_KEY` | `""` | LLM 认证；空则用 MockLLM |
 | `LLM_BASE_URL` | `https://api.deepseek.com/v1` | LLM API 地址 |

@@ -170,7 +170,7 @@
 2. Dashboard 派发任务 → POST /api/tasks/:id/dispatch
 3. NestJS 通过 ESL 调用 FreeSWITCH originate
 4. FreeSWITCH 拨打被叫 → AMD 检测应答
-5. mod_audio_fork 把 RTP fork 到 Voice Agent WebSocket（:8080）
+5. mod_audio_fork 把 RTP fork 到 Voice Agent WebSocket（:8090）
    ├─ 第一帧：JSON 元数据（dialog_id/caller_id/scenario/...）
    └─ 后续帧：PCM 16-bit 音频流
 6. Voice Agent 启动会话：
@@ -309,13 +309,13 @@ pnpm dev
 服务地址：
 - Dashboard: http://localhost:3000
 - API: http://localhost:3001/api
-- Voice Agent WebSocket: ws://localhost:8080/audio-stream
+- Voice Agent WebSocket: ws://localhost:8090/audio-stream
 - Voice Agent CLI 模式：终端交互
 
 ### 单独调试 Voice Agent（推荐先跑通）
 
 ```bash
-pnpm dev:agent -- --cli
+pnpm dev:agent-py:cli
 ```
 
 CLI 模式无需任何 API Key 和电话号码，直接在终端模拟对话，验证：
@@ -358,7 +358,7 @@ DEEPSEEK_API_KEY=your_key
 | 步骤 | 命令 | 作用 |
 |---|---|---|
 | 1 | `pnpm dev:api` | 启动 NestJS 后端 :3001 |
-| 2 | `pnpm dev:agent -- --cli` | CLI 模拟对话验证主循环 |
+| 2 | `pnpm dev:agent-py:cli` | CLI 模拟对话验证主循环 |
 | 3 | `pnpm dev:dashboard` | 启动 Next.js 面板 :3000 |
 | 4 | `pnpm dev` | 一键启动全部 |
 

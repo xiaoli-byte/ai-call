@@ -30,7 +30,7 @@ export type CallEventPayloadFor<T extends CallEventType> =
   T extends 'task.status_changed' ? { from: TaskStatus; to: TaskStatus } :
   T extends 'transcript.appended' ? { role: TranscriptTurn['role'] } :
   T extends 'call.outcome_set' ? { outcome: string; tags?: string[] } :
-  T extends 'call.hung_up' ? { outcome?: string; duration?: number } :
+  T extends 'call.hung_up' ? { outcome?: string; duration?: number; channelId?: string; hangupError?: string } :
   T extends 'call.dispatch_requested' | 'call.dispatch_accepted' | `action.${FlowActionType}.delivered` ? Record<string, never> :
   T extends 'call.transferred' ? { extension: string; channelId: string } :
   T extends `action.${FlowActionType}.requested` ? { outboxEventId: string } :

@@ -68,7 +68,11 @@ export function FlowDebugPanel({ flowId, flowName, open, onClose, onSaveFlow }: 
         currentNodeName.current = String(data.nodeName ?? '');
         break;
       case 'agent_speech':
-        addMessage({ role: 'agent', text: String(data.text ?? ''), nodeName: currentNodeName.current });
+        addMessage({
+          role: 'agent',
+          text: String(data.text ?? ''),
+          nodeName: String(data.nodeName ?? currentNodeName.current),
+        });
         break;
       case 'caller_speech':
         // 本地已即时回显，服务端确认不再重复添加
@@ -77,7 +81,7 @@ export function FlowDebugPanel({ flowId, flowName, open, onClose, onSaveFlow }: 
         addMessage({
           role: 'action',
           text: `[动作] ${data.actionType}：${data.note ?? '调试模式未真实执行'}`,
-          nodeName: currentNodeName.current,
+          nodeName: String(data.nodeName ?? currentNodeName.current),
         });
         break;
       case 'tool_call':

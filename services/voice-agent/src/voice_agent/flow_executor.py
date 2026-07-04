@@ -39,7 +39,9 @@ class FlowExecutorCallbacks(Protocol):
         self, call_id: str, messages: list[ChatMessage], options: dict = None
     ) -> str: ...
     async def on_caller_speech(self, call_id: str, text: str) -> None: ...
-    async def on_escalate(self, call_id: str, reason: str) -> bool: ...
+    async def on_escalate(
+        self, call_id: str, reason: str, extension: Optional[str] = None
+    ) -> bool: ...
     async def on_tool_call(self, call_id: str, call: ToolCall, result: Any) -> None: ...
     async def on_node_enter(self, call_id: str, node_id: str, node_name: str) -> None: ...
     async def on_action(self, call_id: str, action_type: str, config: dict[str, Any]) -> None: ...
@@ -158,9 +160,19 @@ class FlowExecutor:
         data = node.as_dialog()
         variables = self._cb.get_session_variables(call_id)
 
-        prompt_text = data.text if data.mode == DialogMode.SCRIPT else data.prompt
-        if prompt_text:
-            await self._cb.speak(call_id, render_template(str(prompt_text), variables))
+        spoken_text = ""
+        if data.mode == DialogMode.SCRIPT:
+            spoken_text = render_template(str(data.text or ""), variables)
+        elif data.mode == DialogMode.QUESTION:
+            spoken_text = render_template(str(data.prompt or ""), variables)
+        elif data.mode == DialogMode.AI:
+            spoken_text = await self._generate_ai_dialog_text(call_id, data, variables)
+
+        if spoken_text:
+            self._cb.get_session_messages(call_id).append(
+                ChatMessage(role="assistant", content=spoken_text)
+            )
+            await self._cb.speak(call_id, spoken_text)
 
         response = previous_response
         should_wait = data.wait_for_response or data.mode == DialogMode.QUESTION
@@ -174,28 +186,43 @@ class FlowExecutor:
                         ChatMessage(role="user", content=response)
                     )
                     break
-                if attempt < retry - 1 and prompt_text:
+                if attempt < retry - 1 and spoken_text:
                     await self._cb.speak(call_id, "请问您还在吗？")
 
-        if data.mode == DialogMode.AI and response.strip():
-            messages = list(self._cb.get_session_messages(call_id))
-            if data.system_prompt:
-                messages.append(
-                    ChatMessage(
-                        role="system",
-                        content=render_template(str(data.system_prompt), variables),
-                    )
-                )
-            reply = await self._cb.generate_reply(
-                call_id, messages, self._cb.get_session_tools(call_id)
-            )
-            if reply:
-                self._cb.get_session_messages(call_id).append(
-                    ChatMessage(role="assistant", content=reply)
-                )
-                await self._cb.speak(call_id, reply)
-
         return response
+
+    async def _generate_ai_dialog_text(
+        self, call_id: str, data: Any, variables: dict[str, str]
+    ) -> str:
+        messages = list(self._cb.get_session_messages(call_id))
+        if data.system_prompt:
+            messages.append(
+                ChatMessage(
+                    role="system",
+                    content=render_template(str(data.system_prompt), variables),
+                )
+            )
+        if data.prompt:
+            messages.append(
+                ChatMessage(
+                    role="user",
+                    content=(
+                        "请根据以下流程节点提示，生成一句适合直接对客户说的话。"
+                        "只输出话术正文，不要解释。\n"
+                        f"节点提示：{render_template(str(data.prompt), variables)}"
+                    ),
+                )
+            )
+        if not data.prompt and not data.system_prompt:
+            messages.append(
+                ChatMessage(
+                    role="user",
+                    content="请生成一句适合当前流程节点直接对客户说的话。",
+                )
+            )
+        return await self._cb.generate_llm_text(
+            call_id, messages, {"temperature": data.temperature}
+        )
 
     async def _exec_decision(
         self, call_id: str, node: FlowNode, last_response: str
@@ -287,7 +314,11 @@ class FlowExecutor:
         if data.action_type == ActionType.TRANSFER:
             reason = str(data.config.get("reason", "flow requested transfer"))
             extension = data.config.get("extension") or data.config.get("queueId")
-            escalated = await self._cb.on_escalate(call_id, reason)
+            escalated = await self._cb.on_escalate(
+                call_id,
+                reason,
+                str(extension) if extension else None,
+            )
             if escalated:
                 self._cb.mark_escalated(call_id)
             logger.info(
@@ -308,6 +339,13 @@ class FlowExecutor:
             return
 
         if data.action_type == ActionType.CRM:
+            accepted = await self._cb.dispatch_action(
+                call_id, "crm", dict(data.config), str(uuid4())
+            )
+            if accepted:
+                logger.info("[FlowExecutor] crm action handled by callback: call=%s", call_id)
+                return
+
             tool_name = str(data.config.get("action") or data.config.get("toolName") or "crm")
             call = ToolCall(
                 id=str(uuid4()),
@@ -317,7 +355,10 @@ class FlowExecutor:
             result = await self._cb.dispatch_tool(call_id, call)
             await self._cb.on_tool_call(call_id, call, result)
             if getattr(result, "should_escalate", False):
-                await self._cb.on_escalate(call_id, f"CRM action {tool_name} requested transfer")
+                await self._cb.on_escalate(
+                    call_id,
+                    f"CRM action {tool_name} requested transfer",
+                )
                 self._cb.mark_escalated(call_id)
             return
 

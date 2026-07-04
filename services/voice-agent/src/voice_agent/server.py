@@ -362,6 +362,7 @@ class VoiceAgentServer:
                 call_id,
                 scenario_str,
             )
+            await self._tasks.update_status(call_id, "in_call")
         else:
             logger.info(
                 "[VoiceAgentServer] callId=%s no task context, fallback to metadata",
@@ -459,10 +460,10 @@ class WebSocketCallbacks:
     async def on_tool_call(self, call: ToolCall, result: ToolResult) -> None:
         logger.info("[Tool] 🔧 %s → %s", call.name, result.result)
 
-    async def on_escalate(self, reason: str) -> None:
+    async def on_escalate(self, reason: str, extension: Optional[str] = None) -> None:
         logger.info("[Escalate] ⚠️ %s", reason)
         # fire-and-forget 触发转人工
-        await self._tasks.transfer_to_human(self._call_id)
+        await self._tasks.transfer_to_human(self._call_id, extension)
 
     async def on_audio_output(self, audio: bytes) -> None:
         """把 TTS 合成的 PCM 音频推回给 FreeSWITCH 播放。"""

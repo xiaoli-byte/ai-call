@@ -175,11 +175,11 @@ class TaskClient:
             logger.warning("[TaskClient] update_status %s error: %s", task_id, err)
 
     async def get_task_flow(self, flow_id: str) -> Optional[dict[str, Any]]:
-        """拉取流程配置（GET /api/task-flows/{flow_id}）。
+        """拉取流程配置（GET /api/task-flows/{flow_id}/runtime）。
 
         返回 flow dict（含 nodes/edges），失败返回 None。
         """
-        url = f"{self._api_base_url}/task-flows/{flow_id}"
+        url = f"{self._api_base_url}/task-flows/{flow_id}/runtime"
         try:
             response = await self._request("GET", url)
             if response.status_code == 404:
@@ -198,11 +198,11 @@ class TaskClient:
             return None
 
     async def hangup(self, task_id: str) -> None:
-        """挂机（POST /api/tasks/{task_id}/hangup，202 Accepted）。"""
+        """挂机（POST /api/tasks/{task_id}/hangup，API 同步返回 200 或异步返回 202）。"""
         url = f"{self._api_base_url}/tasks/{task_id}/hangup"
         try:
             response = await self._request("POST", url, retry=False)
-            if response.status_code != 202:
+            if response.status_code not in {200, 202}:
                 logger.warning(
                     "[TaskClient] hangup HTTP %s for task %s",
                     response.status_code,

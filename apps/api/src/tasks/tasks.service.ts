@@ -234,12 +234,22 @@ export class TasksService {
     id: string,
     body: { outcome?: CallOutcome; tags?: string[] } = {},
   ): Promise<OutboundTask> {
-    const context = await this.resolveContext(id);
+    const context = await this.resolveContext(id, true);
     const current = await this.get(context.taskId);
     const now = new Date();
     const duration = current.calledAt
       ? Math.max(0, Math.floor((now.getTime() - Date.parse(current.calledAt)) / 1000))
       : undefined;
+    const channelId = context.providerCallId ?? context.attemptId;
+    let hangupError: string | undefined;
+    if (channelId) {
+      try {
+        await this.freeswitch.hangup(channelId);
+      } catch (err) {
+        hangupError = (err as Error).message.slice(0, 1000);
+        this.logger.warn(`hangup call control failed channel=${channelId}: ${hangupError}`);
+      }
+    }
     await this.prisma.$transaction(async (tx) => {
       await tx.outboundTask.update({
         where: { id: context.taskId },
@@ -269,7 +279,12 @@ export class TasksService {
           taskId: context.taskId,
           attemptId: context.attemptId,
           type: 'call.hung_up',
-          payload: callEventPayload('call.hung_up', { outcome: body.outcome, duration }),
+          payload: callEventPayload('call.hung_up', {
+            outcome: body.outcome,
+            duration,
+            channelId,
+            hangupError,
+          }),
         },
       });
     });
@@ -316,6 +331,34 @@ export class TasksService {
       });
     });
     return this.get(id);
+  }
+
+  async dispatchDuePending(
+    limit = Number(process.env.TASK_SCHEDULER_BATCH_SIZE ?? 20),
+  ): Promise<{ scanned: number; dispatched: number }> {
+    const records = await this.prisma.outboundTask.findMany({
+      where: {
+        status: TaskStatus.PENDING,
+        scheduledAt: { lte: new Date() },
+      },
+      select: { id: true },
+      orderBy: [{ scheduledAt: 'asc' }, { createdAt: 'asc' }],
+      take: Math.min(100, Math.max(1, limit)),
+    });
+
+    let dispatched = 0;
+    for (const record of records) {
+      try {
+        await this.dispatch(record.id);
+        dispatched += 1;
+      } catch (err) {
+        if (err instanceof ConflictException) continue;
+        this.logger.warn(
+          `scheduled dispatch failed task=${record.id}: ${(err as Error).message}`,
+        );
+      }
+    }
+    return { scanned: records.length, dispatched };
   }
 
   async transferToHuman(id: string, extension = '9000'): Promise<void> {
@@ -405,6 +448,11 @@ export class TasksService {
     flowId: true,
     flowVersionId: true,
     attemptCount: true,
+    attempts: {
+      orderBy: { attemptNo: 'desc' as const },
+      take: 1,
+      select: { id: true },
+    },
     createdAt: true,
     updatedAt: true,
     _count: { select: { transcripts: true } },
@@ -458,6 +506,7 @@ export class TasksService {
       flowId: record.flowId ?? undefined,
       flowVersionId: record.flowVersionId ?? undefined,
       attemptCount: record.attemptCount,
+      latestAttemptId: record.attempts?.[0]?.id,
       transcriptCount: record._count.transcripts,
       createdAt: record.createdAt.toISOString(),
       updatedAt: record.updatedAt.toISOString(),

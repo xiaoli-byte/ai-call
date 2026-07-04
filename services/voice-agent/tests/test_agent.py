@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -43,6 +44,8 @@ def captured_callbacks():
             self.caller_speech: list[str] = []
             self.tool_calls: list[tuple[ToolCall, ToolResult]] = []
             self.escalations: list[str] = []
+            self.escalation_extensions: list[str | None] = []
+            self.actions: list[tuple[str, dict[str, Any]]] = []
             self.audio_outputs: list[bytes] = []
             self.ends: list[str] = []
 
@@ -55,8 +58,12 @@ def captured_callbacks():
         async def on_tool_call(self, call: ToolCall, result: ToolResult) -> None:
             self.tool_calls.append((call, result))
 
-        async def on_escalate(self, reason: str) -> None:
+        async def on_escalate(self, reason: str, extension: str | None = None) -> None:
             self.escalations.append(reason)
+            self.escalation_extensions.append(extension)
+
+        async def on_action(self, action_type: str, config: dict) -> None:
+            self.actions.append((action_type, config))
 
         async def on_audio_output(self, audio: bytes) -> None:
             self.audio_outputs.append(audio)
@@ -172,7 +179,7 @@ def mock_tasks():
         def __init__(self) -> None:
             self.transcripts: list[tuple[str, str, str]] = []
             self.outcomes: list[tuple[str, str]] = []
-            self.transfers: list[str] = []
+            self.transfers: list[tuple[str, str | None]] = []
 
         async def get_task(self, task_id):
             return None
@@ -184,7 +191,7 @@ def mock_tasks():
             self.outcomes.append((task_id, outcome))
 
         async def transfer_to_human(self, task_id, extension=None):
-            self.transfers.append(task_id)
+            self.transfers.append((task_id, extension))
 
         async def update_status(self, task_id, status):
             pass
@@ -390,6 +397,92 @@ async def test_barge_in_interrupts_tts(
 
 
 @pytest.mark.asyncio
+async def test_receive_audio_suppressed_while_tts_is_speaking(
+    agent: VoiceAgent,
+) -> None:
+    """TTS 播放中不应把回声音频送入 ASR。"""
+
+    class FakeSTT:
+        def __init__(self) -> None:
+            self.sent: list[bytes] = []
+            self.end_speech_calls = 0
+
+        async def send_audio(self, pcm: bytes) -> None:
+            self.sent.append(pcm)
+
+        async def end_speech(self) -> None:
+            self.end_speech_calls += 1
+
+    class FakeVAD:
+        def __init__(self) -> None:
+            self.feed_calls = 0
+            self.reset_calls = 0
+
+        def feed(self, frame: bytes):
+            self.feed_calls += 1
+            return "speech", [frame]
+
+        def reset(self) -> None:
+            self.reset_calls += 1
+
+    call_id = "gate-call-1"
+    stt = FakeSTT()
+    vad = FakeVAD()
+    agent._stt_handles[call_id] = stt  # type: ignore[assignment]
+    agent._vads[call_id] = vad  # type: ignore[assignment]
+    agent._speaking[call_id] = True
+
+    await agent.receive_audio(call_id, b"\x01" * 960)
+
+    assert stt.sent == []
+    assert stt.end_speech_calls == 0
+    assert vad.feed_calls == 0
+    assert vad.reset_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_receive_audio_suppressed_during_tts_tail_guard_then_recovers(
+    agent: VoiceAgent,
+) -> None:
+    """TTS 结束后的尾音保护窗口内丢弃音频，窗口过后恢复 ASR。"""
+
+    class FakeSTT:
+        def __init__(self) -> None:
+            self.sent: list[bytes] = []
+
+        async def send_audio(self, pcm: bytes) -> None:
+            self.sent.append(pcm)
+
+        async def end_speech(self) -> None:
+            pass
+
+    class FakeVAD:
+        def __init__(self) -> None:
+            self.reset_calls = 0
+
+        def feed(self, frame: bytes):
+            return "speech", [frame]
+
+        def reset(self) -> None:
+            self.reset_calls += 1
+
+    call_id = "gate-call-2"
+    stt = FakeSTT()
+    vad = FakeVAD()
+    agent._stt_handles[call_id] = stt  # type: ignore[assignment]
+    agent._vads[call_id] = vad  # type: ignore[assignment]
+
+    agent._asr_suppressed_until[call_id] = time.monotonic() + 10
+    await agent.receive_audio(call_id, b"\x01" * 960)
+    assert stt.sent == []
+    assert vad.reset_calls == 1
+
+    agent._asr_suppressed_until[call_id] = time.monotonic() - 1
+    await agent.receive_audio(call_id, b"\x01" * 960)
+    assert stt.sent == [b"\x01" * 960]
+
+
+@pytest.mark.asyncio
 async def test_max_turns_limit(
     scenario_config,
     variables,
@@ -545,3 +638,149 @@ async def test_flow_decision_uses_label_then_default(
 
     assert captured_callbacks.caller_speech == ["我很感兴趣"]
     assert captured_callbacks.agent_speech[-1] == "好的，为您登记"
+
+
+@pytest.mark.asyncio
+async def test_flow_ai_dialog_generates_once_then_decision_uses_user_input(
+    agent: VoiceAgent,
+    mock_llm,
+    scenario_config,
+    variables,
+    captured_callbacks,
+) -> None:
+    mock_llm.set_script([
+        LLMEvent(type="delta", content="您好，请问您是否已经收到商品？"),
+        LLMEvent(type="done"),
+    ])
+    flow = {
+        "id": "version-ai",
+        "nodes": [
+            {"id": "start", "type": "start", "data": {}},
+            {
+                "id": "ai",
+                "type": "dialog",
+                "data": {
+                    "mode": "ai",
+                    "prompt": "内部提示：确认客户是否收到商品",
+                    "systemPrompt": "你是电商售后客服。",
+                    "waitForResponse": True,
+                },
+            },
+            {
+                "id": "decision",
+                "type": "decision",
+                "data": {"mode": "intent", "intents": ["满意", "未收到"]},
+            },
+            {"id": "received", "type": "end", "data": {"farewell": "感谢反馈"}},
+            {"id": "missing", "type": "end", "data": {"farewell": "我来帮您登记售后"}},
+        ],
+        "edges": [
+            {"id": "e1", "source": "start", "target": "ai"},
+            {"id": "e2", "source": "ai", "target": "decision"},
+            {"id": "e3", "source": "decision", "target": "received", "label": "满意"},
+            {"id": "e4", "source": "decision", "target": "missing", "label": "未收到"},
+        ],
+    }
+
+    task = asyncio.create_task(
+        agent.start_session(
+            "flow-call-ai",
+            scenario_config,
+            variables,
+            captured_callbacks,
+            flow_version=flow,
+        )
+    )
+    await asyncio.sleep(0.05)
+    await agent.inject_user_text("flow-call-ai", "未收到")
+    await asyncio.wait_for(task, timeout=2)
+
+    assert mock_llm.calls == 1
+    assert captured_callbacks.caller_speech == ["未收到"]
+    assert captured_callbacks.agent_speech == [
+        "您好，请问您是否已经收到商品？",
+        "我来帮您登记售后",
+    ]
+    assert all("内部提示" not in text for text in captured_callbacks.agent_speech)
+
+
+@pytest.mark.asyncio
+async def test_flow_dry_run_crm_action_only_emits_debug_action(
+    agent: VoiceAgent,
+    scenario_config,
+    variables,
+    captured_callbacks,
+) -> None:
+    flow = {
+        "id": "version-dry-crm",
+        "nodes": [
+            {"id": "start", "type": "start", "data": {}},
+            {
+                "id": "crm",
+                "type": "action",
+                "data": {
+                    "actionType": "crm",
+                    "config": {"action": "create_after_sale_ticket", "priority": "high"},
+                },
+            },
+            {"id": "end", "type": "end", "data": {"farewell": "已记录"}},
+        ],
+        "edges": [
+            {"id": "e1", "source": "start", "target": "crm"},
+            {"id": "e2", "source": "crm", "target": "end"},
+        ],
+    }
+
+    await agent.start_session(
+        "flow-call-dry-crm",
+        scenario_config,
+        variables,
+        captured_callbacks,
+        flow_version=flow,
+        dry_run=True,
+    )
+
+    assert captured_callbacks.actions == [
+        ("crm", {"action": "create_after_sale_ticket", "priority": "high"})
+    ]
+    assert captured_callbacks.tool_calls == []
+    assert captured_callbacks.agent_speech == ["已记录"]
+
+
+@pytest.mark.asyncio
+async def test_flow_transfer_passes_extension(
+    agent: VoiceAgent,
+    scenario_config,
+    variables,
+    captured_callbacks,
+) -> None:
+    flow = {
+        "id": "version-transfer",
+        "nodes": [
+            {"id": "start", "type": "start", "data": {}},
+            {
+                "id": "transfer",
+                "type": "action",
+                "data": {
+                    "actionType": "transfer",
+                    "config": {"extension": "1001", "reason": "客户要求人工"},
+                },
+            },
+            {"id": "end", "type": "end", "data": {"farewell": "请稍候"}},
+        ],
+        "edges": [
+            {"id": "e1", "source": "start", "target": "transfer"},
+            {"id": "e2", "source": "transfer", "target": "end"},
+        ],
+    }
+
+    await agent.start_session(
+        "flow-call-transfer",
+        scenario_config,
+        variables,
+        captured_callbacks,
+        flow_version=flow,
+    )
+
+    assert captured_callbacks.escalations == ["客户要求人工"]
+    assert captured_callbacks.escalation_extensions == ["1001"]
