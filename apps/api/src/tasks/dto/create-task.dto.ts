@@ -1,5 +1,5 @@
 import { IsEnum, IsISO8601, IsObject, IsOptional, IsString, IsUUID, Matches } from 'class-validator';
-import { Scenario } from '@ai-call/shared';
+import { TaskPriority } from '@ai-call/shared';
 import { TASK_DESTINATION_PATTERN } from '../task-destination.js';
 
 export class CreateTaskDto {
@@ -7,8 +7,12 @@ export class CreateTaskDto {
   @Matches(TASK_DESTINATION_PATTERN)
   to!: string;
 
-  @IsEnum(Scenario)
-  scenario!: Scenario;
+  @IsString()
+  scenario!: string;
+
+  @IsOptional()
+  @IsUUID()
+  scenarioId?: string;
 
   @IsOptional()
   @IsObject()
@@ -17,6 +21,10 @@ export class CreateTaskDto {
   @IsOptional()
   @IsISO8601()
   scheduledAt?: string;
+
+  @IsOptional()
+  @IsEnum(TaskPriority)
+  priority?: TaskPriority;
 
   /** 关联的流程配置 ID（指定后 Voice Agent 按流程执行）*/
   @IsOptional()

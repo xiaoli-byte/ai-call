@@ -52,6 +52,7 @@ class FunASRClient:
         self._recv_task: Optional[asyncio.Task[None]] = None
         # 连接建立前缓冲的音频帧
         self._pending_audio: list[bytes] = []
+        self._speaking = True
 
     @property
     def call_id(self) -> str:
@@ -110,6 +111,9 @@ class FunASRClient:
             self._pending_audio.append(pcm)
             return
         try:
+            if not self._speaking:
+                await self._ws.send(json.dumps({"is_speaking": True}))
+                self._speaking = True
             await self._ws.send(pcm)
         except Exception as err:
             logger.warning(
@@ -121,8 +125,11 @@ class FunASRClient:
         """通知服务器用户已停止说话，触发 offline 整句识别。"""
         if self._closed or self._ws is None:
             return
+        if not self._speaking:
+            return
         try:
             await self._ws.send(json.dumps({"is_speaking": False}))
+            self._speaking = False
         except Exception as err:
             logger.warning("[FunASR] call_id=%s end_speech failed: %s", self._call_id, err)
 

@@ -12,12 +12,13 @@ import { AUTH_KEY } from '@/hooks/use-auth';
 const NAV_ITEMS_PRIMARY = [
   { href: '/', label: '概览', icon: 'home' },
   { href: '/tasks', label: '外呼任务', icon: 'phone' },
-  { href: '/calls', label: '通话历史', icon: 'history' },
   { href: '/task-flows', label: '外呼流程', icon: 'flow' },
 ];
 
 const NAV_ITEMS_SECONDARY = [
   { href: '/scenarios', label: '场景配置', icon: 'scenario' },
+  { href: '/voice-clones', label: '音色克隆', icon: 'mic' },
+  { href: '/global-config', label: '全局配置', icon: 'key' },
   { href: '/knowledge', label: '知识库', icon: 'knowledge' },
   { href: '/voice-demo', label: '语音演示', icon: 'mic' },
 ];
@@ -198,9 +199,10 @@ function NavIcon({ name }: { name: string }) {
 function getBreadcrumb(pathname: string) {
   if (pathname === '/') return { group: '工作台', current: '概览' };
   if (pathname.startsWith('/tasks')) return { group: '工作台', current: '外呼任务' };
-  if (pathname.startsWith('/calls')) return { group: '工作台', current: '通话历史' };
   if (pathname.startsWith('/task-flows')) return { group: '工作台', current: '外呼流程' };
   if (pathname.startsWith('/scenarios')) return { group: '配置', current: '场景配置' };
+  if (pathname.startsWith('/voice-clones')) return { group: '配置', current: '音色克隆' };
+  if (pathname.startsWith('/global-config')) return { group: '配置', current: '全局配置' };
   if (pathname.startsWith('/knowledge')) return { group: '配置', current: '知识库' };
   if (pathname.startsWith('/voice-demo')) return { group: '工具', current: '语音演示' };
   if (pathname.startsWith('/system/users')) return { group: '系统管理', current: '用户管理' };
@@ -286,8 +288,8 @@ export function ClientLayout({
             <Link href="/" className="brand" style={{ textDecoration: 'none' }}>
               <div className="brand-logo">AI</div>
               <div className="brand-text">
-                <span className="brand-name">Call Console</span>
-                <span className="brand-sub">智能外呼平台</span>
+                <span className="brand-name">外呼中心</span>
+                <span className="brand-sub">AI 智能外呼系统</span>
               </div>
             </Link>
             <button
@@ -305,7 +307,12 @@ export function ClientLayout({
             <div className="nav-group">
               <div className="nav-group-label">工作台</div>
               {NAV_ITEMS_PRIMARY.map((item) => (
-                <Link key={item.href} href={item.href} className="nav-item" title={item.label}>
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className={`nav-item ${pathname === item.href || (item.href !== '/' && pathname.startsWith(item.href)) ? 'active' : ''}`}
+                  title={item.label}
+                >
                   <NavIcon name={item.icon} />
                   <span>{item.label}</span>
                 </Link>
@@ -315,7 +322,12 @@ export function ClientLayout({
             <div className="nav-group">
               <div className="nav-group-label">配置</div>
               {NAV_ITEMS_SECONDARY.map((item) => (
-                <Link key={item.href} href={item.href} className="nav-item" title={item.label}>
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className={`nav-item ${pathname.startsWith(item.href) ? 'active' : ''}`}
+                  title={item.label}
+                >
                   <NavIcon name={item.icon} />
                   <span>{item.label}</span>
                 </Link>
@@ -326,7 +338,12 @@ export function ClientLayout({
               <div className="nav-group">
                 <div className="nav-group-label">系统管理</div>
                 {NAV_ITEMS_SYSTEM.map((item) => (
-                  <Link key={item.href} href={item.href} className="nav-item" title={item.label}>
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    className={`nav-item ${pathname.startsWith(item.href) ? 'active' : ''}`}
+                    title={item.label}
+                  >
                     <NavIcon name={item.icon} />
                     <span>{item.label}</span>
                   </Link>

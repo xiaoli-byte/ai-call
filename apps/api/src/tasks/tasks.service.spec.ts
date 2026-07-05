@@ -1,11 +1,18 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { Scenario, TaskStatus } from '@ai-call/shared';
+import { Scenario, TaskPriority, TaskStatus } from '@ai-call/shared';
 import { TasksService } from './tasks.service.js';
 
 type Call = [string, any];
 
 const now = new Date('2026-07-02T00:00:00.000Z');
+
+const scenarios = {
+  resolveConfig: async () => undefined,
+  get: async () => undefined,
+  mergeDefaultVariables: (_config: unknown, variables: Record<string, string>) => variables,
+  toDomain: (record: unknown) => record,
+};
 
 function taskRecord(overrides: Record<string, unknown> = {}) {
   return {
@@ -35,6 +42,42 @@ function taskRecord(overrides: Record<string, unknown> = {}) {
 }
 
 describe('TasksService', () => {
+  it('createBatch creates tasks from list rows in priority order', async () => {
+    const calls: Array<Record<string, any>> = [];
+    const prisma = {
+      outboundTask: {
+        create: async (args: any) => {
+          calls.push(args.data);
+          return taskRecord({
+            id: `task-${calls.length}`,
+            to: args.data.to,
+            scenario: args.data.scenario,
+            variables: args.data.variables,
+            scheduledAt: args.data.scheduledAt,
+          });
+        },
+      },
+    };
+    const service = new TasksService(prisma as never, {} as never, scenarios as never, {} as never);
+
+    const result = await service.createBatch({
+      scenario: Scenario.ECOMMERCE,
+      scheduledAt: '2026-07-02T00:00:00.000Z',
+      priority: TaskPriority.NORMAL,
+      items: [
+        { to: '1002', priority: TaskPriority.LOW, variables: { customerName: '李四' } },
+        { to: '1001', priority: TaskPriority.HIGH, variables: { customerName: '张三' } },
+      ],
+    });
+
+    assert.equal(result.createdCount, 2);
+    assert.equal(calls[0].to, '1001');
+    assert.equal(calls[0].variables.customerName, '张三');
+    assert.equal(calls[0].variables.taskPriority, TaskPriority.HIGH);
+    assert.equal(result.tasks[0].priority, TaskPriority.HIGH);
+    assert.equal(calls[1].to, '1002');
+  });
+
   it('dispatch creates a CallAttempt and idempotent outbox event', async () => {
     const calls: Call[] = [];
     const prisma = {
@@ -65,7 +108,7 @@ describe('TasksService', () => {
       },
       $transaction: async (fn: (tx: unknown) => Promise<void>) => fn(prisma),
     };
-    const service = new TasksService(prisma as never, {} as never, {} as never);
+    const service = new TasksService(prisma as never, {} as never, scenarios as never, {} as never);
 
     await service.dispatch('task-1');
 
@@ -121,7 +164,7 @@ describe('TasksService', () => {
       },
       $transaction: async (fn: (tx: unknown) => Promise<void>) => fn(prisma),
     };
-    const service = new TasksService(prisma as never, {} as never, {} as never);
+    const service = new TasksService(prisma as never, {} as never, scenarios as never, {} as never);
 
     const result = await service.dispatchDuePending(5);
 
@@ -176,7 +219,7 @@ describe('TasksService', () => {
         return '+OK';
       },
     };
-    const service = new TasksService(prisma as never, {} as never, freeswitch as never);
+    const service = new TasksService(prisma as never, {} as never, scenarios as never, freeswitch as never);
 
     await service.hangup('attempt-1');
 

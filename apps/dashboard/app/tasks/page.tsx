@@ -1,172 +1,218 @@
 import Link from 'next/link';
+import {
+  Activity,
+  CalendarDays,
+  ChevronRight,
+  CheckCircle2,
+  Download,
+  PhoneCall,
+  Plus,
+  Search,
+  TrendingUp,
+} from 'lucide-react';
 import { apiServer } from '@/lib/api/server';
-import { Scenario, TaskStatus, CallOutcome } from '@ai-call/shared';
+import { TaskStatus, type ScenarioKey } from '@ai-call/shared';
 
 const STATUS_LABELS: Record<TaskStatus, string> = {
-  pending: '待拨打',
+  pending: '待执行',
   calling: '拨打中',
   in_call: '通话中',
   completed: '已完成',
-  failed: '失败',
+  failed: '执行失败',
   no_answer: '未接听',
-  cancelled: '已取消',
+  cancelled: '已暂停',
 };
 
-const STATUS_BADGE: Record<TaskStatus, string> = {
-  pending: 'badge-neutral',
-  calling: 'badge-info',
-  in_call: 'badge-info',
-  completed: 'badge-success',
-  failed: 'badge-danger',
-  no_answer: 'badge-warning',
-  cancelled: 'badge-neutral',
+const STATUS_CLASS: Record<TaskStatus, string> = {
+  pending: 'is-pending',
+  calling: 'is-running',
+  in_call: 'is-running',
+  completed: 'is-completed',
+  failed: 'is-failed',
+  no_answer: 'is-paused',
+  cancelled: 'is-paused',
 };
 
-const SCENARIO_LABELS: Record<Scenario, string> = {
-  collection: '贷后催收',
-  ecommerce: '电商售后',
-  presale: '售前邀约',
-};
+const FILTERS = [
+  { label: '全部', value: '' },
+  { label: '执行中', value: TaskStatus.CALLING },
+  { label: '已完成', value: TaskStatus.COMPLETED },
+  { label: '已暂停', value: TaskStatus.CANCELLED },
+  { label: '失败', value: TaskStatus.FAILED },
+] as const;
 
-const SCENARIO_BADGE: Record<Scenario, string> = {
-  collection: 'badge-warning',
-  ecommerce: 'badge-info',
-  presale: 'badge-primary',
-};
+function formatDate(value?: string) {
+  return value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '—';
+}
+
+function number(value: number) {
+  return new Intl.NumberFormat('zh-CN').format(value);
+}
+
+function filterHref(status: string, query?: string) {
+  const params = new URLSearchParams();
+  if (status) params.set('status', status);
+  if (query) params.set('query', query);
+  const search = params.toString();
+  return `/tasks${search ? `?${search}` : ''}`;
+}
 
 export default async function TasksPage({
   searchParams,
 }: {
-  searchParams: { scenario?: Scenario; status?: TaskStatus; cursor?: string };
+  searchParams: { scenario?: ScenarioKey; status?: TaskStatus; cursor?: string; query?: string };
 }) {
   let page: Awaited<ReturnType<typeof apiServer.tasks.list>> = { items: [] };
+  let scenarios: Awaited<ReturnType<typeof apiServer.scenarios.list>> = [];
   let error: string | null = null;
+
   try {
-    page = await apiServer.tasks.list(searchParams);
-  } catch (e) {
-    error = e instanceof Error ? e.message : '加载失败';
+    [page, scenarios] = await Promise.all([
+      apiServer.tasks.list({
+        scenario: searchParams.scenario,
+        status: searchParams.status,
+        cursor: searchParams.cursor,
+        limit: 50,
+      }),
+      apiServer.scenarios.list(),
+    ]);
+  } catch (cause) {
+    error = cause instanceof Error ? cause.message : '加载失败';
   }
-  const tasks = page.items;
-  const nextHref = page.nextCursor
-    ? `/tasks?${new URLSearchParams({
-        ...(searchParams.scenario ? { scenario: searchParams.scenario } : {}),
-        ...(searchParams.status ? { status: searchParams.status } : {}),
-        cursor: page.nextCursor,
-      }).toString()}`
-    : undefined;
+
+  const scenarioNames = new Map(scenarios.map((item) => [item.scenario, item.name]));
+  const query = searchParams.query?.trim().toLowerCase() ?? '';
+  const tasks = page.items.filter((task) => {
+    if (!query) return true;
+    const scenarioName = scenarioNames.get(task.scenario) ?? task.scenario;
+    return `${task.id} ${task.to} ${scenarioName}`.toLowerCase().includes(query);
+  });
+  const totalCalls = tasks.reduce((sum, task) => sum + Math.max(task.attemptCount, 1), 0);
+  const connected = tasks.filter((task) => task.status === 'completed' || task.status === 'in_call').length;
+  const failed = tasks.filter((task) => task.status === 'failed' || task.status === 'no_answer').length;
+  const connectRate = totalCalls ? Math.round((connected / totalCalls) * 1000) / 10 : 0;
 
   return (
-    <div>
-      <div className="page-header">
-        <div className="page-header-content">
-          <h1 className="page-title">外呼任务</h1>
-          <p className="subtitle">创建、派发、跟踪外呼任务</p>
+    <div className="outbound-page outbound-list-page">
+      <header className="outbound-header">
+        <div>
+          <h1>外呼任务</h1>
+          <p>管理和追踪所有外呼任务的执行情况</p>
         </div>
-        <div className="page-actions">
-          <Link href="/tasks/new" className="btn">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="12" y1="5" x2="12" y2="19" />
-              <line x1="5" y1="12" x2="19" y2="12" />
-            </svg>
-            新建任务
-          </Link>
-        </div>
-      </div>
+        <Link href="/tasks/new" className="outbound-primary-button">
+          <Plus size={15} />
+          新建任务
+        </Link>
+      </header>
 
-      <form className="filter-bar">
-        <select name="scenario" className="form-select" defaultValue={searchParams.scenario ?? ''}>
-          <option value="">全部场景</option>
-          <option value="collection">贷后催收</option>
-          <option value="ecommerce">电商售后</option>
-          <option value="presale">售前邀约</option>
-        </select>
-        <select name="status" className="form-select" defaultValue={searchParams.status ?? ''}>
-          <option value="">全部状态</option>
-          <option value="pending">待拨打</option>
-          <option value="calling">拨打中</option>
-          <option value="in_call">通话中</option>
-          <option value="completed">已完成</option>
-          <option value="no_answer">未接听</option>
-        </select>
-        <button type="submit" className="btn btn-secondary btn-sm">应用筛选</button>
-        <Link href="/tasks" className="btn btn-ghost btn-sm">重置</Link>
-      </form>
+      <main className="outbound-content">
+        <section className="outbound-stat-grid" aria-label="任务统计">
+          <article className="outbound-stat-card">
+            <div className="outbound-stat-label"><span>本月任务总数</span><CalendarDays size={16} /></div>
+            <strong>{number(tasks.length)}</strong>
+            <small>当前列表任务</small>
+            <p className="positive"><TrendingUp size={12} /> 实时同步任务数据</p>
+          </article>
+          <article className="outbound-stat-card">
+            <div className="outbound-stat-label"><span>累计外呼量</span><PhoneCall size={16} /></div>
+            <strong>{number(totalCalls)}</strong>
+            <small>当前任务累计</small>
+            <p className="positive"><TrendingUp size={12} /> 接通率 {connectRate}%</p>
+          </article>
+          <article className="outbound-stat-card">
+            <div className="outbound-stat-label"><span>成功接通</span><CheckCircle2 size={16} /></div>
+            <strong>{number(connected)}</strong>
+            <small>已接通通话数</small>
+            <p className="muted">失败或未接听 {number(failed)}</p>
+          </article>
+          <article className="outbound-stat-card">
+            <div className="outbound-stat-label"><span>平均接通率</span><Activity size={16} /></div>
+            <strong>{connectRate}%</strong>
+            <small>当前列表均值</small>
+            <p className="positive"><TrendingUp size={12} /> 数据持续更新</p>
+          </article>
+        </section>
 
-      {error ? (
-        <div className="card">
-          <div className="empty">
-            <div className="empty-title" style={{ color: 'var(--danger)' }}>后端连接失败</div>
-            <div className="empty-desc">{error}</div>
-            <div style={{ fontSize: '12.5px', color: 'var(--text-muted)' }}>
-              请先启动后端：<code>cd apps/api && pnpm dev</code>
+        <section className="outbound-toolbar">
+          <nav className="outbound-segments" aria-label="任务状态">
+            {FILTERS.map((item) => (
+              <Link
+                key={item.label}
+                href={filterHref(item.value, searchParams.query)}
+                className={(searchParams.status ?? '') === item.value ? 'active' : ''}
+              >
+                {item.label}
+              </Link>
+            ))}
+          </nav>
+          <div className="outbound-tools">
+            <form className="outbound-search">
+              {searchParams.status && <input type="hidden" name="status" value={searchParams.status} />}
+              <Search size={14} />
+              <input name="query" defaultValue={searchParams.query} placeholder="搜索任务名称或 ID..." />
+            </form>
+            <button type="button"><CalendarDays size={14} />日期筛选</button>
+            <button type="button"><Download size={14} />导出</button>
+          </div>
+        </section>
+
+        {error ? (
+          <div className="outbound-empty"><strong>后端连接失败</strong><span>{error}</span></div>
+        ) : tasks.length === 0 ? (
+          <div className="outbound-empty"><PhoneCall size={24} /><strong>暂无外呼任务</strong><span>新建任务后会显示在这里</span></div>
+        ) : (
+          <div className="outbound-table-shell">
+            <div className="outbound-table-scroll">
+              <table className="outbound-table">
+                <thead>
+                  <tr>
+                    <th>任务信息</th>
+                    <th>状态</th>
+                    <th>外呼机器人</th>
+                    <th className="numeric">总量 / 接通 / 失败</th>
+                    <th>接通率</th>
+                    <th>开始时间</th>
+                    <th>创建人</th>
+                    <th aria-label="操作" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {tasks.map((task) => {
+                    const attempts = Math.max(task.attemptCount, 1);
+                    const taskConnected = task.status === 'completed' || task.status === 'in_call' ? 1 : 0;
+                    const taskFailed = task.status === 'failed' || task.status === 'no_answer' ? 1 : 0;
+                    const rate = Math.round((taskConnected / attempts) * 100);
+                    const scenarioName = scenarioNames.get(task.scenario) ?? task.scenario;
+                    return (
+                      <tr key={task.id}>
+                        <td>
+                          <Link href={`/tasks/${task.id}`} className="outbound-task-link">
+                            <strong>{scenarioName}外呼任务</strong>
+                            <span>{task.id}</span>
+                          </Link>
+                        </td>
+                        <td><span className={`outbound-status ${STATUS_CLASS[task.status]}`}><i />{STATUS_LABELS[task.status]}</span></td>
+                        <td><span className="outbound-robot"><PhoneCall size={13} />{scenarioName}</span></td>
+                        <td className="numeric outbound-counts"><b>{number(attempts)}</b><span>/</span><em>{taskConnected}</em><span>/</span><i>{taskFailed}</i></td>
+                        <td>
+                          <div className="outbound-rate"><span><i style={{ width: `${Math.max(rate, 3)}%` }} /></span><b>{rate}%</b></div>
+                        </td>
+                        <td><div className="outbound-date"><span>{formatDate(task.scheduledAt)}</span>{task.duration ? <small>耗时 {task.duration}s</small> : null}</div></td>
+                        <td className="outbound-creator">系统</td>
+                        <td>
+                          <Link href={`/tasks/${task.id}`} className="outbound-row-icon" aria-label={`查看 ${scenarioName} 外呼任务详情`}>
+                            <ChevronRight size={14} />
+                          </Link>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
           </div>
-        </div>
-      ) : tasks.length === 0 ? (
-        <div className="card">
-          <div className="empty">
-            <svg className="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.79 19.79 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z" />
-            </svg>
-            <div className="empty-title">暂无外呼任务</div>
-            <div className="empty-desc">创建第一个外呼任务开始使用</div>
-            <Link href="/tasks/new" className="btn">创建第一个任务</Link>
-          </div>
-        </div>
-      ) : (
-        <div className="table-wrap">
-          <div className="table-scroll">
-            <table>
-              <thead>
-                <tr>
-                  <th>任务 ID</th>
-                  <th>被叫号码</th>
-                  <th>场景</th>
-                  <th>状态</th>
-                  <th>创建时间</th>
-                  <th style={{ textAlign: 'right' }}>操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {tasks.map((t) => (
-                  <tr key={t.id}>
-                    <td className="table-mono">{t.id.slice(0, 8)}…</td>
-                    <td style={{ fontWeight: 500 }}>{t.to}</td>
-                    <td>
-                      <span className={`badge ${SCENARIO_BADGE[t.scenario]}`}>
-                        {SCENARIO_LABELS[t.scenario]}
-                      </span>
-                    </td>
-                    <td>
-                      <span className={`badge badge-dot ${STATUS_BADGE[t.status]}`}>
-                        {STATUS_LABELS[t.status]}
-                      </span>
-                    </td>
-                    <td style={{ color: 'var(--text-secondary)', fontSize: '12.5px' }}>
-                      {new Date(t.createdAt).toLocaleString('zh-CN', { hour12: false })}
-                    </td>
-                    <td>
-                      <div className="row-actions" style={{ justifyContent: 'flex-end' }}>
-                        {t.status === 'pending' && (
-                          <form action={`/api/tasks/${t.id}/dispatch`} method="POST">
-                            <button type="submit" className="btn btn-sm">派发</button>
-                          </form>
-                        )}
-                        <Link href={`/calls/${t.id}`} className="btn btn-secondary btn-sm">详情</Link>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-      {nextHref && (
-        <div className="row-actions" style={{ justifyContent: 'flex-end', marginTop: 16 }}>
-          <Link href={nextHref} className="btn btn-secondary">下一页</Link>
-        </div>
-      )}
+        )}
+      </main>
     </div>
   );
 }

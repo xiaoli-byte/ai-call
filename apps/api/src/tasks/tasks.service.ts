@@ -3,19 +3,24 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import {
   CallOutcome,
   SCENARIO_CONFIGS,
   Scenario,
+  TaskPriority,
   TaskStatus,
 } from '@ai-call/shared';
 import type {
   CallAttempt,
+  CreateTaskBatchDto,
   CreateTaskDto,
   OutboundTask,
   OutboundTaskListItem,
+  ScenarioConfig,
+  TaskBatchCreateResult,
   TaskFlowVersion,
   TaskListPage,
   TranscriptTurn,
@@ -23,6 +28,8 @@ import type {
 import { FreeSwitchService } from '../freeswitch/freeswitch.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { TaskFlowsService } from '../task-flows/task-flows.service.js';
+import { ScenariosService } from '../scenarios/scenarios.service.js';
+import { GlobalConfigService } from '../global-config/global-config.service.js';
 import { callEventPayload, outboxPayload, toPrismaJson } from './task-payloads.js';
 
 type ResolvedContext = {
@@ -48,6 +55,12 @@ const STATUS_TRANSITIONS: Record<TaskStatus, ReadonlySet<TaskStatus>> = {
   [TaskStatus.CANCELLED]: new Set(),
 };
 
+const PRIORITY_WEIGHT: Record<TaskPriority, number> = {
+  [TaskPriority.HIGH]: 3,
+  [TaskPriority.NORMAL]: 2,
+  [TaskPriority.LOW]: 1,
+};
+
 @Injectable()
 export class TasksService {
   private readonly logger = new Logger(TasksService.name);
@@ -55,19 +68,29 @@ export class TasksService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly taskFlows: TaskFlowsService,
+    private readonly scenarios: ScenariosService,
     private readonly freeswitch: FreeSwitchService,
+    @Optional() private readonly globalConfig?: GlobalConfigService,
   ) {}
 
   async create(dto: CreateTaskDto): Promise<OutboundTask> {
     const flowVersion = dto.flowId
       ? await this.taskFlows.resolvePublishedVersion(dto.flowId)
       : undefined;
+    const scenarioConfig = await this.resolveCreateScenario(dto, flowVersion);
+    const scenarioId = scenarioConfig?.id ?? dto.scenarioId ?? flowVersion?.scenarioId;
+    const priority = normalizeTaskPriority(dto.priority ?? dto.variables?.taskPriority ?? dto.variables?.priority);
+    const variablesInput = { ...(dto.variables ?? {}), taskPriority: priority };
+    const variables = this.globalConfig
+      ? await this.globalConfig.mergeDefaultVariables(variablesInput)
+      : variablesInput;
     const record = await this.prisma.outboundTask.create({
       data: {
         to: dto.to,
         from: process.env.FROM_NUMBER ?? '+10000000000',
-        scenario: dto.scenario,
-        variables: toPrismaJson(dto.variables ?? {}),
+        scenario: scenarioConfig?.scenario ?? dto.scenario,
+        scenarioId,
+        variables: toPrismaJson(variables),
         status: TaskStatus.PENDING,
         scheduledAt: dto.scheduledAt ? new Date(dto.scheduledAt) : new Date(),
         flowId: dto.flowId,
@@ -84,8 +107,37 @@ export class TasksService {
     return this.toDomain(record);
   }
 
+  async createBatch(dto: CreateTaskBatchDto): Promise<TaskBatchCreateResult> {
+    const sortedItems = [...dto.items].sort((a, b) => (
+      PRIORITY_WEIGHT[normalizeTaskPriority(b.priority ?? b.variables?.taskPriority ?? b.variables?.priority ?? dto.priority)] -
+      PRIORITY_WEIGHT[normalizeTaskPriority(a.priority ?? a.variables?.taskPriority ?? a.variables?.priority ?? dto.priority)]
+    ));
+    const tasks: OutboundTask[] = [];
+
+    for (const item of sortedItems) {
+      const variables = {
+        ...(dto.variables ?? {}),
+        ...(item.variables ?? {}),
+      };
+      tasks.push(await this.create({
+        to: item.to,
+        scenario: dto.scenario,
+        scenarioId: dto.scenarioId,
+        flowId: dto.flowId,
+        scheduledAt: item.scheduledAt ?? dto.scheduledAt,
+        priority: item.priority ?? dto.priority,
+        variables,
+      }));
+    }
+
+    return {
+      createdCount: tasks.length,
+      tasks: tasks.map((task) => this.domainToListItem(task)),
+    };
+  }
+
   async list(filter: {
-    scenario?: Scenario;
+    scenario?: string;
     status?: TaskStatus;
     outcome?: CallOutcome;
     cursor?: string;
@@ -430,6 +482,7 @@ export class TasksService {
   private readonly detailInclude = {
     transcripts: { orderBy: { createdAt: 'asc' as const } },
     flowVersion: true,
+    scenarioConfig: true,
     attempts: { orderBy: { attemptNo: 'desc' as const } },
   };
 
@@ -438,6 +491,8 @@ export class TasksService {
     to: true,
     from: true,
     scenario: true,
+    scenarioId: true,
+    variables: true,
     status: true,
     scheduledAt: true,
     calledAt: true,
@@ -457,6 +512,16 @@ export class TasksService {
     updatedAt: true,
     _count: { select: { transcripts: true } },
   };
+
+  private async resolveCreateScenario(
+    dto: CreateTaskDto,
+    flowVersion?: TaskFlowVersion,
+  ) {
+    if (dto.scenarioId) return await this.scenarios.get(dto.scenarioId);
+    if (flowVersion?.scenarioConfig) return flowVersion.scenarioConfig;
+    if (flowVersion?.scenarioId) return await this.scenarios.get(flowVersion.scenarioId);
+    return await this.scenarios.resolveConfig(dto.scenario);
+  }
 
   private async resolveContext(id: string, preferActiveAttempt = false): Promise<ResolvedContext> {
     const task = await this.prisma.outboundTask.findUnique({
@@ -495,7 +560,9 @@ export class TasksService {
       id: record.id,
       to: record.to,
       from: record.from,
-      scenario: record.scenario as Scenario,
+      scenario: record.scenario,
+      scenarioId: record.scenarioId ?? undefined,
+      priority: normalizeTaskPriority(record.variables?.taskPriority ?? record.variables?.priority),
       status: record.status as TaskStatus,
       scheduledAt: record.scheduledAt.toISOString(),
       calledAt: record.calledAt?.toISOString(),
@@ -517,6 +584,10 @@ export class TasksService {
     const flowVersion: TaskFlowVersion | undefined = record.flowVersion
       ? {
           ...record.flowVersion,
+          scenarioId: record.flowVersion.scenarioId ?? undefined,
+          scenarioConfig: isScenarioConfig(record.flowVersion.scenarioSnapshot)
+            ? record.flowVersion.scenarioSnapshot
+            : undefined,
           nodes: record.flowVersion.nodes as TaskFlowVersion['nodes'],
           edges: record.flowVersion.edges as TaskFlowVersion['edges'],
           createdAt: record.flowVersion.createdAt.toISOString(),
@@ -540,9 +611,13 @@ export class TasksService {
       id: record.id,
       to: record.to,
       from: record.from,
-      scenario: record.scenario as Scenario,
-      scenarioConfig: SCENARIO_CONFIGS[record.scenario as Scenario],
+      scenario: record.scenario,
+      scenarioId: record.scenarioId ?? undefined,
+      scenarioConfig: record.scenarioConfig
+        ? this.scenarios.toDomain(record.scenarioConfig)
+        : flowVersion?.scenarioConfig ?? SCENARIO_CONFIGS[record.scenario as Scenario],
       variables: record.variables as Record<string, string>,
+      priority: normalizeTaskPriority(record.variables?.taskPriority ?? record.variables?.priority),
       status: record.status as TaskStatus,
       scheduledAt: record.scheduledAt.toISOString(),
       calledAt: record.calledAt?.toISOString(),
@@ -557,13 +632,52 @@ export class TasksService {
       flowVersionId: record.flowVersionId ?? undefined,
       flowVersion,
       transcript: (record.transcripts ?? []).map((turn: any) => ({
+        id: turn.id,
         role: turn.role as TranscriptTurn['role'],
         content: turn.content,
         timestamp: turn.timestamp,
         emotion: turn.emotion ?? undefined,
+        createdAt: turn.createdAt?.toISOString?.(),
       })),
       createdAt: record.createdAt.toISOString(),
       updatedAt: record.updatedAt.toISOString(),
     };
   }
+
+  private domainToListItem(task: OutboundTask): OutboundTaskListItem {
+    return {
+      id: task.id,
+      to: task.to,
+      from: task.from,
+      scenario: task.scenario,
+      scenarioId: task.scenarioId,
+      priority: task.priority,
+      status: task.status,
+      scheduledAt: task.scheduledAt,
+      calledAt: task.calledAt,
+      endedAt: task.endedAt,
+      duration: task.duration,
+      outcome: task.outcome,
+      intentTags: task.intentTags,
+      flowId: task.flowId,
+      flowVersionId: task.flowVersionId,
+      attemptCount: task.attemptCount,
+      latestAttemptId: task.attempts?.[0]?.id,
+      transcriptCount: task.transcript?.length ?? 0,
+      createdAt: task.createdAt,
+      updatedAt: task.updatedAt,
+    };
+  }
+}
+
+function isScenarioConfig(value: unknown): value is ScenarioConfig {
+  return value !== null && typeof value === 'object' && 'scenario' in value && 'systemPrompt' in value;
+}
+
+function normalizeTaskPriority(value: unknown): TaskPriority {
+  if (value === TaskPriority.HIGH || value === 'urgent' || value === '紧急' || value === '高') {
+    return TaskPriority.HIGH;
+  }
+  if (value === TaskPriority.LOW || value === '低') return TaskPriority.LOW;
+  return TaskPriority.NORMAL;
 }

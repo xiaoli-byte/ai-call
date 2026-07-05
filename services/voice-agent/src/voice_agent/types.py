@@ -150,7 +150,7 @@ class EscalationRule:
 class ScenarioConfig:
     """业务场景配置。"""
 
-    scenario: Scenario
+    scenario: str | Scenario
     name: str
     description: str
     system_prompt: str
@@ -158,6 +158,13 @@ class ScenarioConfig:
     knowledge_base_id: str
     allowed_tools: list[str]
     escalation_rules: list[EscalationRule]
+    tts_config: dict[str, Any] = field(default_factory=dict)
+    agent_identity: str = ""
+    communication_style: str = ""
+    communication_style_prompt: str = ""
+    business_goal: str = ""
+    llm_constraints: list[str] = field(default_factory=list)
+    default_flow_id: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------

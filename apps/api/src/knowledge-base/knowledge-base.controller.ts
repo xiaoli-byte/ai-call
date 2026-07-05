@@ -29,24 +29,24 @@ export class KnowledgeBaseController {
   constructor(private readonly kbService: KnowledgeBaseService) {}
 
   @Get()
-  list() {
+  async list() {
     return this.kbService.list();
   }
 
   @Get(':id')
-  get(@Param('id') id: string) {
+  async get(@Param('id') id: string) {
     return this.kbService.get(id);
   }
 
   @Post(':id/retrieve')
   @Public()
-  retrieve(
+  async retrieve(
     @Param('id') id: string,
     @Body() body: { query: string; topK?: number },
   ) {
     return {
       query: body.query,
-      results: this.kbService.retrieve(id, body.query, body.topK ?? 3),
+      results: await this.kbService.retrieve(id, body.query, body.topK ?? 3),
     };
   }
 

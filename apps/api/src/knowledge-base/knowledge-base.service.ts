@@ -1,24 +1,23 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadGatewayException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 
 /**
- * 知识库 Service - RAG 检索增强生成
+ * 知识库 Service - RAG 检索增强生成。
  *
- * 当前为 Mock 实现，返回内置的 FAQ 文档片段。
- * 真实接入建议：
- *   - 向量库：Chroma（本地）或 Qdrant（生产）
- *   - Embedding 模型：OpenAI text-embedding-3-small 或 BGE-M3（中文）
- *   - 文档分块：递归字符分块，chunk_size=500，overlap=50
- *   - 检索策略：向量检索 + BM25 关键词混合 + Rerank
- *
- * 接入 LangChain.js 可参考：
- *   import { Chroma } from '@langchain/community/vectorstores/chroma';
- *   import { OpenAIEmbeddings } from '@langchain/openai';
- *   const vectorStore = await Chroma.fromDocuments(docs, new OpenAIEmbeddings());
- *   const results = await vectorStore.similaritySearchWithScore(query, 3);
+ * ai-call 保留原有 API 契约，真实知识库能力由独立 ai-knowledge 服务提供。
+ * 配置 KNOWLEDGE_SERVICE_BASE_URL 后，本服务会代理到外部服务；未配置时保留
+ * 内置 mock 数据，方便本地开发和测试不依赖知识库项目。
  */
 @Injectable()
 export class KnowledgeBaseService {
-  private knowledgeBases: Record<string, { id: string; name: string; docs: KnowledgeDoc[] }> = {
+  private readonly externalBaseUrl = process.env.KNOWLEDGE_SERVICE_BASE_URL?.replace(/\/+$/, '');
+  private readonly externalToken = process.env.KNOWLEDGE_SERVICE_API_TOKEN;
+  private readonly timeoutMs = Number(process.env.KNOWLEDGE_SERVICE_TIMEOUT_MS ?? 5000);
+
+  private knowledgeBases: Record<string, KnowledgeBaseDetail> = {
     'kb-collection': {
       id: 'kb-collection',
       name: '贷后催收知识库',
@@ -80,7 +79,15 @@ export class KnowledgeBaseService {
   };
 
   /** 列出所有知识库 */
-  list() {
+  async list() {
+    if (this.externalBaseUrl) {
+      const data = await this.requestExternal<KnowledgeBaseSummary[] | { items?: KnowledgeBaseSummary[]; knowledgeBases?: KnowledgeBaseSummary[] }>(
+        '/knowledge-base',
+      );
+      if (Array.isArray(data)) return data;
+      return data.items ?? data.knowledgeBases ?? [];
+    }
+
     return Object.values(this.knowledgeBases).map(({ docs, ...rest }) => ({
       ...rest,
       docCount: docs.length,
@@ -88,7 +95,11 @@ export class KnowledgeBaseService {
   }
 
   /** 获取知识库详情 */
-  get(id: string) {
+  async get(id: string) {
+    if (this.externalBaseUrl) {
+      return this.requestExternal<KnowledgeBaseDetail>(`/knowledge-base/${encodeURIComponent(id)}`);
+    }
+
     const kb = this.knowledgeBases[id];
     if (!kb) throw new NotFoundException(`Knowledge base ${id} not found`);
     return kb;
@@ -106,7 +117,18 @@ export class KnowledgeBaseService {
    * RAG 反幻觉原则：宁可让 LLM 看到"无相关文档"也不要塞入无关上下文，
    * 由 LLM 通过 tool_call 升级到人工。
    */
-  retrieve(knowledgeBaseId: string, query: string, topK = 3) {
+  async retrieve(knowledgeBaseId: string, query: string, topK = 3) {
+    if (this.externalBaseUrl) {
+      const data = await this.requestExternal<KnowledgeDoc[] | { results?: KnowledgeDoc[] }>(
+        `/knowledge-base/${encodeURIComponent(knowledgeBaseId)}/retrieve`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ query, topK }),
+        },
+      );
+      return Array.isArray(data) ? data : data.results ?? [];
+    }
+
     const kb = this.knowledgeBases[knowledgeBaseId];
     if (!kb) throw new NotFoundException(`Knowledge base ${knowledgeBaseId} not found`);
 
@@ -137,11 +159,70 @@ export class KnowledgeBaseService {
    *   3. 调用 Embedding API 生成向量
    *   4. 写入向量库
    */
-  async upload(knowledgeBaseId: string, _filename: string, _content: Buffer) {
+  async upload(knowledgeBaseId: string, filename: string, content: Buffer) {
+    if (this.externalBaseUrl) {
+      const form = new FormData();
+      form.append('file', new Blob([new Uint8Array(content)]), filename);
+      return this.requestExternal(
+        `/knowledge-base/${encodeURIComponent(knowledgeBaseId)}/upload`,
+        {
+          method: 'POST',
+          body: form,
+        },
+      );
+    }
+
     const kb = this.knowledgeBases[knowledgeBaseId];
     if (!kb) throw new NotFoundException(`Knowledge base ${knowledgeBaseId} not found`);
     // TODO: 实现文档解析+分块+向量化+入库
-    return { message: `文档 ${_filename} 已接收，向量化入库待实现`, docCount: kb.docs.length };
+    return { message: `文档 ${filename} 已接收，向量化入库待实现`, docCount: kb.docs.length };
+  }
+
+  private async requestExternal<T = unknown>(
+    path: string,
+    init: RequestInit = {},
+  ): Promise<T> {
+    if (!this.externalBaseUrl) {
+      throw new BadGatewayException('Knowledge service is not configured');
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    const headers = new Headers(init.headers);
+    if (init.body && !(init.body instanceof FormData) && !headers.has('content-type')) {
+      headers.set('content-type', 'application/json');
+    }
+    if (this.externalToken && !headers.has('authorization')) {
+      headers.set('authorization', `Bearer ${this.externalToken}`);
+    }
+
+    try {
+      const response = await fetch(`${this.externalBaseUrl}${path}`, {
+        ...init,
+        headers,
+        signal: controller.signal,
+      });
+
+      if (response.status === 404) {
+        throw new NotFoundException(`Knowledge service resource not found: ${path}`);
+      }
+      if (!response.ok) {
+        const body = await response.text().catch(() => '');
+        throw new BadGatewayException(
+          `Knowledge service request failed: HTTP ${response.status}${body ? ` ${body}` : ''}`,
+        );
+      }
+
+      if (response.status === 204) return undefined as T;
+      return (await response.json()) as T;
+    } catch (err) {
+      if (err instanceof NotFoundException || err instanceof BadGatewayException) throw err;
+      throw new BadGatewayException(
+        `Knowledge service request error: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    } finally {
+      clearTimeout(timer);
+    }
   }
 }
 
@@ -149,4 +230,17 @@ interface KnowledgeDoc {
   id: string;
   content: string;
   source: string;
+  score?: number;
+}
+
+interface KnowledgeBaseSummary {
+  id: string;
+  name: string;
+  docCount?: number;
+}
+
+interface KnowledgeBaseDetail {
+  id: string;
+  name: string;
+  docs: KnowledgeDoc[];
 }

@@ -7,10 +7,76 @@ datasource db {
   provider = "postgresql"
 }
 
+model OutboundScenario {
+  id                       String            @id @default(uuid())
+  scenario                 String            @unique
+  name                     String
+  description              String            @default("")
+  status                   String            @default("active")
+  ttsConfig                Json              @default("{}") @map("tts_config")
+  agentIdentity            String            @default("") @map("agent_identity")
+  communicationStyle       String            @default("") @map("communication_style")
+  communicationStylePrompt String            @default("") @map("communication_style_prompt")
+  businessGoal             String            @default("") @map("business_goal")
+  llmConstraints           Json              @default("[]") @map("llm_constraints")
+  systemPrompt             String            @default("") @map("system_prompt")
+  greeting                 String            @default("")
+  knowledgeBaseId          String            @default("") @map("knowledge_base_id")
+  allowedTools             Json              @default("[]") @map("allowed_tools")
+  escalationRules          Json              @default("[]") @map("escalation_rules")
+  defaultFlowId            String?           @map("default_flow_id")
+  defaultFlow              TaskFlow?         @relation("ScenarioDefaultFlow", fields: [defaultFlowId], references: [id], onDelete: SetNull)
+  taskFlows                TaskFlow[]        @relation("TaskFlowScenario")
+  taskFlowVersions         TaskFlowVersion[] @relation("TaskFlowVersionScenario")
+  tasks                    OutboundTask[]
+  createdAt                DateTime          @default(now()) @map("created_at")
+  updatedAt                DateTime          @updatedAt @map("updated_at")
+
+  @@index([status, updatedAt])
+  @@map("outbound_scenarios")
+}
+
+model GlobalConfig {
+  id              String   @id @default("default")
+  globalVariables Json     @default("[]") @map("global_variables")
+  apiPlugins      Json     @default("[]") @map("api_plugins")
+  outboundRules   Json     @default("{}") @map("outbound_rules")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@map("global_configs")
+}
+
+model VoiceClone {
+  id                 String   @id @default(uuid())
+  voiceId            String   @unique @map("voice_id")
+  name               String
+  model              String   @default("cosyvoice")
+  promptText         String   @map("prompt_text")
+  description        String   @default("")
+  status             String   @default("ready")
+  sourceFilename     String   @map("source_filename")
+  sourceMimeType     String   @map("source_mime_type")
+  sourceFilePath     String   @map("source_file_path")
+  sourceFileSize     Int      @map("source_file_size")
+  previewText        String?  @map("preview_text")
+  previewFilePath    String?  @map("preview_file_path")
+  previewMimeType    String?  @map("preview_mime_type")
+  previewGeneratedAt DateTime? @map("preview_generated_at")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  @@index([status, updatedAt])
+  @@map("voice_clones")
+}
+
 model TaskFlow {
   id          String            @id @default(uuid())
   name        String
   description String            @default("")
+  scenarioId  String?           @map("scenario_id")
+  scenarioConfig OutboundScenario? @relation("TaskFlowScenario", fields: [scenarioId], references: [id], onDelete: SetNull)
+  defaultForScenarios OutboundScenario[] @relation("ScenarioDefaultFlow")
   status      String            @default("draft")
   nodes       Json              @default("[]")
   edges       Json              @default("[]")
@@ -30,6 +96,9 @@ model TaskFlowVersion {
   version     Int
   name        String
   description String         @default("")
+  scenarioId  String?        @map("scenario_id")
+  scenarioConfig OutboundScenario? @relation("TaskFlowVersionScenario", fields: [scenarioId], references: [id], onDelete: SetNull)
+  scenarioSnapshot Json?     @map("scenario_snapshot")
   nodes       Json
   edges       Json
   tasks       OutboundTask[]
@@ -45,6 +114,8 @@ model OutboundTask {
   to            String
   from          String
   scenario      String
+  scenarioId    String?           @map("scenario_id")
+  scenarioConfig OutboundScenario? @relation(fields: [scenarioId], references: [id], onDelete: SetNull)
   variables     Json              @default("{}")
   status        String            @default("pending")
   scheduledAt   DateTime          @map("scheduled_at")
@@ -66,6 +137,7 @@ model OutboundTask {
   updatedAt     DateTime          @updatedAt @map("updated_at")
 
   @@index([status, scheduledAt])
+  @@index([scenarioId])
   @@index([flowVersionId])
   @@map("outbound_tasks")
 }

@@ -1,11 +1,11 @@
 import { Type } from 'class-transformer';
 import { IsEnum, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
-import { CallOutcome, Scenario, TaskStatus } from '@ai-call/shared';
+import { CallOutcome, TaskStatus } from '@ai-call/shared';
 
 export class ListTasksDto {
   @IsOptional()
-  @IsEnum(Scenario)
-  scenario?: Scenario;
+  @IsString()
+  scenario?: string;
 
   @IsOptional()
   @IsEnum(TaskStatus)

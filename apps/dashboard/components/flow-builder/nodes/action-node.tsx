@@ -22,6 +22,9 @@ function getSummary(data: ActionNodeData): string {
   if (data.actionType === 'crm' && config.action) {
     return `CRM: ${config.action}`;
   }
+  if (data.actionType === 'api' && config.pluginName) {
+    return `插件: ${config.pluginName}`;
+  }
   if (data.actionType === 'api' && config.url) {
     return String(config.url).slice(0, 40);
   }

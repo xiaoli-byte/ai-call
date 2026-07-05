@@ -1,3 +1,5 @@
+import type { ScenarioConfig } from './scenarios.js';
+
 /**
  * 外呼任务流程配置共享类型。
  *
@@ -95,6 +97,10 @@ export interface CrmActionConfig {
 
 /** API/Webhook 调用配置 */
 export interface ApiActionConfig {
+  /** 引用的全局 API 插件 ID */
+  pluginId?: string;
+  /** 冗余保存插件名称，便于流程快照和调试展示 */
+  pluginName?: string;
   /** 请求 URL */
   url?: string;
   /** 请求方法（默认 POST）*/
@@ -169,6 +175,9 @@ export interface TaskFlow extends FlowDefinition {
   id: string;
   name: string;
   description: string;
+  /** 绑定的场景配置。流程发布时会把该配置快照写入版本。 */
+  scenarioId?: string;
+  scenarioConfig?: ScenarioConfig;
   status: FlowStatus;
   version: number;
   createdAt: string;
@@ -182,6 +191,9 @@ export interface TaskFlowVersion extends FlowDefinition {
   version: number;
   name: string;
   description: string;
+  scenarioId?: string;
+  /** 发布时锁定的场景配置快照。 */
+  scenarioConfig?: ScenarioConfig;
   createdAt: string;
 }
 
@@ -195,6 +207,7 @@ export interface FlowValidationIssue {
 export interface CreateTaskFlowDto {
   name: string;
   description?: string;
+  scenarioId?: string;
   templateId?: string;
   nodes?: FlowNode[];
   edges?: FlowEdge[];
@@ -203,6 +216,7 @@ export interface CreateTaskFlowDto {
 export interface UpdateTaskFlowDto {
   name?: string;
   description?: string;
+  scenarioId?: string | null;
   nodes?: FlowNode[];
   edges?: FlowEdge[];
 }

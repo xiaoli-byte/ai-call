@@ -11,8 +11,8 @@ import animate from 'tailwindcss-animate';
  * - Background: #F8FAFC (浅色)
  * - Typography: Inter
  *
- * 架构：preflight 接管 reset，shadcn/ui 兼容 HSL 变量 + 项目既有 hex 变量并存，
- * token 单一来源（globals.css :root CSS 变量），Tailwind theme.extend 引用变量。
+ * 架构：preflight 接管 reset，shadcn/ui 使用 tw- 前缀 HSL 变量，
+ * 项目既有全局类继续使用 hex token，避免变量命名冲突。
  */
 const config: Config = {
   darkMode: ['class'],
@@ -33,38 +33,38 @@ const config: Config = {
     extend: {
       colors: {
         // === shadcn/ui 兼容变量（HSL 格式，供 shadcn 组件使用）===
-        border: 'hsl(var(--border))',
-        input: 'hsl(var(--input))',
-        ring: 'hsl(var(--ring))',
-        background: 'hsl(var(--background))',
-        foreground: 'hsl(var(--foreground))',
+        border: 'hsl(var(--tw-border))',
+        input: 'hsl(var(--tw-input))',
+        ring: 'hsl(var(--tw-ring))',
+        background: 'hsl(var(--tw-background))',
+        foreground: 'hsl(var(--tw-foreground))',
         primary: {
-          DEFAULT: 'hsl(var(--primary))',
-          foreground: 'hsl(var(--primary-foreground))',
+          DEFAULT: 'hsl(var(--tw-primary))',
+          foreground: 'hsl(var(--tw-primary-foreground))',
         },
         secondary: {
-          DEFAULT: 'hsl(var(--secondary))',
-          foreground: 'hsl(var(--secondary-foreground))',
+          DEFAULT: 'hsl(var(--tw-secondary))',
+          foreground: 'hsl(var(--tw-secondary-foreground))',
         },
         destructive: {
-          DEFAULT: 'hsl(var(--destructive))',
-          foreground: 'hsl(var(--destructive-foreground))',
+          DEFAULT: 'hsl(var(--tw-destructive))',
+          foreground: 'hsl(var(--tw-destructive-foreground))',
         },
         muted: {
-          DEFAULT: 'hsl(var(--muted))',
-          foreground: 'hsl(var(--muted-foreground))',
+          DEFAULT: 'hsl(var(--tw-muted))',
+          foreground: 'hsl(var(--tw-muted-foreground))',
         },
         accent: {
-          DEFAULT: 'hsl(var(--accent))',
-          foreground: 'hsl(var(--accent-foreground))',
+          DEFAULT: 'hsl(var(--tw-accent))',
+          foreground: 'hsl(var(--tw-accent-foreground))',
         },
         popover: {
-          DEFAULT: 'hsl(var(--popover))',
-          foreground: 'hsl(var(--popover-foreground))',
+          DEFAULT: 'hsl(var(--tw-popover))',
+          foreground: 'hsl(var(--tw-popover-foreground))',
         },
         card: {
-          DEFAULT: 'hsl(var(--card))',
-          foreground: 'hsl(var(--card-foreground))',
+          DEFAULT: 'hsl(var(--tw-card))',
+          foreground: 'hsl(var(--tw-card-foreground))',
         },
         // === 项目既有 token（引用 CSS 变量，单一来源）===
         success: {

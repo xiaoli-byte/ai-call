@@ -15,6 +15,7 @@ import {
 import { PERMISSIONS } from '@ai-call/shared';
 import { TasksService } from './tasks.service.js';
 import { CreateTaskDto } from './dto/create-task.dto.js';
+import { CreateTaskBatchDto } from './dto/create-task-batch.dto.js';
 import { ServiceAuthGuard } from '../common/service-auth.guard.js';
 import { Permissions } from '../auth/decorators/permissions.decorator.js';
 import { Public } from '../auth/decorators/public.decorator.js';
@@ -49,6 +50,14 @@ export class TasksController {
   @UsePipes(new ValidationPipe({ transform: true }))
   create(@Body() dto: CreateTaskDto) {
     return this.tasksService.create(dto);
+  }
+
+  /** 按名单批量创建外呼任务 */
+  @Post('batch')
+  @Permissions(PERMISSIONS.TASK_CREATE)
+  @UsePipes(new ValidationPipe({ transform: true }))
+  createBatch(@Body() dto: CreateTaskBatchDto) {
+    return this.tasksService.createBatch(dto);
   }
 
   /** 列表查询 */

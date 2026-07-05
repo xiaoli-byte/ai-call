@@ -1,4 +1,4 @@
-import { IsArray, IsOptional, IsString } from 'class-validator';
+import { IsArray, IsOptional, IsString, IsUUID } from 'class-validator';
 import type { FlowEdge, FlowNode } from '@ai-call/shared';
 
 export class UpdateTaskFlowDto {
@@ -9,6 +9,10 @@ export class UpdateTaskFlowDto {
   @IsOptional()
   @IsString()
   description?: string;
+
+  @IsOptional()
+  @IsUUID()
+  scenarioId?: string | null;
 
   @IsOptional()
   @IsArray()

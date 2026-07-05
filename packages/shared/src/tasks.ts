@@ -1,4 +1,4 @@
-import { Scenario, type ScenarioConfig } from './scenarios.js';
+import type { ScenarioConfig, ScenarioKey } from './scenarios.js';
 import type { TaskFlowVersion } from './task-flows.js';
 
 /**
@@ -18,6 +18,12 @@ export enum TaskStatus {
   FAILED = 'failed',
   NO_ANSWER = 'no_answer',
   CANCELLED = 'cancelled',
+}
+
+export enum TaskPriority {
+  LOW = 'low',
+  NORMAL = 'normal',
+  HIGH = 'high',
 }
 
 /** 通话结果分类（用于意向分级） */
@@ -46,11 +52,15 @@ export interface OutboundTask {
   /** 主叫号码 */
   from: string;
   /** 业务场景 */
-  scenario: Scenario;
+  scenario: ScenarioKey;
+  /** 持久化场景配置 ID。 */
+  scenarioId?: string;
   /** API 下发的权威场景配置；Python 本地配置仅用于离线 fallback。 */
   scenarioConfig?: ScenarioConfig;
   /** 场景变量（用于填充话术模板，如 {orderNo}/{product}） */
   variables: Record<string, string>;
+  /** 任务优先级。当前随任务上下文保存，后续可迁移为独立调度字段。 */
+  priority?: TaskPriority;
   /** 任务状态 */
   status: TaskStatus;
   /** 计划拨打时间（ISO 时间戳） */
@@ -105,7 +115,9 @@ export interface OutboundTaskListItem {
   id: string;
   to: string;
   from: string;
-  scenario: Scenario;
+  scenario: ScenarioKey;
+  scenarioId?: string;
+  priority?: TaskPriority;
   status: TaskStatus;
   scheduledAt: string;
   calledAt?: string;
@@ -135,7 +147,8 @@ export interface CallHistoryItem {
   providerCallId?: string;
   to: string;
   from: string;
-  scenario: Scenario;
+  scenario: ScenarioKey;
+  scenarioId?: string;
   status: TaskStatus;
   startedAt: string;
   ringingAt?: string;
@@ -176,6 +189,7 @@ export interface CallHistoryDetail extends CallHistoryItem {
 
 /** 对话转写条目 */
 export interface TranscriptTurn {
+  id?: string;
   /** 谁说的 */
   role: 'agent' | 'caller' | 'system';
   /** 文本内容 */
@@ -184,21 +198,50 @@ export interface TranscriptTurn {
   timestamp: number;
   /** 该轮的情绪（可选） */
   emotion?: string;
+  /** 记录创建时间 */
+  createdAt?: string;
 }
 
 /** 创建外呼任务请求 */
 export interface CreateTaskDto {
   to: string;
-  scenario: Scenario;
+  scenario: ScenarioKey;
+  /** 指定持久化场景配置时优先使用该配置。 */
+  scenarioId?: string;
   variables?: Record<string, string>;
   scheduledAt?: string;
+  priority?: TaskPriority;
   /** 关联的流程配置 ID（可选，指定后 Voice Agent 按流程执行） */
   flowId?: string;
 }
 
+export interface CreateTaskBatchItem {
+  to: string;
+  variables?: Record<string, string>;
+  scheduledAt?: string;
+  priority?: TaskPriority;
+}
+
+export interface CreateTaskBatchDto {
+  scenario: ScenarioKey;
+  /** 指定持久化场景配置时优先使用该配置。 */
+  scenarioId?: string;
+  variables?: Record<string, string>;
+  scheduledAt?: string;
+  priority?: TaskPriority;
+  /** 关联的流程配置 ID（可选，指定后 Voice Agent 按流程执行） */
+  flowId?: string;
+  items: CreateTaskBatchItem[];
+}
+
+export interface TaskBatchCreateResult {
+  createdCount: number;
+  tasks: OutboundTaskListItem[];
+}
+
 /** 任务查询参数 */
 export interface TaskQueryDto {
-  scenario?: Scenario;
+  scenario?: ScenarioKey;
   status?: TaskStatus;
   outcome?: CallOutcome;
   cursor?: string;

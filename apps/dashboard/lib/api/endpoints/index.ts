@@ -5,6 +5,9 @@ import { taskFlowsEndpoints } from './task-flows';
 import { scenariosEndpoints } from './scenarios';
 import { knowledgeEndpoints } from './knowledge';
 import { systemEndpoints } from './system';
+import { callsEndpoints } from './calls';
+import { globalConfigEndpoints } from './global-config';
+import { voiceClonesEndpoints } from './voice-clones';
 
 /**
  * 工厂：根据传入的 HttpAdapter（client 或 server）创建完整 API 对象。
@@ -20,6 +23,9 @@ export function createApi(http: HttpAdapter) {
   const scenarios = scenariosEndpoints(http);
   const knowledge = knowledgeEndpoints(http);
   const system = systemEndpoints(http);
+  const calls = callsEndpoints(http);
+  const globalConfig = globalConfigEndpoints(http);
+  const voiceClones = voiceClonesEndpoints(http);
 
   return {
     // 模块化嵌套（新代码推荐）
@@ -29,6 +35,9 @@ export function createApi(http: HttpAdapter) {
     scenarios,
     knowledge,
     system,
+    calls,
+    globalConfig,
+    voiceClones,
 
     // 顶层扁平别名（兼容旧 apiClient.xxx 调用）
     // auth
@@ -39,10 +48,25 @@ export function createApi(http: HttpAdapter) {
     listTasks: tasks.list,
     getTask: tasks.get,
     createTask: tasks.create,
+    createTaskBatch: tasks.createBatch,
     dispatchTask: tasks.dispatch,
+    // calls
+    listCalls: calls.list,
+    getCall: calls.get,
     // scenarios
     listScenarios: scenarios.list,
     getScenario: scenarios.get,
+    createScenario: scenarios.create,
+    updateScenario: scenarios.update,
+    deactivateScenario: scenarios.deactivate,
+    // global config
+    getGlobalConfig: globalConfig.get,
+    updateGlobalConfig: globalConfig.update,
+    // voice clones
+    listVoiceClones: voiceClones.list,
+    createVoiceClone: voiceClones.create,
+    synthesizeVoiceClone: voiceClones.synthesize,
+    deleteVoiceClone: voiceClones.remove,
     // knowledge
     listKnowledgeBases: knowledge.list,
     getKnowledgeBase: knowledge.get,

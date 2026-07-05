@@ -356,7 +356,9 @@ class VoiceAgentServer:
             scenario_str = task.get("scenario", scenario_str)
             variables = dict(task.get("variables", {}))
             flow_version = task.get("flowVersion")
-            scenario_contract = task.get("scenarioConfig")
+            scenario_contract = task.get("scenarioConfig") or (
+                flow_version or {}
+            ).get("scenarioConfig")
             logger.info(
                 "[VoiceAgentServer] callId=%s loaded task context: scenario=%s",
                 call_id,
@@ -375,7 +377,6 @@ class VoiceAgentServer:
             else get_scenario(scenario_str)
         )
 
-        # 2) 合并 variables：task < metadata < DEFAULT_VARIABLES
         # 提取场景模板中用到的所有变量
         template_vars = set(extract_template_vars(scenario_config.greeting)) | set(
             extract_template_vars(scenario_config.system_prompt)

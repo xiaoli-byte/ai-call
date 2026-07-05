@@ -13,8 +13,20 @@ import { resolve } from 'path';
 import { hash } from 'bcryptjs';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '../src/generated/prisma/client.js';
-import { PERMISSIONS, ROLE_TEMPLATES } from '@ai-call/shared';
-import type { FlowEdge, FlowNode, PermissionCode } from '@ai-call/shared';
+import {
+  DEFAULT_API_PLUGINS,
+  DEFAULT_GLOBAL_VARIABLES,
+  DEFAULT_OUTBOUND_RULES,
+  PERMISSIONS,
+  ROLE_TEMPLATES,
+  SCENARIO_CONFIGS,
+  Scenario,
+} from '@ai-call/shared';
+import type {
+  FlowEdge,
+  FlowNode,
+  PermissionCode,
+} from '@ai-call/shared';
 
 config({ path: resolve(process.cwd(), '..', '..', '.env') });
 
@@ -366,11 +378,82 @@ async function seedAuth(): Promise<void> {
 }
 
 // ============================================================
+// 场景配置
+// ============================================================
+
+async function seedScenarios(): Promise<Map<string, string>> {
+  console.log('🌱 Seeding outbound scenarios...');
+  const ids = new Map<string, string>();
+  for (const config of Object.values(SCENARIO_CONFIGS)) {
+    const record = await prisma.outboundScenario.upsert({
+      where: { scenario: config.scenario },
+      update: {
+        name: config.name,
+        description: config.description,
+        status: config.status ?? 'active',
+        ttsConfig: config.ttsConfig as never,
+        agentIdentity: config.agentIdentity ?? '',
+        communicationStyle: config.communicationStyle ?? '',
+        communicationStylePrompt: config.communicationStylePrompt ?? '',
+        businessGoal: config.businessGoal ?? '',
+        llmConstraints: (config.llmConstraints ?? []) as never,
+        systemPrompt: config.systemPrompt,
+        greeting: config.greeting,
+        knowledgeBaseId: config.knowledgeBaseId,
+        allowedTools: config.allowedTools as never,
+        escalationRules: config.escalationRules as never,
+      },
+      create: {
+        scenario: config.scenario,
+        name: config.name,
+        description: config.description,
+        status: config.status ?? 'active',
+        ttsConfig: config.ttsConfig as never,
+        agentIdentity: config.agentIdentity ?? '',
+        communicationStyle: config.communicationStyle ?? '',
+        communicationStylePrompt: config.communicationStylePrompt ?? '',
+        businessGoal: config.businessGoal ?? '',
+        llmConstraints: (config.llmConstraints ?? []) as never,
+        systemPrompt: config.systemPrompt,
+        greeting: config.greeting,
+        knowledgeBaseId: config.knowledgeBaseId,
+        allowedTools: config.allowedTools as never,
+        escalationRules: config.escalationRules as never,
+      },
+    });
+    ids.set(config.scenario, record.id);
+    console.log(`  ✅ [同步] scenario ${config.scenario} (${record.name})`);
+  }
+  return ids;
+}
+
+async function seedGlobalConfig(): Promise<void> {
+  console.log('🌱 Seeding global config...');
+  await prisma.globalConfig.upsert({
+    where: { id: 'default' },
+    update: {
+      globalVariables: DEFAULT_GLOBAL_VARIABLES as never,
+      apiPlugins: DEFAULT_API_PLUGINS as never,
+      outboundRules: DEFAULT_OUTBOUND_RULES as never,
+    },
+    create: {
+      id: 'default',
+      globalVariables: DEFAULT_GLOBAL_VARIABLES as never,
+      apiPlugins: DEFAULT_API_PLUGINS as never,
+      outboundRules: DEFAULT_OUTBOUND_RULES as never,
+    },
+  });
+  console.log('  ✅ [同步] global config');
+}
+
+// ============================================================
 // 主函数
 // ============================================================
 
 async function main(): Promise<void> {
   await seedAuth();
+  await seedGlobalConfig();
+  const scenarioIds = await seedScenarios();
 
   console.log('🌱 Seeding task flows...');
 
@@ -378,16 +461,19 @@ async function main(): Promise<void> {
     {
       name: '催收标准流程',
       description: '逾期账单催收：问候 → 意图识别 → 分支（同意/协商/转人工）',
+      scenario: Scenario.COLLECTION,
       builder: buildCollectionFlow,
     },
     {
       name: '电商回访流程',
       description: '订单回访：确认收货 → 满意度调查 → 分支（满意/售后/物流）',
+      scenario: Scenario.ECOMMERCE,
       builder: buildEcommerceFlow,
     },
     {
       name: '汽车售前咨询流程',
       description: '售前咨询：AI 对话 → 意向判断 → 分支（试驾/跟进/短信）',
+      scenario: Scenario.PRESALE,
       builder: buildPresaleFlow,
     },
   ];
@@ -398,13 +484,28 @@ async function main(): Promise<void> {
       where: { name: seed.name },
     });
     if (existing) {
+      const scenarioId = scenarioIds.get(seed.scenario);
+      if (scenarioId && existing.scenarioId !== scenarioId) {
+        await prisma.taskFlow.update({
+          where: { id: existing.id },
+          data: { scenarioId },
+        });
+      }
+      if (scenarioId) {
+        await prisma.outboundScenario.update({
+          where: { id: scenarioId },
+          data: { defaultFlowId: existing.id },
+        });
+      }
       console.log(`  ⏭️  [跳过] "${seed.name}" 已存在 (id=${existing.id})`);
       continue;
     }
+    const scenarioId = scenarioIds.get(seed.scenario);
     const record = await prisma.taskFlow.create({
       data: {
         name: seed.name,
         description: seed.description,
+        scenarioId,
         status: 'draft',
         nodes: nodes as never,
         edges: edges as never,
@@ -413,6 +514,12 @@ async function main(): Promise<void> {
     console.log(
       `  ✅ [创建] "${seed.name}" id=${record.id} (${nodes.length} 节点, ${edges.length} 边)`,
     );
+    if (scenarioId) {
+      await prisma.outboundScenario.update({
+        where: { id: scenarioId },
+        data: { defaultFlowId: record.id },
+      });
+    }
   }
 
   console.log('🌱 Seed completed.');

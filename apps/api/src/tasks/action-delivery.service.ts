@@ -1,7 +1,10 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, Optional } from '@nestjs/common';
+import { GlobalConfigService } from '../global-config/global-config.service.js';
 
 @Injectable()
 export class ActionDeliveryService {
+  constructor(@Optional() private readonly globalConfig?: GlobalConfigService) {}
+
   async deliverSms(payload: {
     taskId: string;
     attemptId?: string;
@@ -29,22 +32,48 @@ export class ActionDeliveryService {
     attemptId?: string;
     config: Record<string, unknown>;
   }, idempotencyKey: string): Promise<void> {
-    const url = String(payload.config.url ?? '');
+    const config = await this.resolveWebhookConfig(payload.config);
+    const url = String(config.url ?? '');
     this.assertAllowedWebhook(url);
-    const method = String(payload.config.method ?? 'POST').toUpperCase();
+    const method = String(config.method ?? 'POST').toUpperCase();
     if (!['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
       throw new BadRequestException(`Unsupported webhook method: ${method}`);
     }
     const body = method === 'GET' ? undefined : {
-      data: payload.config.body ?? {},
+      data: config.body ?? {},
       taskId: payload.taskId,
       attemptId: payload.attemptId,
     };
-    const configuredHeaders = (payload.config.headers ?? {}) as Record<string, string>;
+    const configuredHeaders = (config.headers ?? {}) as Record<string, string>;
     await this.request(url, method, body, {
       ...configuredHeaders,
       'Idempotency-Key': idempotencyKey,
-    }, Number(payload.config.timeout ?? 10) * 1000);
+    }, Number(config.timeout ?? 10) * 1000);
+  }
+
+  private async resolveWebhookConfig(config: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const pluginKey = String(config.pluginId ?? config.pluginName ?? '');
+    if (!pluginKey || !this.globalConfig) return config;
+    const plugin = await this.globalConfig.findApiPlugin(pluginKey);
+    if (!plugin) return config;
+    const pluginConfig = {
+      pluginId: plugin.id,
+      pluginName: plugin.name,
+      url: plugin.url,
+      method: plugin.method,
+      headers: plugin.headers,
+      body: plugin.bodyTemplate,
+      timeout: plugin.timeoutSeconds,
+    };
+    return {
+      ...pluginConfig,
+      ...config,
+      url: config.url ?? pluginConfig.url,
+      method: config.method ?? pluginConfig.method,
+      headers: config.headers ?? pluginConfig.headers,
+      body: config.body ?? pluginConfig.body,
+      timeout: config.timeout ?? pluginConfig.timeout,
+    };
   }
 
   private assertAllowedWebhook(rawUrl: string): void {

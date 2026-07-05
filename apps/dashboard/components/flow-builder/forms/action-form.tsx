@@ -7,6 +7,7 @@ import type {
   ActionNodeData,
   FlowNode,
 } from '@ai-call/shared';
+import { useGlobalConfig } from '@/hooks/use-global-config';
 import { Field, Select, TextArea, TextInput } from './ui';
 import styles from '../flow-builder.module.scss';
 
@@ -23,11 +24,13 @@ const ACTION_OPTIONS: { value: ActionType; label: string }[] = [
 ];
 
 export function ActionForm({ node, onUpdate }: ActionFormProps) {
+  const { data: globalConfig } = useGlobalConfig();
   const data = node.data as ActionNodeData;
   const [actionType, setActionType] = useState<ActionType>(data.actionType);
   const [config, setConfig] = useState<Record<string, unknown>>(
     (data.config ?? {}) as Record<string, unknown>,
   );
+  const apiPlugins = (globalConfig?.apiPlugins ?? []).filter((plugin) => plugin.enabled);
 
   useEffect(() => {
     setActionType(data.actionType);
@@ -37,6 +40,28 @@ export function ActionForm({ node, onUpdate }: ActionFormProps) {
 
   function setField(key: string, value: unknown) {
     const next = { ...config, [key]: value };
+    setConfig(next);
+    onUpdate({ config: next as unknown as ActionConfig });
+  }
+
+  function applyApiPlugin(pluginId: string) {
+    const plugin = apiPlugins.find((item) => (item.id ?? item.name) === pluginId);
+    if (!plugin) {
+      const next = { ...config, pluginId: '', pluginName: '' };
+      setConfig(next);
+      onUpdate({ config: next as unknown as ActionConfig });
+      return;
+    }
+    const next = {
+      ...config,
+      pluginId: plugin.id ?? plugin.name,
+      pluginName: plugin.name,
+      url: plugin.url ?? '',
+      method: plugin.method ?? 'POST',
+      headers: plugin.headers,
+      body: plugin.bodyTemplate ?? config.body ?? {},
+      timeout: plugin.timeoutSeconds ?? 10,
+    };
     setConfig(next);
     onUpdate({ config: next as unknown as ActionConfig });
   }
@@ -138,6 +163,21 @@ export function ActionForm({ node, onUpdate }: ActionFormProps) {
 
       {actionType === 'api' && (
         <>
+          {apiPlugins.length > 0 && (
+            <Field label="API 插件">
+              <Select
+                value={String(config.pluginId ?? '')}
+                onChange={(e) => applyApiPlugin(e.target.value)}
+              >
+                <option value="">手动填写</option>
+                {apiPlugins.map((plugin) => (
+                  <option key={plugin.id ?? plugin.name} value={plugin.id ?? plugin.name}>
+                    {plugin.name}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          )}
           <Field label="请求 URL">
             <TextInput
               value={String(config.url ?? '')}
@@ -153,6 +193,7 @@ export function ActionForm({ node, onUpdate }: ActionFormProps) {
               <option value="GET">GET</option>
               <option value="POST">POST</option>
               <option value="PUT">PUT</option>
+              <option value="PATCH">PATCH</option>
               <option value="DELETE">DELETE</option>
             </Select>
           </Field>

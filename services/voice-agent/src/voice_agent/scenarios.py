@@ -165,7 +165,7 @@ def get_scenario(scenario: str | Scenario) -> ScenarioConfig:
 def scenario_from_contract(data: Mapping[str, Any]) -> ScenarioConfig:
     """将 API 权威配置转换为运行时模型。"""
     return ScenarioConfig(
-        scenario=Scenario(str(data["scenario"])),
+        scenario=str(data["scenario"]),
         name=str(data["name"]),
         description=str(data["description"]),
         system_prompt=str(data["systemPrompt"]),
@@ -181,4 +181,11 @@ def scenario_from_contract(data: Mapping[str, Any]) -> ScenarioConfig:
             )
             for rule in data.get("escalationRules", [])
         ],
+        tts_config=dict(data.get("ttsConfig") or {}),
+        agent_identity=str(data.get("agentIdentity") or ""),
+        communication_style=str(data.get("communicationStyle") or ""),
+        communication_style_prompt=str(data.get("communicationStylePrompt") or ""),
+        business_goal=str(data.get("businessGoal") or ""),
+        llm_constraints=[str(item) for item in data.get("llmConstraints", [])],
+        default_flow_id=data.get("defaultFlowId"),
     )

@@ -35,7 +35,13 @@ describe('outbound call business flow smoke', () => {
         createdAt: flowVersion.createdAt.toISOString(),
       }),
     };
-    const tasks = new TasksService(prisma as never, taskFlows as never, freeswitch as never);
+    const scenarios = {
+      resolveConfig: async () => undefined,
+      get: async () => undefined,
+      mergeDefaultVariables: (_config: unknown, variables: Record<string, string>) => variables,
+      toDomain: (record: unknown) => record,
+    };
+    const tasks = new TasksService(prisma as never, taskFlows as never, scenarios as never, freeswitch as never);
     const worker = new OutboxWorker(prisma as never, freeswitch as never, {} as never);
 
     const created = await tasks.create({

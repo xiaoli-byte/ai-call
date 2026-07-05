@@ -11,13 +11,56 @@ export enum Scenario {
   PRESALE = 'presale',
 }
 
+export type ScenarioKey = string;
+
+export const ScenarioStatus = {
+  ACTIVE: 'active',
+  INACTIVE: 'inactive',
+} as const;
+export type ScenarioStatus = (typeof ScenarioStatus)[keyof typeof ScenarioStatus];
+
+export interface TtsVoiceConfig {
+  /** TTS 音色/发音人，例如 Cherry、中文女。 */
+  voice?: string;
+  /** 克隆音色记录 ID；存在时可回查提示音频与提示文本。 */
+  voiceCloneId?: string;
+  /** TTS/音色供应商，例如 qwen、cosyvoice。 */
+  provider?: string;
+  /** 声音年龄段，例如 young/adult/senior 或中文描述。 */
+  age?: string;
+  /** 声音性别/声线描述。 */
+  gender?: string;
+  /** 语速倍率。 */
+  speakingRate?: number;
+  /** 音高倍率或供应商支持的 pitch 值。 */
+  pitch?: number;
+  /** 指令式 TTS 的风格提示词。 */
+  stylePrompt?: string;
+}
+
 export interface ScenarioConfig {
+  /** 持久化配置 ID；内置 fallback 场景可能没有。 */
+  id?: string;
   /** 场景标识 */
-  scenario: Scenario;
+  scenario: ScenarioKey;
   /** 场景中文名 */
   name: string;
   /** 场景描述 */
   description: string;
+  /** 启用状态 */
+  status?: ScenarioStatus;
+  /** TTS 语音配置 */
+  ttsConfig?: TtsVoiceConfig;
+  /** 当前场景中的 Agent 身份 */
+  agentIdentity?: string;
+  /** 面向运营人员的沟通风格标签/描述 */
+  communicationStyle?: string;
+  /** 注入 LLM/TTS 的沟通风格 prompt */
+  communicationStylePrompt?: string;
+  /** 场景业务目标 */
+  businessGoal?: string;
+  /** 对 LLM 生成的约束清单 */
+  llmConstraints?: string[];
   /** Agent 系统提示词（人设/知识边界/行为底线） */
   systemPrompt: string;
   /** Agent 问候语（通话接通后第一句话） */
@@ -28,6 +71,10 @@ export interface ScenarioConfig {
   allowedTools: string[];
   /** 转人工阈值（达到这些条件时转人工） */
   escalationRules: EscalationRule[];
+  /** 场景默认绑定的外呼流程。 */
+  defaultFlowId?: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface EscalationRule {
@@ -41,11 +88,50 @@ export interface EscalationRule {
   consecutiveMisses?: number;
 }
 
+export interface CreateScenarioDto {
+  scenario: ScenarioKey;
+  name: string;
+  description?: string;
+  status?: ScenarioStatus;
+  ttsConfig?: TtsVoiceConfig;
+  agentIdentity?: string;
+  communicationStyle?: string;
+  communicationStylePrompt?: string;
+  businessGoal?: string;
+  llmConstraints?: string[];
+  systemPrompt?: string;
+  greeting?: string;
+  knowledgeBaseId?: string;
+  allowedTools?: string[];
+  escalationRules?: EscalationRule[];
+  defaultFlowId?: string;
+}
+
+export type UpdateScenarioDto = Partial<Omit<CreateScenarioDto, 'defaultFlowId'>> & {
+  defaultFlowId?: string | null;
+};
+
 export const SCENARIO_CONFIGS: Record<Scenario, ScenarioConfig> = {
   [Scenario.COLLECTION]: {
     scenario: Scenario.COLLECTION,
     name: '贷后催收',
     description: '信用卡/贷款还款提醒、逾期催收',
+    status: ScenarioStatus.ACTIVE,
+    ttsConfig: {
+      voice: 'Cherry',
+      age: 'adult',
+      gender: 'female',
+      stylePrompt: '专业、平稳、克制，语速中等。',
+    },
+    agentIdentity: '贷后还款提醒助理',
+    communicationStyle: '专业平和',
+    communicationStylePrompt: '专业平和，不威胁、不施压，先确认身份和沟通意愿。',
+    businessGoal: '提醒客户了解还款信息，并在合规边界内推动还款或转人工协商。',
+    llmConstraints: [
+      '不得威胁、恐吓或评价客户信用状况',
+      '不得承诺减免、延期或审批结果',
+      '涉及金额、日期、罚息必须来自工具或任务变量',
+    ],
     systemPrompt: `你是一名专业的贷后催收助理，通过电话提醒客户还款。
 
 【身份】你不是放款方，是协助客户了解还款信息、提醒还款日期、协商还款方案的助理。
@@ -76,6 +162,22 @@ export const SCENARIO_CONFIGS: Record<Scenario, ScenarioConfig> = {
     scenario: Scenario.ECOMMERCE,
     name: '电商售后',
     description: '订单售后回访、退款进度查询、退换货预约',
+    status: ScenarioStatus.ACTIVE,
+    ttsConfig: {
+      voice: 'Cherry',
+      age: 'young-adult',
+      gender: 'female',
+      stylePrompt: '亲切、耐心、自然，像真人客服沟通。',
+    },
+    agentIdentity: '电商售后客服助理',
+    communicationStyle: '亲切耐心',
+    communicationStylePrompt: '亲切耐心，先共情再确认事实，不做超出规则的承诺。',
+    businessGoal: '确认订单售后问题，推进退款、退换货或工单处理。',
+    llmConstraints: [
+      '不得承诺一定退款或突破售后规则',
+      '涉及金额、物流、时间节点必须调用工具或引用知识库',
+      '客户投诉质量问题时记录并转专员处理',
+    ],
     systemPrompt: `你是一名电商售后客服助理，通过电话回访客户、查询订单状态、协助退换货。
 
 【身份】你是售后助理，可以查询订单、查询退款进度、为用户预约上门取件。
@@ -107,6 +209,22 @@ export const SCENARIO_CONFIGS: Record<Scenario, ScenarioConfig> = {
     scenario: Scenario.PRESALE,
     name: '售前邀约',
     description: '4S店试驾、产品体验、活动邀约',
+    status: ScenarioStatus.ACTIVE,
+    ttsConfig: {
+      voice: 'Cherry',
+      age: 'young-adult',
+      gender: 'female',
+      stylePrompt: '热情、轻松、不过度推销。',
+    },
+    agentIdentity: '4S 店邀约助理',
+    communicationStyle: '热情专业',
+    communicationStylePrompt: '热情专业，主动介绍亮点，但客户拒绝时立即礼貌收束。',
+    businessGoal: '邀请潜客到店试驾或参加活动，并收集意向与预约时间。',
+    llmConstraints: [
+      '不得直接报价或承诺优惠',
+      '不得评价竞品车型',
+      '客户明确拒绝时停止推销并礼貌结束',
+    ],
     systemPrompt: `你是一名4S店邀约助理，通过电话邀请潜客到店试驾、参加活动。
 
 【身份】你是邀约助理，可以介绍车型亮点、查询活动信息、为客户预约到店时间。

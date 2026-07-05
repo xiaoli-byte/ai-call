@@ -4,8 +4,9 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useTaskFlowMutations } from '@/hooks/use-task-flows';
+import { useScenarios } from '@/hooks/use-scenarios';
 import { appToast } from '@/lib/toast';
-import { TASK_FLOW_TEMPLATES } from '@ai-call/shared';
+import { ScenarioStatus, TASK_FLOW_TEMPLATES } from '@ai-call/shared';
 import type { FlowNodeType, TaskFlowTemplate } from '@ai-call/shared';
 
 const NODE_COLORS: Record<string, string> = {
@@ -48,6 +49,9 @@ function TemplatePreview({ template }: { template: TaskFlowTemplate }) {
 export default function NewTaskFlowPage() {
   const router = useRouter();
   const [submitting, setSubmitting] = useState<string | null>(null);
+  const [scenarioId, setScenarioId] = useState('');
+  const { data: scenariosData } = useScenarios();
+  const scenarios = (scenariosData ?? []).filter((item) => item.status !== ScenarioStatus.INACTIVE);
   const { create } = useTaskFlowMutations();
 
   async function createFromTemplate(tpl: TaskFlowTemplate) {
@@ -56,6 +60,7 @@ export default function NewTaskFlowPage() {
       const created = await create({
         name: tpl.name,
         description: tpl.description,
+        scenarioId: scenarioId || undefined,
         nodes: tpl.nodes,
         edges: tpl.edges,
       });
@@ -82,6 +87,20 @@ export default function NewTaskFlowPage() {
             </svg>
             返回列表
           </Link>
+        </div>
+      </div>
+
+      <div className="card" style={{ maxWidth: 920 }}>
+        <div className="form-group" style={{ marginBottom: 0 }}>
+          <label className="form-label">绑定场景配置</label>
+          <select className="form-select" value={scenarioId} onChange={(event) => setScenarioId(event.target.value)}>
+            <option value="">暂不绑定</option>
+            {scenarios.map((scenario) => (
+              <option key={scenario.id ?? scenario.scenario} value={scenario.id ?? ''} disabled={!scenario.id}>
+                {scenario.name}（{scenario.scenario}）
+              </option>
+            ))}
+          </select>
         </div>
       </div>
 

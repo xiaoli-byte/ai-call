@@ -11,6 +11,8 @@ import {
   downsampleBuffer,
   calculateRMS,
   concatenateBuffers,
+  createPCM16FrameBuffer,
+  getPCM16FrameByteLength,
   TARGET_SAMPLE_RATE,
 } from '@/lib/audio-utils';
 
@@ -150,6 +152,46 @@ describe('concatenateBuffers', () => {
     const buf = new ArrayBuffer(8);
     const result = concatenateBuffers([buf]);
     expect(result.byteLength).toBe(8);
+  });
+});
+
+describe('getPCM16FrameByteLength', () => {
+  it('应计算 16kHz PCM16 的 20ms 帧为 640 字节', () => {
+    expect(getPCM16FrameByteLength(16000, 20)).toBe(640);
+  });
+
+  it('无效帧长应抛出错误', () => {
+    expect(() => getPCM16FrameByteLength(16000, 0)).toThrow('无效的 PCM 帧长度');
+  });
+});
+
+describe('createPCM16FrameBuffer', () => {
+  it('应将 86B 小包聚合为 640B 固定帧', () => {
+    const buffer = createPCM16FrameBuffer(640);
+
+    for (let i = 0; i < 7; i++) {
+      expect(buffer.push(new ArrayBuffer(86))).toEqual([]);
+    }
+    expect(buffer.bufferedBytes).toBe(602);
+
+    const frames = buffer.push(new ArrayBuffer(86));
+    expect(frames).toHaveLength(1);
+    expect(frames[0].byteLength).toBe(640);
+    expect(buffer.bufferedBytes).toBe(48);
+  });
+
+  it('flush() 应返回剩余未成帧数据并清空缓冲', () => {
+    const buffer = createPCM16FrameBuffer(640);
+    buffer.push(new ArrayBuffer(86));
+
+    const remaining = buffer.flush();
+    expect(remaining?.byteLength).toBe(86);
+    expect(buffer.bufferedBytes).toBe(0);
+    expect(buffer.flush()).toBeNull();
+  });
+
+  it('无效固定帧长度应抛出错误', () => {
+    expect(() => createPCM16FrameBuffer(0)).toThrow('无效的 PCM 帧字节数');
   });
 });
 

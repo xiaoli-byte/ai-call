@@ -4,12 +4,14 @@ import type {
   ChatMessage,
   FlowEdge,
   FlowNode,
+  ScenarioConfig,
   TaskFlow,
   TaskFlowVersion,
 } from '@ai-call/shared';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { LlmService } from '../llm/llm.service.js';
 import { toPrismaJson } from '../common/prisma-json.js';
+import { ScenariosService } from '../scenarios/scenarios.service.js';
 import type { CreateTaskFlowDto } from './dto/create-task-flow.dto.js';
 import type { UpdateTaskFlowDto } from './dto/update-task-flow.dto.js';
 
@@ -26,6 +28,7 @@ export class TaskFlowsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly llm: LlmService,
+    private readonly scenarios: ScenariosService,
   ) {}
 
   async create(dto: CreateTaskFlowDto): Promise<TaskFlow> {
@@ -33,10 +36,12 @@ export class TaskFlowsService {
       data: {
         name: dto.name,
         description: dto.description ?? '',
+        scenarioId: dto.scenarioId,
         status: FlowStatus.DRAFT,
         nodes: toPrismaJson(dto.nodes ?? []),
         edges: toPrismaJson(dto.edges ?? []),
       },
+      include: this.flowInclude,
     });
     this.logger.log(`created task-flow id=${record.id} name=${record.name}`);
     return this.toDomain(record);
@@ -45,13 +50,17 @@ export class TaskFlowsService {
   async list(filter: { status?: FlowStatus } = {}): Promise<TaskFlow[]> {
     const records = await this.prisma.taskFlow.findMany({
       where: filter.status ? { status: filter.status } : undefined,
+      include: this.flowInclude,
       orderBy: { updatedAt: 'desc' },
     });
     return records.map((r) => this.toDomain(r));
   }
 
   async get(id: string): Promise<TaskFlow> {
-    const record = await this.prisma.taskFlow.findUnique({ where: { id } });
+    const record = await this.prisma.taskFlow.findUnique({
+      where: { id },
+      include: this.flowInclude,
+    });
     if (!record) throw new NotFoundException(`TaskFlow ${id} not found`);
     return this.toDomain(record);
   }
@@ -64,11 +73,18 @@ export class TaskFlowsService {
     const data: Record<string, unknown> = {};
     if (dto.name !== undefined) data.name = dto.name;
     if (dto.description !== undefined) data.description = dto.description;
+    if (dto.scenarioId !== undefined) data.scenarioId = dto.scenarioId || null;
     if (dto.nodes !== undefined) data.nodes = toPrismaJson(dto.nodes);
     if (dto.edges !== undefined) data.edges = toPrismaJson(dto.edges);
     if (
       current.status === FlowStatus.PUBLISHED &&
-      (dto.name !== undefined || dto.description !== undefined || dto.nodes !== undefined || dto.edges !== undefined)
+      (
+        dto.name !== undefined ||
+        dto.description !== undefined ||
+        dto.scenarioId !== undefined ||
+        dto.nodes !== undefined ||
+        dto.edges !== undefined
+      )
     ) {
       data.status = FlowStatus.DRAFT;
     }
@@ -76,6 +92,7 @@ export class TaskFlowsService {
     const record = await this.prisma.taskFlow.update({
       where: { id },
       data,
+      include: this.flowInclude,
     });
     this.logger.log(`updated task-flow id=${id}`);
     return this.toDomain(record);
@@ -102,6 +119,7 @@ export class TaskFlowsService {
       const updated = await tx.taskFlow.update({
         where: { id },
         data: { status: FlowStatus.PUBLISHED, version: { increment: 1 } },
+        include: this.flowInclude,
       });
       await tx.taskFlowVersion.create({
         data: {
@@ -109,6 +127,10 @@ export class TaskFlowsService {
           version: updated.version,
           name: updated.name,
           description: updated.description,
+          scenarioId: updated.scenarioId,
+          ...(source.scenarioConfig
+            ? { scenarioSnapshot: toPrismaJson(source.scenarioConfig) }
+            : {}),
           nodes: toPrismaJson(updated.nodes),
           edges: toPrismaJson(updated.edges),
         },
@@ -153,6 +175,7 @@ export class TaskFlowsService {
     const record = await this.prisma.taskFlow.update({
       where: { id },
       data: { status: FlowStatus.ARCHIVED },
+      include: this.flowInclude,
     });
     this.logger.log(`archived task-flow id=${id}`);
     return this.toDomain(record);
@@ -165,10 +188,12 @@ export class TaskFlowsService {
       data: {
         name: `${source.name} (副本)`,
         description: source.description,
+        scenarioId: source.scenarioId,
         status: FlowStatus.DRAFT,
         nodes: toPrismaJson(source.nodes),
         edges: toPrismaJson(source.edges),
       },
+      include: this.flowInclude,
     });
     this.logger.log(`duplicated task-flow from=${id} to=${record.id}`);
     return this.toDomain(record);
@@ -249,10 +274,16 @@ export class TaskFlowsService {
   }
 
   /** Prisma 记录 → 领域模型 */
+  private readonly flowInclude = {
+    scenarioConfig: true,
+  };
+
   private toDomain(record: {
     id: string;
     name: string;
     description: string;
+    scenarioId?: string | null;
+    scenarioConfig?: any;
     status: string;
     nodes: unknown;
     edges: unknown;
@@ -264,6 +295,10 @@ export class TaskFlowsService {
       id: record.id,
       name: record.name,
       description: record.description,
+      scenarioId: record.scenarioId ?? undefined,
+      scenarioConfig: record.scenarioConfig
+        ? this.scenarios.toDomain(record.scenarioConfig)
+        : undefined,
       status: record.status as FlowStatus,
       nodes: (record.nodes ?? []) as FlowNode[],
       edges: (record.edges ?? []) as FlowEdge[],
@@ -279,6 +314,8 @@ export class TaskFlowsService {
     version: number;
     name: string;
     description: string;
+    scenarioId?: string | null;
+    scenarioSnapshot?: unknown;
     nodes: unknown;
     edges: unknown;
     createdAt: Date;
@@ -289,9 +326,17 @@ export class TaskFlowsService {
       version: record.version,
       name: record.name,
       description: record.description,
+      scenarioId: record.scenarioId ?? undefined,
+      scenarioConfig: isScenarioConfig(record.scenarioSnapshot)
+        ? record.scenarioSnapshot
+        : undefined,
       nodes: (record.nodes ?? []) as FlowNode[],
       edges: (record.edges ?? []) as FlowEdge[],
       createdAt: record.createdAt.toISOString(),
     };
   }
+}
+
+function isScenarioConfig(value: unknown): value is ScenarioConfig {
+  return value !== null && typeof value === 'object' && 'scenario' in value && 'systemPrompt' in value;
 }

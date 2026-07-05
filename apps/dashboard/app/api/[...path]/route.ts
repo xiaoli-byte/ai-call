@@ -33,7 +33,7 @@ async function proxy(
 
   // 2. 读取 body（GET/HEAD 无 body）
   const hasBody = !['GET', 'HEAD'].includes(req.method);
-  const body = hasBody ? await req.text() : undefined;
+  const body = hasBody ? await req.arrayBuffer() : undefined;
 
   let upstream: Response;
   try {

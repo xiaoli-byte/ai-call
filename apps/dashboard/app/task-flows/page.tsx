@@ -72,6 +72,7 @@ export default async function TaskFlowsPage() {
                 <tr>
                   <th>名称</th>
                   <th>状态</th>
+                  <th>场景</th>
                   <th>版本</th>
                   <th>节点数</th>
                   <th>更新时间</th>
@@ -95,6 +96,13 @@ export default async function TaskFlowsPage() {
                       <span className={`badge badge-dot ${STATUS_BADGE[f.status]}`}>
                         {STATUS_LABELS[f.status]}
                       </span>
+                    </td>
+                    <td>
+                      {f.scenarioConfig ? (
+                        <span className="badge badge-info">{f.scenarioConfig.name}</span>
+                      ) : (
+                        <span className="badge badge-neutral">未绑定</span>
+                      )}
                     </td>
                     <td style={{ color: 'var(--text-secondary)', fontVariantNumeric: 'tabular-nums' }}>
                       v{f.version}

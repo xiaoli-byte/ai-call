@@ -80,6 +80,48 @@ describe('useASR', () => {
     expect(mockRecorder.start).toHaveBeenCalled();
   });
 
+  it('音频回调应批量发送 200ms PCM，降低 WebSocket 消息频率', async () => {
+    const { result } = renderHook(() => useASR());
+
+    await act(async () => {
+      await result.current.start();
+    });
+
+    const instance = (ASRStreamClient as ReturnType<typeof vi.fn>).mock.results[0].value;
+    const audioCallback = mockRecorder.onAudioFrame.mock.calls[0][0] as (pcmData: ArrayBuffer) => void;
+
+    for (let i = 0; i < 9; i++) {
+      audioCallback(new ArrayBuffer(640));
+    }
+    expect(instance.sendAudio).not.toHaveBeenCalled();
+
+    audioCallback(new ArrayBuffer(640));
+    expect(instance.sendAudio).toHaveBeenCalledTimes(1);
+    expect(instance.sendAudio.mock.calls[0][0].byteLength).toBe(6400);
+  });
+
+  it('endSentence() 应先发送剩余音频再断句', async () => {
+    const { result } = renderHook(() => useASR());
+
+    await act(async () => {
+      await result.current.start();
+    });
+
+    const instance = (ASRStreamClient as ReturnType<typeof vi.fn>).mock.results[0].value;
+    const audioCallback = mockRecorder.onAudioFrame.mock.calls[0][0] as (pcmData: ArrayBuffer) => void;
+
+    audioCallback(new ArrayBuffer(640));
+    expect(instance.sendAudio).not.toHaveBeenCalled();
+
+    act(() => {
+      result.current.endSentence();
+    });
+
+    expect(instance.sendAudio).toHaveBeenCalledTimes(1);
+    expect(instance.sendAudio.mock.calls[0][0].byteLength).toBe(640);
+    expect(instance.endSpeech).toHaveBeenCalled();
+  });
+
   it('stop() 应断开连接并停止录音', async () => {
     const { result } = renderHook(() => useASR());
 

@@ -1,9 +1,11 @@
 import type { HttpAdapter } from '../types';
 import { buildQuery } from '../shared';
 import type {
+  CreateTaskBatchDto,
   CreateTaskDto,
   OutboundTask,
-  Scenario,
+  ScenarioKey,
+  TaskBatchCreateResult,
   TaskListPage,
   TaskStatus,
   CallOutcome,
@@ -11,7 +13,7 @@ import type {
 
 /** 任务查询参数（保持与原 apiClient 兼容，status/outcome 为宽松 string） */
 export interface TaskListParams {
-  scenario?: Scenario;
+  scenario?: ScenarioKey | string;
   status?: TaskStatus | string;
   outcome?: CallOutcome | string;
   cursor?: string;
@@ -27,6 +29,8 @@ export function tasksEndpoints(http: HttpAdapter) {
     get: (id: string) => http.request<OutboundTask>(`/tasks/${id}`),
     create: (dto: CreateTaskDto) =>
       http.request<OutboundTask>('/tasks', { method: 'POST', body: dto }),
+    createBatch: (dto: CreateTaskBatchDto) =>
+      http.request<TaskBatchCreateResult>('/tasks/batch', { method: 'POST', body: dto }),
     dispatch: (id: string) =>
       http.request<OutboundTask>(`/tasks/${id}/dispatch`, { method: 'POST' }),
   };

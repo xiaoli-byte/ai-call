@@ -8,6 +8,82 @@
 /** 目标采样率：FunASR 要求 16kHz */
 export const TARGET_SAMPLE_RATE = 16000;
 
+/** PCM16 每个采样点字节数 */
+export const PCM16_BYTES_PER_SAMPLE = 2;
+
+/** 计算指定采样率和帧长下的 PCM16 帧字节数。 */
+export function getPCM16FrameByteLength(
+  sampleRate = TARGET_SAMPLE_RATE,
+  frameMs = 20,
+): number {
+  const bytes = (sampleRate * PCM16_BYTES_PER_SAMPLE * frameMs) / 1000;
+  if (!Number.isInteger(bytes) || bytes <= 0) {
+    throw new Error(`无效的 PCM 帧长度: sampleRate=${sampleRate}, frameMs=${frameMs}`);
+  }
+  return bytes;
+}
+
+export interface PCM16FrameBuffer {
+  readonly bufferedBytes: number;
+  push: (chunk: ArrayBuffer) => ArrayBuffer[];
+  flush: () => ArrayBuffer | null;
+  clear: () => void;
+}
+
+/**
+ * 将任意大小的 PCM16 分片聚合为固定字节数帧。
+ *
+ * AudioWorklet 默认按 128 个原始采样回调，48kHz 降采样后约为 86B，
+ * 小于 WebRTC VAD 需要的 10/20/30ms 完整帧。这里在前端先聚合，
+ * 避免 /asr-stream 被大量无效小包刷屏。
+ */
+export function createPCM16FrameBuffer(frameByteLength: number): PCM16FrameBuffer {
+  if (!Number.isInteger(frameByteLength) || frameByteLength <= 0) {
+    throw new Error(`无效的 PCM 帧字节数: ${frameByteLength}`);
+  }
+
+  let pending = new Uint8Array(0);
+
+  return {
+    get bufferedBytes() {
+      return pending.byteLength;
+    },
+
+    push(chunk: ArrayBuffer) {
+      if (chunk.byteLength === 0) return [];
+
+      const incoming = new Uint8Array(chunk);
+      const merged = new Uint8Array(pending.byteLength + incoming.byteLength);
+      merged.set(pending, 0);
+      merged.set(incoming, pending.byteLength);
+
+      const frames: ArrayBuffer[] = [];
+      let offset = 0;
+      while (offset + frameByteLength <= merged.byteLength) {
+        frames.push(merged.slice(offset, offset + frameByteLength).buffer);
+        offset += frameByteLength;
+      }
+
+      pending = merged.slice(offset);
+      return frames;
+    },
+
+    flush() {
+      if (pending.byteLength === 0) return null;
+      const remaining = pending.buffer.slice(
+        pending.byteOffset,
+        pending.byteOffset + pending.byteLength,
+      );
+      pending = new Uint8Array(0);
+      return remaining;
+    },
+
+    clear() {
+      pending = new Uint8Array(0);
+    },
+  };
+}
+
 /**
  * 将 Float32 采样数据转换为 16-bit PCM (Little-Endian) ArrayBuffer。
  *

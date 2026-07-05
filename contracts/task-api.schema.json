@@ -6,7 +6,7 @@
   "required": ["id", "scenario", "variables"],
   "properties": {
     "id": { "type": "string", "format": "uuid" },
-    "scenario": { "type": "string", "enum": ["collection", "ecommerce", "presale"] },
+    "scenario": { "type": "string" },
     "scenarioConfig": { "$ref": "#/$defs/scenarioConfig" },
     "variables": { "type": "object", "additionalProperties": { "type": "string" } },
     "flowId": { "type": "string", "format": "uuid" },
@@ -18,16 +18,25 @@
       "type": "object",
       "required": ["scenario", "name", "description", "systemPrompt", "greeting", "knowledgeBaseId", "allowedTools", "escalationRules"],
       "properties": {
-        "scenario": { "enum": ["collection", "ecommerce", "presale"] },
+        "id": { "type": "string" },
+        "scenario": { "type": "string" },
         "name": { "type": "string" },
         "description": { "type": "string" },
+        "status": { "type": "string" },
+        "ttsConfig": { "type": "object" },
+        "agentIdentity": { "type": "string" },
+        "communicationStyle": { "type": "string" },
+        "communicationStylePrompt": { "type": "string" },
+        "businessGoal": { "type": "string" },
+        "llmConstraints": { "type": "array", "items": { "type": "string" } },
         "systemPrompt": { "type": "string" },
         "greeting": { "type": "string" },
         "knowledgeBaseId": { "type": "string" },
         "allowedTools": { "type": "array", "items": { "type": "string" } },
-        "escalationRules": { "type": "array", "items": { "type": "object" } }
+        "escalationRules": { "type": "array", "items": { "type": "object" } },
+        "defaultFlowId": { "type": "string" }
       },
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "flowNode": {
       "type": "object",
@@ -67,6 +76,8 @@
         "version": { "type": "integer", "minimum": 1 },
         "name": { "type": "string" },
         "description": { "type": "string" },
+        "scenarioId": { "type": "string" },
+        "scenarioConfig": { "$ref": "#/$defs/scenarioConfig" },
         "nodes": { "type": "array", "items": { "$ref": "#/$defs/flowNode" } },
         "edges": { "type": "array", "items": { "$ref": "#/$defs/flowEdge" } },
         "createdAt": { "type": "string", "format": "date-time" }

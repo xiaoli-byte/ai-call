@@ -80,6 +80,7 @@ class DemoServer:
         metadata: Optional[dict[str, Any]] = None
         stt: Optional[FunASRClient] = None
         vad: Optional[VoiceActivityDetector] = None
+        pending_pcm = b""
         prev_speaking = False
 
         async def on_stt_event(event: STTEvent) -> None:
@@ -146,15 +147,50 @@ class DemoServer:
                     logger.info(
                         "[DemoServer/asr] call_id=%s ready (mode=%s)", call_id, mode
                     )
+                    if isinstance(msg, str):
+                        continue
+
+                if isinstance(msg, str):
+                    try:
+                        control = json.loads(msg)
+                    except json.JSONDecodeError:
+                        continue
+                    if control.get("is_speaking") is False and stt is not None:
+                        pending_pcm = b""
+                        await stt.end_speech()
+                        if prev_speaking:
+                            prev_speaking = False
+                            try:
+                                if _ws_open(ws):
+                                    await ws.send(
+                                        json.dumps(
+                                            {
+                                                "type": "vad_state",
+                                                "is_speaking": False,
+                                            }
+                                        )
+                                    )
+                            except Exception:
+                                pass
                     continue
 
                 # 后续二进制 PCM 帧
                 if not isinstance(msg, bytes) or stt is None or vad is None:
                     continue
 
+                # WebSocket 可能按任意大小分包，先攒够 VAD 固定帧再处理。
+                pending_pcm += msg
+                frame_bytes = vad.frame_bytes
+                aligned_bytes = (len(pending_pcm) // frame_bytes) * frame_bytes
+                if aligned_bytes == 0:
+                    continue
+
+                pcm_chunk = pending_pcm[:aligned_bytes]
+                pending_pcm = pending_pcm[aligned_bytes:]
+
                 # VAD 切片 + feed（复用 agent.py:receive_audio 的逻辑）
                 for frame in audio.split_into_frames(
-                    msg, self._vad_frame_ms, 16000
+                    pcm_chunk, self._vad_frame_ms, 16000
                 ):
                     state, frames_to_send = vad.feed(frame)
                     for f in frames_to_send:

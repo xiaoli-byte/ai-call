@@ -9,6 +9,9 @@ import { TaskFlowsModule } from './task-flows/task-flows.module.js';
 import { LlmModule } from './llm/llm.module.js';
 import { AuthModule } from './auth/auth.module.js';
 import { SystemModule } from './system/system.module.js';
+import { CallsModule } from './calls/calls.module.js';
+import { GlobalConfigModule } from './global-config/global-config.module.js';
+import { VoiceClonesModule } from './voice-clones/voice-clones.module.js';
 import { JwtAuthGuard } from './auth/jwt-auth.guard.js';
 import { PermissionsGuard } from './auth/permissions.guard.js';
 
@@ -23,6 +26,9 @@ import { PermissionsGuard } from './auth/permissions.guard.js';
     KnowledgeBaseModule,
     TaskFlowsModule,
     SystemModule,
+    CallsModule,
+    GlobalConfigModule,
+    VoiceClonesModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: JwtAuthGuard },

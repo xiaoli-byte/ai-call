@@ -142,7 +142,7 @@ class VoiceAgent:
         )
         session = CallSession(
             call_id=call_id,
-            scenario=scenario.scenario.value,
+            scenario=scenario.scenario.value if hasattr(scenario.scenario, "value") else str(scenario.scenario),
             variables=variables,
             messages=[system_msg],
             tools=self._tools.get_tool_definitions(scenario),
@@ -383,7 +383,20 @@ class VoiceAgent:
                     tts_bytes += len(chunk.audio)
                     await callbacks.on_audio_output(chunk.audio)
 
-            await self._tts.synthesize(text, on_chunk)
+            scenario = self._scenario_configs.get(call_id)
+            tts_config = scenario.tts_config if scenario else {}
+            speaker = tts_config.get("voice")
+            instruct_text = (
+                tts_config.get("stylePrompt")
+                or tts_config.get("style_prompt")
+                or (scenario.communication_style_prompt if scenario else None)
+            )
+            await self._tts.synthesize(
+                text,
+                on_chunk,
+                speaker=str(speaker) if speaker else None,
+                instruct_text=str(instruct_text) if instruct_text else None,
+            )
             if callbacks:
                 await callbacks.on_audio_output_complete()
             logger.info(

@@ -2,7 +2,12 @@
 
 import useSWR, { useSWRConfig, unstable_serialize } from 'swr';
 import { apiClient } from '@/lib/api/client';
-import type { TaskListPage, OutboundTask, CreateTaskDto } from '@ai-call/shared';
+import type {
+  CreateTaskBatchDto,
+  CreateTaskDto,
+  OutboundTask,
+  TaskListPage,
+} from '@ai-call/shared';
 import type { TaskListParams } from '@/lib/api/endpoints/tasks';
 
 export const tasksKey = (params?: TaskListParams) =>
@@ -25,6 +30,11 @@ export function useTaskMutations() {
       const task = await apiClient.tasks.create(dto);
       await mutate((key) => Array.isArray(key) && key[0] === 'tasks');
       return task;
+    },
+    createBatch: async (dto: CreateTaskBatchDto) => {
+      const result = await apiClient.tasks.createBatch(dto);
+      await mutate((key) => Array.isArray(key) && key[0] === 'tasks');
+      return result;
     },
     dispatch: async (id: string) => {
       const task = await apiClient.tasks.dispatch(id);

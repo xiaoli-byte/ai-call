@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { appToast } from '@/lib/toast';
+import { ConversationWindow, type ConversationMessage } from '@/components/conversation/conversation-window';
 import styles from './flow-debug-panel.module.scss';
 
 interface DebugMessage {
@@ -29,11 +30,6 @@ export function FlowDebugPanel({ flowId, flowName, open, onClose, onSaveFlow }: 
   const [errorMsg, setErrorMsg] = useState('');
   const wsRef = useRef<WebSocket | null>(null);
   const currentNodeName = useRef<string>('');
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
 
   const cleanup = useCallback(() => {
     if (wsRef.current) {
@@ -175,6 +171,26 @@ export function FlowDebugPanel({ flowId, flowName, open, onClose, onSaveFlow }: 
 
   const isRunning = state === 'running';
   const isBusy = state === 'saving' || state === 'connecting';
+  const emptyDescription = state === 'idle'
+    ? '点击下方“开始会话”开始调试'
+    : state === 'saving'
+      ? '正在保存流程…'
+      : state === 'connecting'
+        ? '正在连接调试服务…'
+        : undefined;
+  const conversationMessages: ConversationMessage[] = messages.map((msg) => ({
+    id: msg.id,
+    role: msg.role,
+    text: msg.text,
+    label: msg.role === 'agent' && msg.nodeName ? msg.nodeName : undefined,
+    debug: msg.role === 'agent' && msg.nodeName
+      ? [
+          { label: 'SessionId', value: sessionId || '-' },
+          { label: '流程名称', value: flowName },
+          { label: '节点名称', value: msg.nodeName },
+        ]
+      : undefined,
+  }));
 
   return (
     <div className={styles.debugPanel}>
@@ -200,34 +216,13 @@ export function FlowDebugPanel({ flowId, flowName, open, onClose, onSaveFlow }: 
         </button>
       </div>
 
-      <div className={styles.debugMessages}>
-        {messages.length === 0 && state === 'idle' && (
-          <div className={styles.debugEmpty}>
-            <p>点击下方&ldquo;开始会话&rdquo;开始调试</p>
-          </div>
-        )}
-        {messages.length === 0 && isBusy && (
-          <div className={styles.debugEmpty}>
-            <p>{state === 'saving' ? '正在保存流程…' : '正在连接调试服务…'}</p>
-          </div>
-        )}
-        {messages.map((msg) => (
-          <div key={msg.id} className={`${styles.debugMsg} ${styles[`debugMsg_${msg.role}`]}`}>
-            <div className={styles.debugMsgText}>{msg.text}</div>
-            {msg.role === 'agent' && msg.nodeName && (
-              <details className={styles.debugInfo}>
-                <summary>调试信息</summary>
-                <div className={styles.debugInfoBody}>
-                  <div>SessionId: {sessionId}</div>
-                  <div>流程名称: {flowName}</div>
-                  <div>节点名称: {msg.nodeName}</div>
-                </div>
-              </details>
-            )}
-          </div>
-        ))}
-        <div ref={messagesEndRef} />
-      </div>
+      <ConversationWindow
+        variant="embedded"
+        messages={conversationMessages}
+        emptyTitle="暂无调试消息"
+        emptyDescription={emptyDescription}
+        showDebugInfo
+      />
 
       {errorMsg && state === 'error' && <div className={styles.debugErrorBar}>{errorMsg}</div>}
 

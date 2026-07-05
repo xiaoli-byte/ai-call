@@ -35,6 +35,8 @@ class TaskFlowVersionContract(ContractModel):
     version: int
     name: str
     description: str = ""
+    scenario_id: Optional[str] = Field(default=None, alias="scenarioId")
+    scenario_config: Optional["ScenarioConfigContract"] = Field(default=None, alias="scenarioConfig")
     nodes: list[FlowNodeContract]
     edges: list[FlowEdgeContract]
     created_at: str = Field(alias="createdAt")
@@ -48,14 +50,23 @@ class EscalationRuleContract(ContractModel):
 
 
 class ScenarioConfigContract(ContractModel):
-    scenario: Literal["collection", "ecommerce", "presale"]
+    id: Optional[str] = None
+    scenario: str
     name: str
     description: str
+    status: Optional[str] = None
+    tts_config: dict[str, Any] = Field(default_factory=dict, alias="ttsConfig")
+    agent_identity: str = Field(default="", alias="agentIdentity")
+    communication_style: str = Field(default="", alias="communicationStyle")
+    communication_style_prompt: str = Field(default="", alias="communicationStylePrompt")
+    business_goal: str = Field(default="", alias="businessGoal")
+    llm_constraints: list[str] = Field(default_factory=list, alias="llmConstraints")
     system_prompt: str = Field(alias="systemPrompt")
     greeting: str
     knowledge_base_id: str = Field(alias="knowledgeBaseId")
     allowed_tools: list[str] = Field(alias="allowedTools")
     escalation_rules: list[EscalationRuleContract] = Field(alias="escalationRules")
+    default_flow_id: Optional[str] = Field(default=None, alias="defaultFlowId")
 
 
 class TaskContextContract(ContractModel):
