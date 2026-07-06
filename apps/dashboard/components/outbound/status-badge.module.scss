@@ -1,0 +1,67 @@
+.status {
+  width: fit-content;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  font-size: 10.5px;
+  font-weight: 500;
+  line-height: 14px;
+  white-space: nowrap;
+}
+
+.status i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.running {
+  color: #155dfc;
+  background: #eff6ff;
+  border-color: #bedbff;
+}
+
+.completed {
+  color: #007a55;
+  background: #ecfdf5;
+  border-color: #a4f4cf;
+}
+
+.paused {
+  color: #bb4d00;
+  background: #fffbeb;
+  border-color: #fee685;
+}
+
+.failed {
+  color: #c10007;
+  background: #fef2f2;
+  border-color: #ffc9c9;
+}
+
+.pending {
+  color: #62748e;
+  background: #f1f5f9;
+  border-color: #e2e8f0;
+}
+
+.running i {
+  animation: statusPulse 1.35s ease-in-out infinite;
+}
+
+@keyframes statusPulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  50% {
+    opacity: 0.42;
+    transform: scale(1.45);
+  }
+}

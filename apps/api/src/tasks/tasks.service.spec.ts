@@ -173,6 +173,94 @@ describe('TasksService', () => {
     assert.equal(calls[3][1].data.type, 'call.dispatch_requested');
   });
 
+  it('create rejects tasks blocked by outbound policy before persisting', async () => {
+    const calls: Call[] = [];
+    const prisma = {
+      outboundTask: {
+        count: async () => 0,
+        create: async (args: unknown) => {
+          calls.push(['outboundTask.create', args]);
+          return taskRecord();
+        },
+      },
+    };
+    const globalConfig = {
+      evaluateOutboundPolicy: async () => ({
+        allowed: false,
+        code: 'blocked_number',
+        message: '号码 1001 命中全局黑名单',
+      }),
+    };
+    const service = new TasksService(
+      prisma as never,
+      {} as never,
+      scenarios as never,
+      {} as never,
+      globalConfig as never,
+    );
+
+    await assert.rejects(
+      () => service.create({ to: '1001', scenario: Scenario.ECOMMERCE }),
+      (err: any) => err.response?.code === 'blocked_number',
+    );
+    assert.equal(calls.length, 0);
+  });
+
+  it('dispatch records a policy blocked event and does not create an outbox event', async () => {
+    const calls: Call[] = [];
+    const prisma = {
+      outboundTask: {
+        findUnique: async () => taskRecord(),
+        count: async () => 3,
+        update: async (args: unknown) => {
+          calls.push(['outboundTask.update', args]);
+          return { attemptCount: 1 };
+        },
+      },
+      callEvent: {
+        create: async (args: unknown) => {
+          calls.push(['callEvent.create', args]);
+          return args;
+        },
+      },
+      callAttempt: {
+        create: async (args: unknown) => {
+          calls.push(['callAttempt.create', args]);
+          return args;
+        },
+      },
+      outboxEvent: {
+        create: async (args: unknown) => {
+          calls.push(['outboxEvent.create', args]);
+          return args;
+        },
+      },
+    };
+    const globalConfig = {
+      evaluateOutboundPolicy: async () => ({
+        allowed: false,
+        code: 'daily_limit_reached',
+        message: '号码 1001 已达到当天 3 次外呼上限',
+        details: { dailyCallCount: 3, dailyCallLimit: 3 },
+      }),
+    };
+    const service = new TasksService(
+      prisma as never,
+      {} as never,
+      scenarios as never,
+      {} as never,
+      globalConfig as never,
+    );
+
+    await assert.rejects(
+      () => service.dispatch('task-1'),
+      (err: any) => err.response?.code === 'daily_limit_reached',
+    );
+    assert.equal(calls[0][0], 'callEvent.create');
+    assert.equal(calls[0][1].data.type, 'call.policy_blocked');
+    assert.equal(calls.some(([name]) => name === 'outboxEvent.create'), false);
+  });
+
   it('hangup kills the active FreeSWITCH channel and records completion', async () => {
     const calls: Call[] = [];
     const prisma = {

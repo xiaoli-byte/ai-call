@@ -9,6 +9,9 @@ const ENV_KEYS = [
   'FREESWITCH_ESL_PASSWORD',
   'FREESWITCH_DIAL_STRING',
   'FREESWITCH_AUDIO_FORK_ENABLED',
+  'FREESWITCH_AUDIO_FORK_URL',
+  'FREESWITCH_AUDIO_MODULE',
+  'VOICE_AGENT_WS_TOKEN',
 ] as const;
 const savedEnv = Object.fromEntries(
   ENV_KEYS.map((key) => [key, process.env[key]]),
@@ -82,6 +85,31 @@ describe('FreeSwitchService', () => {
         /ESL command failed: -ERR NO_ROUTE_DESTINATION/,
       );
     });
+  });
+
+  it('includes the Voice Agent token in audio fork metadata when configured', async () => {
+    await withEslServer(
+      { type: 'command/reply', replyText: '+OK Job-UUID: job-123' },
+      async (port, commands) => {
+        configureEnv(port);
+        process.env.FREESWITCH_AUDIO_FORK_ENABLED = 'true';
+        process.env.FREESWITCH_AUDIO_MODULE = 'audio_fork';
+        process.env.FREESWITCH_AUDIO_FORK_URL = 'ws://127.0.0.1:8090/audio-stream';
+        process.env.VOICE_AGENT_WS_TOKEN = 'ws-secret';
+        const service = new FreeSwitchService();
+
+        await service.originate(
+          '1001',
+          '52ccf8b0-6b2c-4c77-95e3-d10685443db8',
+        );
+
+        const encodedMetadata = commands[0].match(/base64:([^'\s]+)/)?.[1];
+        assert(encodedMetadata);
+        const metadata = JSON.parse(Buffer.from(encodedMetadata, 'base64').toString('utf8'));
+        assert.equal(metadata.dialog_id, '52ccf8b0-6b2c-4c77-95e3-d10685443db8');
+        assert.equal(metadata.token, 'ws-secret');
+      },
+    );
   });
 });
 

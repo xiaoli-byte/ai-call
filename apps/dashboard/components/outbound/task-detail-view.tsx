@@ -15,6 +15,11 @@ import {
   XCircle,
 } from 'lucide-react';
 import { TaskStatus, type OutboundTask } from '@ai-call/shared';
+import { cn } from '@/lib/utils';
+
+import { EmptyState } from './empty-state';
+import { StatusBadge, type StatusTone } from './status-badge';
+import styles from './task-detail-view.module.scss';
 
 const STATUS_LABELS: Record<TaskStatus, string> = {
   pending: '待拨打',
@@ -26,14 +31,14 @@ const STATUS_LABELS: Record<TaskStatus, string> = {
   cancelled: '已暂停',
 };
 
-const STATUS_CLASS: Record<TaskStatus, string> = {
-  pending: 'is-pending',
-  calling: 'is-running',
-  in_call: 'is-running',
-  completed: 'is-completed',
-  failed: 'is-failed',
-  no_answer: 'is-paused',
-  cancelled: 'is-paused',
+const STATUS_TONE: Record<TaskStatus, StatusTone> = {
+  pending: 'pending',
+  calling: 'running',
+  in_call: 'running',
+  completed: 'completed',
+  failed: 'failed',
+  no_answer: 'paused',
+  cancelled: 'paused',
 };
 
 type DetailFilter = 'all' | TaskStatus;
@@ -86,48 +91,55 @@ export function TaskDetailView({
   const customerName = task.variables.customerName || task.variables.name || '外呼客户';
 
   return (
-    <div className="outbound-page outbound-detail-page">
-      <header className="outbound-detail-header">
-        <Link href="/tasks" className="outbound-back"><ArrowLeft size={14} />返回外呼任务</Link>
-        <div className="outbound-detail-title-row">
+    <div className={cn('outbound-page', styles.page)}>
+      <header className={styles.header}>
+        <Link href="/tasks" className={styles.back}><ArrowLeft size={14} />返回外呼任务</Link>
+        <div className={styles.titleRow}>
           <div>
-            <div className="outbound-title-with-status">
+            <div className={styles.titleWithStatus}>
               <h1>{scenarioName}外呼任务</h1>
-              <span className={`outbound-status ${STATUS_CLASS[task.status]}`}><i />{STATUS_LABELS[task.status]}</span>
+              <StatusBadge tone={STATUS_TONE[task.status]}>{STATUS_LABELS[task.status]}</StatusBadge>
             </div>
             <p><code>{task.id}</code><span><PhoneCall size={12} />{scenarioName}</span><span><Clock3 size={12} />{formatDate(task.createdAt)}</span></p>
           </div>
-          <div className="outbound-header-actions">
-            <button type="button" className="warning"><Pause size={14} />暂停任务</button>
-            <button type="button"><Download size={14} />导出任务</button>
+          <div className={styles.headerActions}>
+            <button type="button" className={cn(styles.actionButton, styles.warningButton)}><Pause size={14} />暂停任务</button>
+            <button type="button" className={styles.actionButton}><Download size={14} />导出任务</button>
           </div>
         </div>
       </header>
 
-      <main className="outbound-content outbound-detail-content">
-        <section className="outbound-detail-stats">
+      <main className={styles.content}>
+        <section className={styles.stats}>
           <article><span>总外呼量</span><strong>{total.toLocaleString('zh-CN')}</strong><small>预计共 {total.toLocaleString('zh-CN')} 通</small></article>
-          <article className="green"><span>已接通</span><strong>{connected}</strong><small><CheckCircle2 size={12} />成功接通</small></article>
-          <article className="blue"><span>进行中</span><strong>{running}</strong><small><Radio size={12} />实时执行中</small></article>
-          <article className="orange"><span>未接听 / 失败</span><strong>{failed}</strong><small><XCircle size={12} />需后续处理</small></article>
+          <article className={styles.statSuccess}><span>已接通</span><strong>{connected}</strong><small><CheckCircle2 size={12} />成功接通</small></article>
+          <article className={styles.statRunning}><span>进行中</span><strong>{running}</strong><small><Radio size={12} />实时执行中</small></article>
+          <article className={styles.statFailed}><span>未接听 / 失败</span><strong>{failed}</strong><small><XCircle size={12} />需后续处理</small></article>
           <article><span>平均通话时长</span><strong>{formatDuration(averageDuration)}</strong><small>实时均值</small></article>
         </section>
 
-        <section className="outbound-progress-card">
-          <div><strong>任务进度</strong><span>{finished} / {total} 已处理</span></div>
-          <div className="outbound-progress-track"><i className="done" style={{ width: `${Math.min((connected / total) * 100, 100)}%` }} /><i className="failed" style={{ width: `${Math.min((failed / total) * 100, 100)}%` }} /></div>
-          <p><span className="green-dot">已接通 {connected}</span><span className="red-dot">失败 {failed}</span><span>待处理 {Math.max(total - finished, 0)}</span></p>
+        <section className={styles.progressCard}>
+          <div className={styles.progressHeader}><strong>任务进度</strong><span>{finished} / {total} 已处理</span></div>
+          <div className={styles.progressTrack}>
+            <i className={styles.progressDone} style={{ width: `${Math.min((connected / total) * 100, 100)}%` }} />
+            <i className={styles.progressFailed} style={{ width: `${Math.min((failed / total) * 100, 100)}%` }} />
+          </div>
+          <p className={styles.progressLegend}>
+            <span className={styles.greenDot}>已接通 {connected}</span>
+            <span className={styles.redDot}>失败 {failed}</span>
+            <span>待处理 {Math.max(total - finished, 0)}</span>
+          </p>
         </section>
 
-        <section className="outbound-records">
-          <div className="outbound-section-heading">
+        <section className={styles.records}>
+          <div className={styles.sectionHeading}>
             <h2>外呼记录明细</h2>
-            <div className="outbound-segments compact" role="tablist" aria-label="外呼记录状态">
+            <div className={styles.segments} role="tablist" aria-label="外呼记录状态">
               {DETAIL_FILTERS.map((item) => (
                 <button
                   key={item.value}
                   type="button"
-                  className={filter === item.value ? 'active' : ''}
+                  className={filter === item.value ? styles.active : ''}
                   onClick={() => setFilter(item.value)}
                 >
                   {item.label}
@@ -135,28 +147,37 @@ export function TaskDetailView({
               ))}
             </div>
           </div>
-          <div className="outbound-table-shell">
-            <div className="outbound-table-scroll">
-              <table className="outbound-table outbound-record-table">
-                <thead><tr><th>客户信息</th><th>呼叫状态</th><th>呼叫时间</th><th className="numeric">通话时长</th><th>意图识别</th><th>外呼结果</th><th aria-label="操作" /></tr></thead>
+          <div className={styles.tableShell}>
+            <div className={styles.tableScroll}>
+              <table className={cn(styles.table, styles.recordTable)}>
+                <thead><tr><th>客户信息</th><th>呼叫状态</th><th>呼叫时间</th><th className={styles.numeric}>通话时长</th><th>意图识别</th><th>外呼结果</th><th aria-label="操作" /></tr></thead>
                 <tbody>
                   {filteredAttempts.length ? filteredAttempts.map((attempt) => (
-                    <tr key={attempt.id} className="outbound-record-row">
-                      <td><Link className="outbound-customer" href={`/tasks/${task.id}/calls/${attempt.id}`}><strong>{customerName}</strong><span>{task.to}</span></Link></td>
-                      <td><span className={`outbound-status ${STATUS_CLASS[attempt.status]}`}><i />{STATUS_LABELS[attempt.status]}</span></td>
-                      <td className="mono">{formatDate(attempt.startedAt)}</td>
-                      <td className="numeric mono">{formatDuration(attempt.duration)}</td>
-                      <td>{task.intentTags?.length ? <span className="outbound-intent">{task.intentTags[0]}</span> : <span className="muted">—</span>}</td>
-                      <td className="outbound-result">{attempt.hangupCause || (attempt.status === 'completed' ? '通话已完成' : STATUS_LABELS[attempt.status])}</td>
+                    <tr key={attempt.id}>
+                      <td><Link className={styles.customer} href={`/tasks/${task.id}/calls/${attempt.id}`}><strong>{customerName}</strong><span>{task.to}</span></Link></td>
+                      <td><StatusBadge tone={STATUS_TONE[attempt.status]}>{STATUS_LABELS[attempt.status]}</StatusBadge></td>
+                      <td className={styles.mono}>{formatDate(attempt.startedAt)}</td>
+                      <td className={cn(styles.numeric, styles.mono)}>{formatDuration(attempt.duration)}</td>
+                      <td>{task.intentTags?.length ? <span className={styles.intent}>{task.intentTags[0]}</span> : <span className={styles.muted}>—</span>}</td>
+                      <td className={styles.result}>{attempt.hangupCause || (attempt.status === 'completed' ? '通话已完成' : STATUS_LABELS[attempt.status])}</td>
                       <td>
-                        <Link href={`/tasks/${task.id}/calls/${attempt.id}`} className="outbound-row-action">
+                        <Link href={`/tasks/${task.id}/calls/${attempt.id}`} className={styles.rowAction}>
                           <Eye size={12} />
                           查看对话
                         </Link>
                       </td>
                     </tr>
                   )) : (
-                    <tr><td colSpan={7}><div className="outbound-empty compact"><Headphones size={20} /><strong>{attempts.length ? '当前筛选暂无记录' : '暂无外呼记录'}</strong><span>{attempts.length ? '切换状态筛选查看其他拨打明细' : '任务派发后会在这里显示拨打明细'}</span></div></td></tr>
+                    <tr>
+                      <td colSpan={7}>
+                        <EmptyState
+                          compact
+                          icon={<Headphones size={20} />}
+                          title={attempts.length ? '当前筛选暂无记录' : '暂无外呼记录'}
+                          description={attempts.length ? '切换状态筛选查看其他拨打明细' : '任务派发后会在这里显示拨打明细'}
+                        />
+                      </td>
+                    </tr>
                   )}
                 </tbody>
               </table>

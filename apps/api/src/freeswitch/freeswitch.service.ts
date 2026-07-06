@@ -90,6 +90,9 @@ export class FreeSwitchService {
         JSON.stringify({
           dialog_id: callId,
           audio_response_format: responseFormat,
+          ...(process.env.VOICE_AGENT_WS_TOKEN
+            ? { token: process.env.VOICE_AGENT_WS_TOKEN }
+            : {}),
         }),
       ).toString('base64');
       channelVariables.push('STREAM_PLAYBACK=true', 'STREAM_SAMPLE_RATE=16000');

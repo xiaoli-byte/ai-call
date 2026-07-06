@@ -13,190 +13,27 @@ import {
   UploadCloud,
 } from 'lucide-react';
 import {
-  DEFAULT_GLOBAL_VARIABLES,
   FlowStatus,
   ScenarioStatus,
   TaskPriority,
   type TaskFlow,
 } from '@ai-call/shared';
+import { cn } from '@/lib/utils';
 import { useTaskFlows } from '@/hooks/use-task-flows';
 import { useTaskMutations } from '@/hooks/use-tasks';
 import { useScenarios } from '@/hooks/use-scenarios';
 import { useGlobalConfig } from '@/hooks/use-global-config';
 import { appToast } from '@/lib/toast';
 
-type ImportRow = {
-  rowNumber: number;
-  to: string;
-  name?: string;
-  scheduledAt?: string;
-  scheduledAtIso?: string;
-  priority?: TaskPriority;
-  variables: Record<string, string>;
-  errors: string[];
-};
-
-const PHONE_HEADERS = new Set(['phone', 'to', 'mobile', 'number', '手机号', '被叫号码', '号码', '电话']);
-const NAME_HEADERS = new Set(['name', 'customer', 'customername', '客户姓名', '姓名']);
-const SCHEDULE_HEADERS = new Set(['scheduledat', 'scheduled_at', 'calltime', '执行时间', '计划时间', '预约时间']);
-const PRIORITY_HEADERS = new Set(['priority', '任务优先级', '优先级']);
-const DESTINATION_PATTERN = /^\+?\d{3,15}$/;
-
-const PRIORITY_LABELS: Record<TaskPriority, string> = {
-  [TaskPriority.HIGH]: '高',
-  [TaskPriority.NORMAL]: '普通',
-  [TaskPriority.LOW]: '低',
-};
-
-function defaultVariableFields(globalConfig: ReturnType<typeof useGlobalConfig>['data']) {
-  if (globalConfig) return globalConfig.globalVariables ?? [];
-  return DEFAULT_GLOBAL_VARIABLES;
-}
-
-function toDateTimeLocal(date: Date) {
-  const pad = (value: number) => String(value).padStart(2, '0');
-  return [
-    date.getFullYear(),
-    pad(date.getMonth() + 1),
-    pad(date.getDate()),
-  ].join('-') + `T${pad(date.getHours())}:${pad(date.getMinutes())}`;
-}
-
-function normalizeHeader(value: string) {
-  return value.trim().replace(/^\ufeff/, '').toLowerCase();
-}
-
-function normalizePriority(value: string | undefined): TaskPriority | undefined {
-  const key = value?.trim().toLowerCase();
-  if (!key) return undefined;
-  if (['high', 'urgent', '紧急', '高'].includes(key)) return TaskPriority.HIGH;
-  if (['low', '低'].includes(key)) return TaskPriority.LOW;
-  return TaskPriority.NORMAL;
-}
-
-function normalizeDateTime(value: string | undefined): string | undefined {
-  const input = value?.trim();
-  if (!input) return undefined;
-  const normalized = input.includes('T') ? input : input.replace(' ', 'T');
-  const date = new Date(normalized);
-  if (Number.isNaN(date.getTime())) return undefined;
-  return date.toISOString();
-}
-
-function parseLine(line: string, delimiter: string) {
-  const cells: string[] = [];
-  let current = '';
-  let quoted = false;
-
-  for (let index = 0; index < line.length; index += 1) {
-    const char = line[index];
-    if (char === '"') {
-      if (quoted && line[index + 1] === '"') {
-        current += '"';
-        index += 1;
-      } else {
-        quoted = !quoted;
-      }
-      continue;
-    }
-    if (char === delimiter && !quoted) {
-      cells.push(current.trim());
-      current = '';
-      continue;
-    }
-    current += char;
-  }
-
-  cells.push(current.trim());
-  return cells;
-}
-
-function parseImportText(text: string): ImportRow[] {
-  const lines = text
-    .replace(/\r\n/g, '\n')
-    .replace(/\r/g, '\n')
-    .split('\n')
-    .filter((line) => line.trim().length > 0);
-  if (lines.length === 0) return [];
-
-  const delimiter = lines[0].includes('\t') ? '\t' : ',';
-  const headers = parseLine(lines[0], delimiter);
-  const normalizedHeaders = headers.map(normalizeHeader);
-  const phoneIndex = normalizedHeaders.findIndex((header) => PHONE_HEADERS.has(header));
-
-  if (phoneIndex === -1) {
-    return [{
-      rowNumber: 1,
-      to: '',
-      variables: {},
-      errors: ['缺少 phone/to/手机号 列'],
-    }];
-  }
-
-  return lines.slice(1).map((line, index) => {
-    const cells = parseLine(line, delimiter);
-    const variables: Record<string, string> = {};
-    const errors: string[] = [];
-    let name: string | undefined;
-    let scheduledAt: string | undefined;
-    let scheduledAtIso: string | undefined;
-    let priority: TaskPriority | undefined;
-
-    const to = (cells[phoneIndex] ?? '').replace(/\s+/g, '');
-    if (!DESTINATION_PATTERN.test(to)) errors.push('号码格式不正确');
-
-    for (const [columnIndex, rawHeader] of headers.entries()) {
-      const header = normalizeHeader(rawHeader);
-      const value = (cells[columnIndex] ?? '').trim();
-      if (!rawHeader.trim() || !value || PHONE_HEADERS.has(header)) continue;
-
-      if (NAME_HEADERS.has(header)) {
-        name = value;
-        variables.customerName = value;
-        continue;
-      }
-      if (SCHEDULE_HEADERS.has(header)) {
-        scheduledAt = value;
-        scheduledAtIso = normalizeDateTime(value);
-        if (!scheduledAtIso) errors.push('执行时间无法识别');
-        continue;
-      }
-      if (PRIORITY_HEADERS.has(header)) {
-        priority = normalizePriority(value);
-        continue;
-      }
-
-      variables[rawHeader.trim()] = value;
-    }
-
-    return {
-      rowNumber: index + 2,
-      to,
-      name,
-      scheduledAt,
-      scheduledAtIso,
-      priority,
-      variables,
-      errors,
-    };
-  });
-}
-
-function buildTemplate(variableKeys: string[]) {
-  const headers = ['phone', 'name', 'scheduledAt', 'priority', ...variableKeys];
-  const example = headers.map((header) => {
-    if (header === 'phone') return '1001';
-    if (header === 'name') return '张三';
-    if (header === 'scheduledAt') return '2026-07-04 20:00';
-    if (header === 'priority') return 'high';
-    if (header === 'company') return '示例公司';
-    if (header === 'product') return '试驾邀约';
-    if (header === 'orderNo') return 'DEMO20260704001';
-    if (header === 'activity') return '夏日试驾季';
-    return '';
-  });
-  return `\ufeff${headers.join(',')}\n${example.join(',')}\n`;
-}
+import {
+  buildTemplate,
+  defaultVariableFields,
+  normalizeDateTime,
+  parseImportText,
+  PRIORITY_LABELS,
+  toDateTimeLocal,
+} from './import-parser';
+import styles from './new-task.module.scss';
 
 export default function NewTaskPage() {
   const router = useRouter();
@@ -308,10 +145,10 @@ export default function NewTaskPage() {
     : '立即入队';
 
   return (
-    <div className="task-import-page">
+    <div className={styles.page}>
       <div className="page-header">
-        <div className="page-header-content">
-          <button type="button" className="task-import-back" onClick={() => router.back()} aria-label="返回">
+        <div className={styles.headerContent}>
+          <button type="button" className={styles.back} onClick={() => router.back()} aria-label="返回">
             <ArrowLeft size={18} />
           </button>
           <div>
@@ -327,8 +164,8 @@ export default function NewTaskPage() {
         </div>
       </div>
 
-      <form onSubmit={handleSubmit} className="task-import-layout">
-        <section className="card task-import-settings">
+      <form onSubmit={handleSubmit} className={styles.layout}>
+        <section className={cn('card', styles.settings)}>
           <div className="card-header">
             <div>
               <div className="card-title">任务策略</div>
@@ -402,7 +239,7 @@ export default function NewTaskPage() {
             </div>
           </div>
 
-          <div className="task-import-summary">
+          <div className={styles.summary}>
             <div>
               <span>{validRows.length}</span>
               <p>有效号码</p>
@@ -418,7 +255,7 @@ export default function NewTaskPage() {
           </div>
         </section>
 
-        <section className="card task-import-list">
+        <section className={cn('card', styles.list)}>
           <div className="card-header">
             <div>
               <div className="card-title">外呼名单</div>
@@ -429,7 +266,7 @@ export default function NewTaskPage() {
             <FileSpreadsheet size={18} />
           </div>
 
-          <label className="task-import-upload">
+          <label className={styles.upload}>
             <UploadCloud size={22} />
             <span>{fileName ? fileName : '上传 CSV / TSV 名单'}</span>
             <input
@@ -442,7 +279,7 @@ export default function NewTaskPage() {
           <div className="form-group">
             <label className="form-label">名单内容</label>
             <textarea
-              className="form-textarea form-mono task-import-textarea"
+              className={cn('form-textarea form-mono', styles.textarea)}
               value={listText}
               onChange={(event) => {
                 setFileName('');
@@ -453,7 +290,7 @@ export default function NewTaskPage() {
           </div>
 
           {invalidRows.length > 0 && (
-            <div className="task-import-alert">
+            <div className={styles.alert}>
               <AlertTriangle size={16} />
               <span>
                 {invalidRows.slice(0, 3).map((row) => `第 ${row.rowNumber} 行：${row.errors.join('、')}`).join('；')}
@@ -463,7 +300,7 @@ export default function NewTaskPage() {
           )}
 
           {validRows.length > 0 ? (
-            <div className="task-import-preview table-scroll">
+            <div className={styles.preview}>
               <table>
                 <thead>
                   <tr>
@@ -502,17 +339,17 @@ export default function NewTaskPage() {
                 </tbody>
               </table>
               {validRows.length > 8 && (
-                <div className="task-import-more">已隐藏 {validRows.length - 8} 行预览</div>
+                <div className={styles.more}>已隐藏 {validRows.length - 8} 行预览</div>
               )}
             </div>
           ) : (
-            <div className="task-import-empty">
+            <div className={styles.empty}>
               <CheckCircle2 size={18} />
               <span>等待导入名单</span>
             </div>
           )}
 
-          <div className="row-actions task-import-actions">
+          <div className={cn('row-actions', styles.actions)}>
             <button
               type="submit"
               className="btn"

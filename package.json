@@ -27,6 +27,7 @@
     "dev:funasr:setup:gpu": "cd services/funasr-server && .venv\\Scripts\\pip install torch torchaudio --index-url https://mirror.sjtu.edu.cn/pytorch-wheels/cu124/",
     "dev:funasr:test": "cd services/funasr-server && .venv\\Scripts\\python.exe -m pytest tests/ -v",
     "dev:dashboard": "turbo run dev --filter=@ai-call/dashboard",
+    "demo:init": "pnpm --filter @ai-call/api prisma:seed",
     "freeswitch:up": "docker compose -f freeswitch/docker-compose.yml up -d",
     "freeswitch:down": "docker compose -f freeswitch/docker-compose.yml down",
     "freeswitch:local:start": "powershell -ExecutionPolicy Bypass -File freeswitch/local/start.ps1",

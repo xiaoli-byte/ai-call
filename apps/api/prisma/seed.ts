@@ -446,6 +446,140 @@ async function seedGlobalConfig(): Promise<void> {
   console.log('  ✅ [同步] global config');
 }
 
+async function ensurePublishedFlowVersion(
+  flowId: string,
+  scenario: Scenario,
+) {
+  const existingVersion = await prisma.taskFlowVersion.findFirst({
+    where: { flowId },
+    orderBy: { version: 'desc' },
+  });
+  if (existingVersion) {
+    console.log(`  ⏭️  [跳过] flow=${flowId} 已有发布版本 v${existingVersion.version}`);
+    return existingVersion;
+  }
+
+  const flow = await prisma.taskFlow.update({
+    where: { id: flowId },
+    data: { status: 'published', version: { increment: 1 } },
+  });
+  const version = await prisma.taskFlowVersion.create({
+    data: {
+      flowId,
+      version: flow.version,
+      name: flow.name,
+      description: flow.description,
+      scenarioId: flow.scenarioId,
+      scenarioSnapshot: SCENARIO_CONFIGS[scenario] as never,
+      nodes: flow.nodes as never,
+      edges: flow.edges as never,
+    },
+  });
+  console.log(`  ✅ [发布] "${flow.name}" v${version.version}`);
+  return version;
+}
+
+async function seedDemoTask(input: {
+  scenario: Scenario;
+  scenarioId?: string;
+  flowId: string;
+  flowVersionId: string;
+}): Promise<void> {
+  if (process.env.SEED_DEMO_TASKS === 'false') return;
+
+  const demo = demoTaskForScenario(input.scenario);
+  const existing = await prisma.outboundTask.findFirst({
+    where: {
+      scenario: input.scenario,
+      to: demo.to,
+      flowId: input.flowId,
+    },
+    select: { id: true },
+  });
+  if (existing) {
+    console.log(`  ⏭️  [跳过] demo task ${input.scenario} 已存在 (${existing.id})`);
+    return;
+  }
+
+  const task = await prisma.outboundTask.create({
+    data: {
+      to: demo.to,
+      from: process.env.FROM_NUMBER ?? '1000',
+      scenario: input.scenario,
+      scenarioId: input.scenarioId,
+      variables: demo.variables as never,
+      status: 'pending',
+      scheduledAt: nextDemoScheduledAt(),
+      flowId: input.flowId,
+      flowVersionId: input.flowVersionId,
+      events: {
+        create: {
+          type: 'task.created',
+          payload: { flowVersionId: input.flowVersionId } as never,
+        },
+      },
+    },
+  });
+  console.log(`  ✅ [创建] demo task ${input.scenario} (${task.id})`);
+}
+
+function demoTaskForScenario(scenario: Scenario): {
+  to: string;
+  variables: Record<string, string>;
+} {
+  if (scenario === Scenario.COLLECTION) {
+    return {
+      to: '1001',
+      variables: {
+        company: '示例金融',
+        product: '信用贷',
+        customerName: '王先生',
+        last4: '6288',
+        amount: '1280',
+        days: '5',
+      },
+    };
+  }
+  if (scenario === Scenario.PRESALE) {
+    return {
+      to: '1001',
+      variables: {
+        company: '示例 4S 店',
+        product: '星曜 S7',
+        customerName: '赵女士',
+        activity: '夏日试驾季',
+      },
+    };
+  }
+  return {
+    to: '1001',
+    variables: {
+      company: '示例商城',
+      shop: '示例商城',
+      customerName: '李女士',
+      product: '智能咖啡机',
+      orderNo: 'DEMO20260706001',
+      date: '2026-07-06',
+    },
+  };
+}
+
+function nextDemoScheduledAt(): Date {
+  const date = new Date();
+  date.setSeconds(0, 0);
+  const minutes = date.getHours() * 60 + date.getMinutes();
+  const start = 9 * 60;
+  const end = 18 * 60;
+  if (date.getDay() >= 1 && date.getDay() <= 5 && minutes >= start && minutes <= end) {
+    return date;
+  }
+  date.setHours(10, 0, 0, 0);
+  while (date.getDay() === 0 || date.getDay() === 6 || date.getTime() < Date.now()) {
+    date.setDate(date.getDate() + 1);
+  }
+  return date;
+}
+
 // ============================================================
 // 主函数
 // ============================================================
@@ -480,46 +614,53 @@ async function main(): Promise<void> {
 
   for (const seed of seeds) {
     const { nodes, edges } = seed.builder();
-    const existing = await prisma.taskFlow.findFirst({
+    let flow = await prisma.taskFlow.findFirst({
       where: { name: seed.name },
     });
-    if (existing) {
-      const scenarioId = scenarioIds.get(seed.scenario);
-      if (scenarioId && existing.scenarioId !== scenarioId) {
-        await prisma.taskFlow.update({
-          where: { id: existing.id },
+    const scenarioId = scenarioIds.get(seed.scenario);
+    if (flow) {
+      if (scenarioId && flow.scenarioId !== scenarioId) {
+        flow = await prisma.taskFlow.update({
+          where: { id: flow.id },
           data: { scenarioId },
         });
       }
       if (scenarioId) {
         await prisma.outboundScenario.update({
           where: { id: scenarioId },
-          data: { defaultFlowId: existing.id },
+          data: { defaultFlowId: flow.id },
         });
       }
-      console.log(`  ⏭️  [跳过] "${seed.name}" 已存在 (id=${existing.id})`);
-      continue;
-    }
-    const scenarioId = scenarioIds.get(seed.scenario);
-    const record = await prisma.taskFlow.create({
-      data: {
-        name: seed.name,
-        description: seed.description,
-        scenarioId,
-        status: 'draft',
-        nodes: nodes as never,
-        edges: edges as never,
-      },
-    });
-    console.log(
-      `  ✅ [创建] "${seed.name}" id=${record.id} (${nodes.length} 节点, ${edges.length} 边)`,
-    );
-    if (scenarioId) {
-      await prisma.outboundScenario.update({
-        where: { id: scenarioId },
-        data: { defaultFlowId: record.id },
+      console.log(`  ⏭️  [跳过] "${seed.name}" 已存在 (id=${flow.id})`);
+    } else {
+      flow = await prisma.taskFlow.create({
+        data: {
+          name: seed.name,
+          description: seed.description,
+          scenarioId,
+          status: 'draft',
+          nodes: nodes as never,
+          edges: edges as never,
+        },
       });
+      console.log(
+        `  ✅ [创建] "${seed.name}" id=${flow.id} (${nodes.length} 节点, ${edges.length} 边)`,
+      );
+      if (scenarioId) {
+        await prisma.outboundScenario.update({
+          where: { id: scenarioId },
+          data: { defaultFlowId: flow.id },
+        });
+      }
     }
+
+    const version = await ensurePublishedFlowVersion(flow.id, seed.scenario);
+    await seedDemoTask({
+      scenario: seed.scenario,
+      scenarioId,
+      flowId: flow.id,
+      flowVersionId: version.id,
+    });
   }
 
   console.log('🌱 Seed completed.');

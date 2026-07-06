@@ -11,7 +11,7 @@ export class ActionDeliveryService {
     to?: string;
     config: Record<string, unknown>;
   }, idempotencyKey: string): Promise<void> {
-    const endpoint = process.env.SMS_GATEWAY_URL;
+    const endpoint = process.env.SMS_GATEWAY_URL ?? process.env.SMS_WEBHOOK_URL;
     if (!endpoint) throw new Error('SMS_GATEWAY_URL is not configured');
     await this.request(endpoint, 'POST', {
       to: payload.config.phone ?? payload.to,

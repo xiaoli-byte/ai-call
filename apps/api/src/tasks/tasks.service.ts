@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   Logger,
@@ -77,6 +78,8 @@ export class TasksService {
     const flowVersion = dto.flowId
       ? await this.taskFlows.resolvePublishedVersion(dto.flowId)
       : undefined;
+    const scheduledAt = dto.scheduledAt ? new Date(dto.scheduledAt) : new Date();
+    await this.assertOutboundPolicyAllowed(dto.to, scheduledAt);
     const scenarioConfig = await this.resolveCreateScenario(dto, flowVersion);
     const scenarioId = scenarioConfig?.id ?? dto.scenarioId ?? flowVersion?.scenarioId;
     const priority = normalizeTaskPriority(dto.priority ?? dto.variables?.taskPriority ?? dto.variables?.priority);
@@ -92,7 +95,7 @@ export class TasksService {
         scenarioId,
         variables: toPrismaJson(variables),
         status: TaskStatus.PENDING,
-        scheduledAt: dto.scheduledAt ? new Date(dto.scheduledAt) : new Date(),
+        scheduledAt,
         flowId: dto.flowId,
         flowVersionId: flowVersion?.id,
         events: {
@@ -349,6 +352,7 @@ export class TasksService {
     if (!STATUS_TRANSITIONS[task.status].has(TaskStatus.CALLING)) {
       throw new ConflictException(`Task ${id} cannot be dispatched from ${task.status}`);
     }
+    await this.assertOutboundPolicyAllowed(task.to, new Date(), id, id);
     const attemptId = randomUUID();
     await this.prisma.$transaction(async (tx) => {
       const updated = await tx.outboundTask.update({
@@ -477,6 +481,62 @@ export class TasksService {
   async remove(id: string): Promise<void> {
     await this.get(id);
     await this.prisma.outboundTask.delete({ where: { id } });
+  }
+
+  private async assertOutboundPolicyAllowed(
+    to: string,
+    at: Date,
+    excludeTaskId?: string,
+    eventTaskId?: string,
+  ): Promise<void> {
+    if (!this.globalConfig) return;
+    const dailyCallCount = await this.countScheduledTasksForCallee(to, at, excludeTaskId);
+    const decision = await this.globalConfig.evaluateOutboundPolicy({
+      to,
+      at,
+      dailyCallCount,
+    });
+    if (decision.allowed) return;
+
+    if (eventTaskId) {
+      await this.prisma.callEvent.create({
+        data: {
+          taskId: eventTaskId,
+          type: 'call.policy_blocked',
+          payload: callEventPayload('call.policy_blocked', {
+            code: decision.code,
+            message: decision.message,
+            details: decision.details,
+          }),
+        },
+      }).catch((err: unknown) => {
+        this.logger.warn(
+          `record policy block failed task=${eventTaskId}: ${(err as Error).message}`,
+        );
+      });
+    }
+
+    throw new BadRequestException({
+      code: decision.code,
+      message: decision.message,
+      details: decision.details,
+    });
+  }
+
+  private async countScheduledTasksForCallee(
+    to: string,
+    at: Date,
+    excludeTaskId?: string,
+  ): Promise<number> {
+    const { start, end } = localDayRange(at);
+    return this.prisma.outboundTask.count({
+      where: {
+        to,
+        scheduledAt: { gte: start, lt: end },
+        status: { not: TaskStatus.CANCELLED },
+        ...(excludeTaskId ? { id: { not: excludeTaskId } } : {}),
+      },
+    });
   }
 
   private readonly detailInclude = {
@@ -680,4 +740,12 @@ function normalizeTaskPriority(value: unknown): TaskPriority {
   }
   if (value === TaskPriority.LOW || value === '低') return TaskPriority.LOW;
   return TaskPriority.NORMAL;
+}
+
+function localDayRange(at: Date): { start: Date; end: Date } {
+  const start = new Date(at);
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 1);
+  return { start, end };
 }

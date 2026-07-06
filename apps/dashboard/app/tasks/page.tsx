@@ -11,7 +11,12 @@ import {
   TrendingUp,
 } from 'lucide-react';
 import { apiServer } from '@/lib/api/server';
+import { cn } from '@/lib/utils';
+import { EmptyState } from '@/components/outbound/empty-state';
+import { StatusBadge, type StatusTone } from '@/components/outbound/status-badge';
 import { TaskStatus, type ScenarioKey } from '@ai-call/shared';
+
+import styles from './tasks.module.scss';
 
 const STATUS_LABELS: Record<TaskStatus, string> = {
   pending: '待执行',
@@ -23,14 +28,14 @@ const STATUS_LABELS: Record<TaskStatus, string> = {
   cancelled: '已暂停',
 };
 
-const STATUS_CLASS: Record<TaskStatus, string> = {
-  pending: 'is-pending',
-  calling: 'is-running',
-  in_call: 'is-running',
-  completed: 'is-completed',
-  failed: 'is-failed',
-  no_answer: 'is-paused',
-  cancelled: 'is-paused',
+const STATUS_TONE: Record<TaskStatus, StatusTone> = {
+  pending: 'pending',
+  calling: 'running',
+  in_call: 'running',
+  completed: 'completed',
+  failed: 'failed',
+  no_answer: 'paused',
+  cancelled: 'paused',
 };
 
 const FILTERS = [
@@ -93,77 +98,77 @@ export default async function TasksPage({
   const connectRate = totalCalls ? Math.round((connected / totalCalls) * 1000) / 10 : 0;
 
   return (
-    <div className="outbound-page outbound-list-page">
-      <header className="outbound-header">
+    <div className={cn('outbound-page', styles.page)}>
+      <header className={styles.header}>
         <div>
           <h1>外呼任务</h1>
           <p>管理和追踪所有外呼任务的执行情况</p>
         </div>
-        <Link href="/tasks/new" className="outbound-primary-button">
+        <Link href="/tasks/new" className={styles.primaryButton}>
           <Plus size={15} />
           新建任务
         </Link>
       </header>
 
-      <main className="outbound-content">
-        <section className="outbound-stat-grid" aria-label="任务统计">
-          <article className="outbound-stat-card">
-            <div className="outbound-stat-label"><span>本月任务总数</span><CalendarDays size={16} /></div>
+      <main className={styles.content}>
+        <section className={styles.statGrid} aria-label="任务统计">
+          <article className={styles.statCard}>
+            <div className={styles.statLabel}><span>本月任务总数</span><CalendarDays size={16} /></div>
             <strong>{number(tasks.length)}</strong>
             <small>当前列表任务</small>
-            <p className="positive"><TrendingUp size={12} /> 实时同步任务数据</p>
+            <p className={styles.positive}><TrendingUp size={12} /> 实时同步任务数据</p>
           </article>
-          <article className="outbound-stat-card">
-            <div className="outbound-stat-label"><span>累计外呼量</span><PhoneCall size={16} /></div>
+          <article className={styles.statCard}>
+            <div className={styles.statLabel}><span>累计外呼量</span><PhoneCall size={16} /></div>
             <strong>{number(totalCalls)}</strong>
             <small>当前任务累计</small>
-            <p className="positive"><TrendingUp size={12} /> 接通率 {connectRate}%</p>
+            <p className={styles.positive}><TrendingUp size={12} /> 接通率 {connectRate}%</p>
           </article>
-          <article className="outbound-stat-card">
-            <div className="outbound-stat-label"><span>成功接通</span><CheckCircle2 size={16} /></div>
+          <article className={styles.statCard}>
+            <div className={styles.statLabel}><span>成功接通</span><CheckCircle2 size={16} /></div>
             <strong>{number(connected)}</strong>
             <small>已接通通话数</small>
-            <p className="muted">失败或未接听 {number(failed)}</p>
+            <p className={styles.muted}>失败或未接听 {number(failed)}</p>
           </article>
-          <article className="outbound-stat-card">
-            <div className="outbound-stat-label"><span>平均接通率</span><Activity size={16} /></div>
+          <article className={styles.statCard}>
+            <div className={styles.statLabel}><span>平均接通率</span><Activity size={16} /></div>
             <strong>{connectRate}%</strong>
             <small>当前列表均值</small>
-            <p className="positive"><TrendingUp size={12} /> 数据持续更新</p>
+            <p className={styles.positive}><TrendingUp size={12} /> 数据持续更新</p>
           </article>
         </section>
 
-        <section className="outbound-toolbar">
-          <nav className="outbound-segments" aria-label="任务状态">
+        <section className={styles.toolbar}>
+          <nav className={styles.segments} aria-label="任务状态">
             {FILTERS.map((item) => (
               <Link
                 key={item.label}
                 href={filterHref(item.value, searchParams.query)}
-                className={(searchParams.status ?? '') === item.value ? 'active' : ''}
+                className={(searchParams.status ?? '') === item.value ? styles.active : ''}
               >
                 {item.label}
               </Link>
             ))}
           </nav>
-          <div className="outbound-tools">
-            <form className="outbound-search">
+          <div className={styles.tools}>
+            <form className={styles.search}>
               {searchParams.status && <input type="hidden" name="status" value={searchParams.status} />}
               <Search size={14} />
               <input name="query" defaultValue={searchParams.query} placeholder="搜索任务名称或 ID..." />
             </form>
-            <button type="button"><CalendarDays size={14} />日期筛选</button>
-            <button type="button"><Download size={14} />导出</button>
+            <button type="button" className={styles.toolButton}><CalendarDays size={14} />日期筛选</button>
+            <button type="button" className={styles.toolButton}><Download size={14} />导出</button>
           </div>
         </section>
 
         {error ? (
-          <div className="outbound-empty"><strong>后端连接失败</strong><span>{error}</span></div>
+          <EmptyState title="后端连接失败" description={error} />
         ) : tasks.length === 0 ? (
-          <div className="outbound-empty"><PhoneCall size={24} /><strong>暂无外呼任务</strong><span>新建任务后会显示在这里</span></div>
+          <EmptyState icon={<PhoneCall size={24} />} title="暂无外呼任务" description="新建任务后会显示在这里" />
         ) : (
-          <div className="outbound-table-shell">
-            <div className="outbound-table-scroll">
-              <table className="outbound-table">
+          <div className={styles.tableShell}>
+            <div className={styles.tableScroll}>
+              <table className={styles.table}>
                 <thead>
                   <tr>
                     <th>任务信息</th>
@@ -186,21 +191,21 @@ export default async function TasksPage({
                     return (
                       <tr key={task.id}>
                         <td>
-                          <Link href={`/tasks/${task.id}`} className="outbound-task-link">
+                          <Link href={`/tasks/${task.id}`} className={styles.taskLink}>
                             <strong>{scenarioName}外呼任务</strong>
                             <span>{task.id}</span>
                           </Link>
                         </td>
-                        <td><span className={`outbound-status ${STATUS_CLASS[task.status]}`}><i />{STATUS_LABELS[task.status]}</span></td>
-                        <td><span className="outbound-robot"><PhoneCall size={13} />{scenarioName}</span></td>
-                        <td className="numeric outbound-counts"><b>{number(attempts)}</b><span>/</span><em>{taskConnected}</em><span>/</span><i>{taskFailed}</i></td>
+                        <td><StatusBadge tone={STATUS_TONE[task.status]}>{STATUS_LABELS[task.status]}</StatusBadge></td>
+                        <td><span className={styles.robot}><PhoneCall size={13} />{scenarioName}</span></td>
+                        <td className={cn(styles.numeric, styles.counts)}><b>{number(attempts)}</b><span>/</span><em>{taskConnected}</em><span>/</span><i>{taskFailed}</i></td>
                         <td>
-                          <div className="outbound-rate"><span><i style={{ width: `${Math.max(rate, 3)}%` }} /></span><b>{rate}%</b></div>
+                          <div className={styles.rate}><span><i style={{ width: `${Math.max(rate, 3)}%` }} /></span><b>{rate}%</b></div>
                         </td>
-                        <td><div className="outbound-date"><span>{formatDate(task.scheduledAt)}</span>{task.duration ? <small>耗时 {task.duration}s</small> : null}</div></td>
-                        <td className="outbound-creator">系统</td>
+                        <td><div className={styles.date}><span>{formatDate(task.scheduledAt)}</span>{task.duration ? <small>耗时 {task.duration}s</small> : null}</div></td>
+                        <td className={styles.creator}>系统</td>
                         <td>
-                          <Link href={`/tasks/${task.id}`} className="outbound-row-icon" aria-label={`查看 ${scenarioName} 外呼任务详情`}>
+                          <Link href={`/tasks/${task.id}`} className={styles.rowIcon} aria-label={`查看 ${scenarioName} 外呼任务详情`}>
                             <ChevronRight size={14} />
                           </Link>
                         </td>
