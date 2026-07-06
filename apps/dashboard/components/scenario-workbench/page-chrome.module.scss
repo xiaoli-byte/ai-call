@@ -1,0 +1,93 @@
+.pageTitle {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.backIcon {
+  display: inline-grid;
+  width: 40px;
+  height: 40px;
+  place-items: center;
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #64748b;
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.08);
+  cursor: pointer;
+}
+
+.backIcon:hover {
+  color: #3b5bf6;
+}
+
+.titleContent {
+  min-width: 0;
+}
+
+.pageTitle h1 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.breadcrumb {
+  margin-top: 6px;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 18px;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+}
+
+.tab {
+  position: relative;
+  display: inline-flex;
+  min-height: 38px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 16px;
+  border: 0;
+  background: transparent;
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.tabActive {
+  color: #3b5bf6;
+}
+
+.tabActive::after {
+  position: absolute;
+  right: 12px;
+  bottom: -1px;
+  left: 12px;
+  height: 2px;
+  border-radius: 999px;
+  background: #3b5bf6;
+  content: '';
+}
+
+.titleExtra {
+  margin-left: auto;
+}
+
+@media (max-width: 720px) {
+  .pageTitle {
+    gap: 12px;
+  }
+
+  .tabs {
+    overflow-x: auto;
+  }
+}

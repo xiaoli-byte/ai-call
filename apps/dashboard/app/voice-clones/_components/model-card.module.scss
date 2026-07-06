@@ -1,0 +1,102 @@
+.card {
+  position: relative;
+  display: flex;
+  min-height: 142px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  padding: 16px;
+  border: 2px solid rgba(15, 23, 42, 0.08);
+  border-radius: 12px;
+  background: #ffffff;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.16s, box-shadow 0.16s, background 0.16s;
+}
+
+.card:hover {
+  border-color: rgba(59, 91, 246, 0.45);
+}
+
+.selected {
+  border-color: #3b5bf6;
+  background: rgba(59, 91, 246, 0.05);
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04);
+}
+
+.badge {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  padding: 2px 7px;
+  border-radius: 6px;
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.badgePrimary {
+  background: #3b5bf6;
+}
+
+.badgeSuccess {
+  background: #10b981;
+}
+
+.heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-right: 46px;
+}
+
+.radio {
+  display: inline-grid;
+  width: 16px;
+  height: 16px;
+  place-items: center;
+  flex: 0 0 auto;
+  border: 2px solid rgba(100, 116, 139, 0.48);
+  border-radius: 999px;
+}
+
+.selected .radio {
+  border-color: #3b5bf6;
+}
+
+.radio span {
+  width: 8px;
+  height: 8px;
+  border-radius: inherit;
+  background: #3b5bf6;
+}
+
+.heading strong {
+  color: #0d1526;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.description {
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: auto;
+}
+
+.tag {
+  padding: 2px 7px;
+  border-radius: 5px;
+  background: #e8edf5;
+  color: #64748b;
+  font-size: 10.5px;
+  line-height: 1.45;
+}

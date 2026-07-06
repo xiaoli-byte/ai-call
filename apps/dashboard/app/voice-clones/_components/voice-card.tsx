@@ -1,6 +1,9 @@
 import { Copy, Play, Sparkles, Trash2, Zap } from 'lucide-react';
+import { cn } from '@/lib/utils';
 import type { VoiceClone } from '@ai-call/shared';
 import { formatBytes, formatDate, getModelLabel, getVoiceQuality } from './utils';
+
+import styles from './voice-card.module.scss';
 
 export function VoiceCard({
   clone,
@@ -20,41 +23,41 @@ export function VoiceCard({
   const quality = getVoiceQuality(clone);
 
   return (
-    <article className={`voice-clone-item ${active ? 'active' : ''}`}>
-      <div className="voice-clone-item-header">
-        <div className="voice-clone-avatar">{clone.name.trim().slice(0, 1) || '音'}</div>
-        <div className="voice-clone-item-main">
-          <div className="voice-clone-item-name-row">
-            <span className="voice-clone-item-name">{clone.name}</span>
+    <article className={cn(styles.card, active && styles.active)}>
+      <div className={styles.header}>
+        <div className={styles.avatar}>{clone.name.trim().slice(0, 1) || '音'}</div>
+        <div className={styles.main}>
+          <div className={styles.nameRow}>
+            <span className={styles.name}>{clone.name}</span>
             {quality >= 90 && <Sparkles size={13} />}
           </div>
-          <span className="voice-clone-item-id">{clone.voiceId}</span>
-          <span className="voice-clone-item-meta">
+          <span className={styles.id}>{clone.voiceId}</span>
+          <span className={styles.meta}>
             {getModelLabel(clone.model)} · {formatBytes(clone.sourceFileSize)} · {formatDate(clone.createdAt)}
           </span>
         </div>
       </div>
 
-      <div className="voice-clone-quality">
-        <span>
-          <span style={{ width: `${quality}%` }} />
+      <div className={styles.quality}>
+        <span className={styles.qualityTrack}>
+          <span className={styles.qualityFill} style={{ width: `${quality}%` }} />
         </span>
-        <strong>{quality}%</strong>
+        <strong className={styles.qualityValue}>{quality}%</strong>
       </div>
 
-      <div className="voice-clone-item-actions">
-        <button type="button" className="voice-clone-chip-button" onClick={onPreview}>
+      <div className={styles.actions}>
+        <button type="button" className={styles.chipButton} onClick={onPreview}>
           <Play size={13} />
           试听
         </button>
-        <button type="button" className="voice-clone-use-button" onClick={onUse}>
+        <button type="button" className={styles.useButton} onClick={onUse}>
           <Zap size={13} />
           使用此音色
         </button>
-        <button type="button" className="voice-clone-icon-button" title="复制音色 ID" onClick={onCopy}>
+        <button type="button" className={styles.iconButton} title="复制音色 ID" onClick={onCopy}>
           <Copy size={14} />
         </button>
-        <button type="button" className="voice-clone-icon-button danger" title="删除" onClick={onDelete}>
+        <button type="button" className={cn(styles.iconButton, styles.danger)} title="删除" onClick={onDelete}>
           <Trash2 size={14} />
         </button>
       </div>

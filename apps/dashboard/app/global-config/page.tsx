@@ -12,7 +12,10 @@ import {
   type GlobalVariableConfig,
 } from '@ai-call/shared';
 import { useGlobalConfig, useGlobalConfigMutations } from '@/hooks/use-global-config';
+import { cn } from '@/lib/utils';
 import { appToast } from '@/lib/toast';
+
+import styles from './global-config.module.scss';
 
 type GlobalConfigTab = 'variables' | 'api' | 'outbound-rules';
 type NumberListKey = 'blockedNumbers' | 'globalWhitelist';
@@ -428,7 +431,7 @@ export default function GlobalConfigPage() {
   }
 
   return (
-    <div className="scenario-workbench detail">
+    <div className={cn(styles.workbench, styles.detail)}>
       <div className="scenario-page-title">
         <button type="button" className="scenario-back-icon" onClick={() => router.back()} aria-label="返回">
           <ArrowLeft size={22} />

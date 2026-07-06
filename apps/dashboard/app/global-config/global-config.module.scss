@@ -1,0 +1,358 @@
+.workbench {
+  min-height: calc(100vh - 112px);
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 2px 0 48px;
+  background: transparent;
+}
+
+.workbench :global(.btn),
+.workbench h1,
+.workbench h2,
+.workbench th {
+  letter-spacing: 0;
+}
+
+.detail {
+  padding-bottom: 0;
+}
+
+.workbench :global(.scenario-page-title) {
+  min-height: 44px;
+  margin-bottom: 18px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.workbench :global(.scenario-page-title) h1 {
+  margin: 0;
+  color: var(--gray-800);
+  font-size: 20px;
+  font-weight: 650;
+  line-height: 1.25;
+}
+
+.workbench :global(.scenario-back-icon) {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: #fff;
+  color: var(--gray-700);
+  box-shadow: var(--shadow-xs);
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s, color 0.15s, background 0.15s;
+}
+
+.workbench :global(.scenario-back-icon:hover) {
+  border-color: var(--border-strong);
+  background: var(--gray-50);
+  color: var(--primary-700);
+  box-shadow: var(--shadow-sm);
+}
+
+.workbench :global(.scenario-breadcrumb) {
+  margin-bottom: 6px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.workbench :global(.scenario-tabs) {
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  gap: 26px;
+  border-bottom: 1px solid var(--border);
+}
+
+.workbench :global(.scenario-tab) {
+  position: relative;
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.workbench :global(.scenario-tab.active) {
+  color: var(--primary-700);
+  font-weight: 650;
+}
+
+.workbench :global(.scenario-tab.active::after) {
+  position: absolute;
+  right: 0;
+  bottom: -1px;
+  left: 0;
+  height: 2px;
+  background: var(--primary-600);
+  content: '';
+}
+
+.workbench :global(.scenario-section) {
+  max-width: 1180px;
+  padding: 0 0 26px;
+  border-bottom: 1px solid var(--border);
+}
+
+.workbench :global(.global-config-section) {
+  border-bottom: 0;
+}
+
+.workbench :global(.scenario-global-panel) {
+  padding-top: 2px;
+}
+
+.workbench :global(.scenario-muted-line) {
+  margin: 0 0 10px;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+}
+
+.workbench :global(.scenario-config-scroll) {
+  overflow-x: auto;
+  border: 1px solid #dbe7f4;
+  border-radius: var(--radius-md);
+  background: #fff;
+}
+
+.workbench :global(.scenario-config-table) {
+  min-width: 760px;
+  border-collapse: collapse;
+}
+
+.workbench :global(.scenario-config-table) th {
+  padding: 9px 12px;
+  background: #f2f6fb;
+  color: var(--gray-700);
+  font-size: 12px;
+  font-weight: 600;
+  text-align: left;
+  text-transform: none;
+}
+
+.workbench :global(.scenario-config-table) td {
+  padding: 7px 12px;
+  border-top: 1px solid var(--border);
+  font-size: 12.5px;
+}
+
+.workbench :global(.scenario-config-table .form-input),
+.workbench :global(.scenario-config-table .form-select) {
+  min-width: 150px;
+  height: 34px;
+}
+
+.workbench :global(.scenario-config-table.api) {
+  min-width: 760px;
+}
+
+.workbench :global(.form-input),
+.workbench :global(.form-select) {
+  height: 36px;
+  border-color: #d7e0ec;
+  border-radius: var(--radius-md);
+  background-color: #fff;
+  font-size: 12.5px;
+}
+
+.workbench :global(.form-input:focus),
+.workbench :global(.form-select:focus) {
+  border-color: var(--primary-600);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12), var(--shadow-xs);
+}
+
+.workbench :global(.scenario-config-actions) {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  white-space: nowrap;
+}
+
+.workbench :global(.scenario-config-actions) button,
+.workbench :global(.scenario-add-link) {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  background: transparent;
+  color: var(--primary-700);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.workbench :global(.scenario-config-actions) button:hover,
+.workbench :global(.scenario-add-link:hover) {
+  color: var(--primary-600);
+  text-decoration: underline;
+}
+
+.workbench :global(.scenario-config-actions) button:disabled {
+  color: var(--text-muted);
+  cursor: not-allowed;
+  text-decoration: none;
+}
+
+.workbench :global(.scenario-config-empty) {
+  height: 56px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.workbench :global(.scenario-add-link) {
+  margin-top: 12px;
+}
+
+.workbench :global(.scenario-switch) {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+
+.workbench :global(.scenario-switch) input {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--primary-600);
+}
+
+.workbench :global(.global-outbound-rules) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 18px;
+}
+
+.workbench :global(.global-outbound-rule-panel) {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid #dbe7f4;
+  border-radius: var(--radius-md);
+  background: #fff;
+  box-shadow: var(--shadow-xs);
+}
+
+.workbench :global(.global-outbound-rule-title),
+.workbench :global(.global-outbound-field > span) {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--gray-700);
+  font-size: 12.5px;
+  font-weight: 650;
+}
+
+.workbench :global(.global-outbound-time-row) {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 180px));
+  gap: 12px;
+}
+
+.workbench :global(.global-outbound-time-row) label {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.workbench :global(.global-outbound-switches) {
+  margin-top: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 18px;
+}
+
+.workbench :global(.global-outbound-field) {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.workbench :global(.global-outbound-field .form-input) {
+  max-width: 220px;
+}
+
+.workbench :global(.global-outbound-list-section) {
+  min-width: 0;
+}
+
+.workbench :global(.global-outbound-list-section + .global-outbound-list-section) {
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.workbench :global(.global-outbound-list-title-row) {
+  margin-bottom: 10px;
+}
+
+.workbench :global(.global-outbound-tip) {
+  max-width: 720px;
+  padding: 7px 10px;
+  display: inline-flex;
+  background: #f8fafc;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.workbench :global(.global-outbound-list-section .scenario-add-link) {
+  margin: 0 0 10px;
+}
+
+.workbench :global(.global-number-list-table) {
+  min-width: 980px;
+}
+
+.workbench :global(.global-number-list-table) th:nth-child(1) { width: 18%; }
+.workbench :global(.global-number-list-table) th:nth-child(2) { width: 20%; }
+.workbench :global(.global-number-list-table) th:nth-child(3) { width: 18%; }
+.workbench :global(.global-number-list-table) th:nth-child(4) { width: 28%; }
+.workbench :global(.global-number-list-table) th:nth-child(5) { width: 16%; }
+
+.workbench :global(.global-number-list-table .form-input) {
+  width: 100%;
+}
+
+.workbench :global(.global-number-time) {
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.workbench :global(.global-number-text),
+.workbench :global(.global-number-user) {
+  color: var(--text-secondary);
+  word-break: break-all;
+}
+
+@media (max-width: 760px) {
+  .workbench :global(.scenario-page-title) {
+    align-items: flex-start;
+  }
+
+  .workbench :global(.scenario-tabs) {
+    gap: 18px;
+    overflow-x: auto;
+  }
+
+  .workbench :global(.global-outbound-rules),
+  .workbench :global(.global-outbound-time-row) {
+    grid-template-columns: 1fr;
+  }
+}

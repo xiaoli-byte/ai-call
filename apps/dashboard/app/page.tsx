@@ -1,4 +1,7 @@
 import Link from 'next/link';
+import { cn } from '@/lib/utils';
+
+import styles from './page.module.scss';
 
 function StatIcon({ name }: { name: string }) {
   const props = {
@@ -74,17 +77,17 @@ export default function HomePage() {
       {/* KPI 卡片 */}
       <div className="grid grid-4">
         {STATS.map((stat) => (
-          <div key={stat.label} className="stat-card">
-            <div className="stat-header">
-              <span className="stat-label">{stat.label}</span>
-              <div className="stat-icon">
+          <div key={stat.label} className={styles.statCard}>
+            <div className={styles.statHeader}>
+              <span className={styles.statLabel}>{stat.label}</span>
+              <div className={styles.statIcon}>
                 <StatIcon name={stat.icon} />
               </div>
             </div>
-            <div className={`stat-value ${stat.accent ? 'stat-value-primary' : ''}`}>
+            <div className={cn(styles.statValue, stat.accent && styles.statValuePrimary)}>
               {stat.value}
             </div>
-            <div className="stat-meta">{stat.meta}</div>
+            <div className={styles.statMeta}>{stat.meta}</div>
           </div>
         ))}
       </div>
@@ -98,7 +101,7 @@ export default function HomePage() {
           </div>
           <span className="badge badge-primary">v1.0</span>
         </div>
-        <pre className="architecture">{`┌───────────────────────────────────────────────────────────────┐
+        <pre className={styles.architecture}>{`┌───────────────────────────────────────────────────────────────┐
 │  Next.js Dashboard（本控制台）                                 │
 │  任务管理 / 通话监控 / 知识库管理 / 场景配置                  │
 └────────────────────────┬──────────────────────────────────────┘

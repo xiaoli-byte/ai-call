@@ -29,6 +29,7 @@ import type { CaptureKind, CloneWorkbenchStatus } from './_components/types';
 import { buildWavFile, formatBytes, withCacheBust } from './_components/utils';
 import { VoiceCard } from './_components/voice-card';
 import { WaveformBars } from './_components/waveform-bars';
+import styles from './voice-clones.module.scss';
 
 export default function VoiceClonesPage() {
   const router = useRouter();
@@ -319,14 +320,14 @@ export default function VoiceClonesPage() {
   }
 
   return (
-    <div className="scenario-workbench detail voice-clone-page">
-      <header className="voice-clone-header">
-        <button type="button" className="voice-clone-back" onClick={() => router.back()}>
+    <div className={styles.page}>
+      <header className={styles.header}>
+        <button type="button" className={styles.backButton} onClick={() => router.back()}>
           <ChevronLeft size={15} />
           返回
         </button>
-        <div className="voice-clone-title-row">
-          <span className="voice-clone-title-icon">
+        <div className={styles.titleRow}>
+          <span className={styles.titleIcon}>
             <Wand2 size={18} />
           </span>
           <div>
@@ -336,14 +337,14 @@ export default function VoiceClonesPage() {
         </div>
       </header>
 
-      <div className="voice-clone-layout">
-        <main className="voice-clone-main">
-          <section className="voice-clone-section">
-            <div className="voice-clone-section-title">
+      <div className={styles.layout}>
+        <main className={styles.main}>
+          <section className={styles.section}>
+            <div className={styles.sectionTitle}>
               <StepBadge n={1} />
               <h2>选择克隆模型</h2>
             </div>
-            <div className="voice-clone-model-grid">
+            <div className={styles.modelGrid}>
               {MODEL_OPTIONS.map((option) => (
                 <ModelCard
                   key={option.id}
@@ -355,19 +356,19 @@ export default function VoiceClonesPage() {
             </div>
           </section>
 
-          <section className="voice-clone-section">
-            <div className="voice-clone-section-title compact">
+          <section className={styles.section}>
+            <div className={`${styles.sectionTitle} ${styles.sectionTitleCompact}`}>
               <StepBadge n={2} />
               <h2>提供需要克隆的人声录音</h2>
             </div>
-            <p className="voice-clone-section-hint">
+            <p className={styles.sectionHint}>
               录制或上传这个人说话的音频。建议 20-60 秒，在安静环境下清晰录制，效果更佳。
             </p>
 
             {status === 'idle' && (
-              <div className="voice-clone-source-grid">
-                <button type="button" className="voice-clone-source-card" onClick={startRecording}>
-                  <span className="voice-clone-source-icon">
+              <div className={styles.sourceGrid}>
+                <button type="button" className={styles.sourceCard} onClick={startRecording}>
+                  <span className={styles.sourceIcon}>
                     <Mic size={26} />
                   </span>
                   <strong>现场录制</strong>
@@ -376,7 +377,7 @@ export default function VoiceClonesPage() {
 
                 <button
                   type="button"
-                  className={`voice-clone-source-card ${dragOver ? 'dragging' : ''}`}
+                  className={`${styles.sourceCard} ${dragOver ? styles.dragging : ''}`}
                   onClick={() => fileInputRef.current?.click()}
                   onDragOver={(event) => {
                     event.preventDefault();
@@ -385,7 +386,7 @@ export default function VoiceClonesPage() {
                   onDragLeave={() => setDragOver(false)}
                   onDrop={handleFileDrop}
                 >
-                  <span className="voice-clone-source-icon">
+                  <span className={styles.sourceIcon}>
                     <Upload size={26} />
                   </span>
                   <strong>上传录音文件</strong>
@@ -395,12 +396,12 @@ export default function VoiceClonesPage() {
             )}
 
             {status === 'recording' && (
-              <div className="voice-clone-recording-card">
-                <div className="voice-clone-recording-orb">
+              <div className={styles.recordingCard}>
+                <div className={styles.recordingOrb}>
                   <Mic size={34} />
                 </div>
                 <WaveformBars active color="red" count={28} />
-                <div className="voice-clone-recording-time">
+                <div className={styles.recordingTime}>
                   {String(Math.floor(recordingSeconds / 60)).padStart(2, '0')}:
                   {String(recordingSeconds % 60).padStart(2, '0')}
                   <span>/ 建议最少 20 秒</span>
@@ -410,7 +411,7 @@ export default function VoiceClonesPage() {
                 )}
                 <button
                   type="button"
-                  className="voice-clone-stop-button"
+                  className={styles.stopButton}
                   onClick={stopRecording}
                   disabled={recordingSeconds < 1}
                 >
@@ -421,11 +422,11 @@ export default function VoiceClonesPage() {
             )}
 
             {hasAudio && (
-              <div className="voice-clone-audio-card">
-                <div className={`voice-clone-audio-icon ${captureKind === 'recorded' ? 'recorded' : ''}`}>
+              <div className={styles.audioCard}>
+                <div className={`${styles.audioIcon} ${captureKind === 'recorded' ? styles.audioIconRecorded : ''}`}>
                   {captureKind === 'recorded' ? <Mic size={21} /> : <Upload size={21} />}
                 </div>
-                <div className="voice-clone-audio-info">
+                <div className={styles.audioInfo}>
                   <strong>
                     {captureKind === 'recorded'
                       ? `刚才录制的音频（${recordingSeconds} 秒）`
@@ -438,11 +439,11 @@ export default function VoiceClonesPage() {
                   </span>
                   <WaveformBars active={capturePlaying} color={capturePlaying ? 'primary' : 'muted'} count={36} />
                 </div>
-                <div className="voice-clone-audio-actions">
-                  <button type="button" className="voice-clone-round-button" onClick={toggleCapturePlayback}>
+                <div className={styles.audioActions}>
+                  <button type="button" className={styles.roundButton} onClick={toggleCapturePlayback}>
                     {capturePlaying ? <Pause size={15} /> : <Play size={15} />}
                   </button>
-                  <button type="button" className="voice-clone-reset-button" onClick={resetAll}>
+                  <button type="button" className={styles.resetButton} onClick={resetAll}>
                     <X size={15} />
                     重新录入
                   </button>
@@ -451,7 +452,7 @@ export default function VoiceClonesPage() {
                   <audio
                     ref={localAudioRef}
                     src={localAudioUrl}
-                    className="voice-clone-hidden-audio"
+                    className={styles.hiddenAudio}
                     onEnded={() => setCapturePlaying(false)}
                     onPause={() => setCapturePlaying(false)}
                   />
@@ -469,13 +470,13 @@ export default function VoiceClonesPage() {
           </section>
 
           {showConfig && status !== 'saved' && (
-            <section className="voice-clone-section">
-              <div className="voice-clone-section-title">
+            <section className={styles.section}>
+              <div className={styles.sectionTitle}>
                 <StepBadge n={3} />
                 <h2>填写音色信息</h2>
               </div>
 
-              <div className="voice-clone-form">
+              <div className={styles.form}>
                 <label>
                   <span>音色名称 <em>*</em></span>
                   <input
@@ -503,7 +504,7 @@ export default function VoiceClonesPage() {
                 </label>
 
                 {status !== 'generating' && (
-                  <div className="voice-clone-examples">
+                  <div className={styles.examples}>
                     <span>快速填入：</span>
                     {[
                       DEFAULT_PREVIEW_TEXT,
@@ -533,10 +534,10 @@ export default function VoiceClonesPage() {
           )}
 
           {status === 'ready' && (
-            <section className="voice-clone-action-section">
+            <section className={styles.actionSection}>
               <button
                 type="button"
-                className="voice-clone-generate-button"
+                className={styles.generateButton}
                 onClick={generatePreview}
                 disabled={!canGenerate}
               >
@@ -548,8 +549,8 @@ export default function VoiceClonesPage() {
           )}
 
           {status === 'generating' && (
-            <section className="voice-clone-generating">
-              <div className="voice-clone-loading-dots">
+            <section className={styles.generating}>
+              <div className={styles.loadingDots}>
                 {[0, 1, 2, 3, 4].map((item) => (
                   <span key={item} style={{ animationDelay: `${item * 120}ms` }} />
                 ))}
@@ -560,16 +561,16 @@ export default function VoiceClonesPage() {
           )}
 
           {status === 'preview' && activePreviewClone && (
-            <section className="voice-clone-preview">
-              <div className="voice-clone-preview-header">
+            <section className={styles.preview}>
+              <div className={styles.previewHeader}>
                 <CheckCircle2 size={18} />
                 <div>
                   <strong>音色已生成，请试听后确认</strong>
                   <span>听一下生成效果，满意后即可在右侧音色库继续使用。</span>
                 </div>
               </div>
-              <div className="voice-clone-preview-player">
-                <button type="button" className="voice-clone-preview-play" onClick={togglePreviewPlayback}>
+              <div className={styles.previewPlayer}>
+                <button type="button" className={styles.previewPlay} onClick={togglePreviewPlayback}>
                   {previewPlaying ? <Pause size={18} /> : <Play size={18} />}
                 </button>
                 <WaveformBars active={previewPlaying} color={previewPlaying ? 'primary' : 'muted'} count={42} />
@@ -578,26 +579,26 @@ export default function VoiceClonesPage() {
                   <audio
                     ref={previewAudioRef}
                     src={playbackUrl}
-                    className="voice-clone-hidden-audio"
+                    className={styles.hiddenAudio}
                     onEnded={() => setPreviewPlaying(false)}
                     onPause={() => setPreviewPlaying(false)}
                   />
                 )}
               </div>
               {activePreviewClone.status === VoiceCloneStatus.PREVIEW && (
-                <div className="voice-clone-preview-actions">
+                <div className={styles.previewActions}>
                   <button
                     type="button"
-                    className="voice-clone-confirm-button"
+                    className={styles.confirmButton}
                     onClick={() => void confirmPreview()}
                     disabled={confirming}
                   >
-                    {confirming ? <RefreshCw size={17} className="spin" /> : <PlusCircle size={17} />}
+                    {confirming ? <RefreshCw size={17} className={styles.spin} /> : <PlusCircle size={17} />}
                     {confirming ? '正在加入...' : '听起来不错，加入音色库'}
                   </button>
                   <button
                     type="button"
-                    className="voice-clone-secondary-button"
+                    className={styles.secondaryButton}
                     onClick={generatePreview}
                     disabled={!canGenerate}
                   >
@@ -610,7 +611,7 @@ export default function VoiceClonesPage() {
           )}
 
           {status === 'saved' && (
-            <section className="voice-clone-saved">
+            <section className={styles.saved}>
               <span>
                 <CheckCircle2 size={22} />
               </span>
@@ -625,15 +626,15 @@ export default function VoiceClonesPage() {
             </section>
           )}
 
-          <p className="voice-clone-legal">
+          <p className={styles.legal}>
             <strong>使用提示：</strong>
             您应对上传录音的内容和来源负责。若录音中含有他人声纹或个人信息，需提前获得当事人授权。
             因违规使用导致的法律责任由您自行承担。
           </p>
         </main>
 
-        <aside className="voice-clone-sidebar">
-          <div className="voice-clone-sidebar-title">
+        <aside className={styles.sidebar}>
+          <div className={styles.sidebarTitle}>
             <div>
               <h2>已克隆的音色</h2>
               <p>共 {clones.length} 个</p>
@@ -642,20 +643,20 @@ export default function VoiceClonesPage() {
           </div>
 
           {error && clones.length === 0 ? (
-            <div className="voice-clone-empty">
+            <div className={styles.empty}>
               <strong>加载失败</strong>
               <span>{error instanceof Error ? error.message : '请检查后端服务'}</span>
             </div>
           ) : clones.length === 0 ? (
-            <div className="voice-clone-empty">
-              <div className="voice-clone-empty-illustration">
+            <div className={styles.empty}>
+              <div className={styles.emptyIllustration}>
                 <Volume2 size={34} />
               </div>
               <strong>{isLoading ? '正在加载...' : '暂无克隆音色'}</strong>
               <span>在左侧录制或上传一段声音后生成音色</span>
             </div>
           ) : (
-            <div className="voice-clone-list">
+            <div className={styles.list}>
               {clones.map((clone) => (
                 <VoiceCard
                   key={clone.id}
@@ -675,7 +676,7 @@ export default function VoiceClonesPage() {
             </div>
           )}
 
-          <div className="voice-clone-sidebar-tip">
+          <div className={styles.sidebarTip}>
             <Sparkles size={14} />
             相似度 90% 以上为高质量音色，推荐用于正式外呼任务
           </div>

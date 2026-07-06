@@ -3,7 +3,6 @@
 import { type ReactNode, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import {
-  ArrowLeft,
   Plus,
   RefreshCw,
   Save,
@@ -20,7 +19,11 @@ import {
 import { useScenarioMutations, useScenarios } from '@/hooks/use-scenarios';
 import { useTaskFlows } from '@/hooks/use-task-flows';
 import { useVoiceClones } from '@/hooks/use-voice-clones';
+import { cn } from '@/lib/utils';
 import { appToast } from '@/lib/toast';
+import { ScenarioPageTitle, ScenarioTab, ScenarioTabs } from '@/components/scenario-workbench/page-chrome';
+
+import styles from './scenarios.module.scss';
 
 type DetailTab = 'robot' | 'voice';
 
@@ -302,7 +305,7 @@ function ScenarioListView({
   });
 
   return (
-    <div className="scenario-workbench">
+    <div className={styles.workbench}>
       <div className="scenario-page-title">
         <button type="button" className="scenario-back-icon" aria-label="返回">
           <ArrowLeft size={22} />
@@ -611,7 +614,7 @@ function ScenarioDetailView({
   const [tab, setTab] = useState<DetailTab>('robot');
 
   return (
-    <div className="scenario-workbench detail">
+    <div className={cn(styles.workbench, styles.detail)}>
       <div className="scenario-page-title">
         <button type="button" className="scenario-back-icon" onClick={onBack} aria-label="返回列表">
           <ArrowLeft size={22} />

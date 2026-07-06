@@ -7,6 +7,7 @@ import {
   NODE_META,
   RECOMMENDATIONS,
 } from './types/flow';
+import { flowNodeIconClass } from './accent-classes';
 import styles from './flow-builder.module.scss';
 
 interface AddMenuProps {
@@ -75,7 +76,7 @@ function MenuItem({
       className={styles.flowAddMenuItem}
       role="menuitem"
     >
-      <div className={`${styles.flowAddMenuItemIcon} flow-node-icon-${meta.accent}`}>
+      <div className={`${styles.flowAddMenuItemIcon} ${flowNodeIconClass[meta.accent]}`}>
         <Icon />
       </div>
       <div className={styles.flowAddMenuItemContent}>

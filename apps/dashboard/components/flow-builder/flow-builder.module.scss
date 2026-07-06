@@ -1,9 +1,8 @@
 /* ============================================================
-   Flow Builder Module Styles (CSS Module + Sass)
+   Flow Builder Module Styles
 
-   react-flow__ 全局覆盖和动态 accent 类已移至 globals.css
-   （css-loader pure 模式要求纯 :global() 选择器必须放在全局 CSS）
-   此文件仅包含 camelCase module 局部类
+   Component styles and accent variants live here.
+   React Flow third-party DOM overrides stay in app/globals.css.
    ============================================================ */
 
 /* ============================================================
@@ -159,6 +158,37 @@
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+}
+
+.flowNodeAccentPrimary { border-top: 3px solid var(--primary-600); }
+.flowNodeAccentSuccess { border-top: 3px solid #10b981; }
+.flowNodeAccentWarning { border-top: 3px solid #f59e0b; }
+.flowNodeAccentViolet { border-top: 3px solid #8b5cf6; }
+.flowNodeAccentDanger { border-top: 3px solid #ef4444; }
+
+.flowNodeIconPrimary {
+  background: var(--primary-50);
+  color: var(--primary-600);
+}
+
+.flowNodeIconSuccess {
+  background: #ecfdf5;
+  color: #059669;
+}
+
+.flowNodeIconWarning {
+  background: #fffbeb;
+  color: #d97706;
+}
+
+.flowNodeIconViolet {
+  background: #f5f3ff;
+  color: #7c3aed;
+}
+
+.flowNodeIconDanger {
+  background: #fef2f2;
+  color: #dc2626;
 }
 
 .flowNodeTitle {

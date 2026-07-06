@@ -7,6 +7,7 @@ import { ActionForm } from './forms/action-form';
 import { EndForm } from './forms/end-form';
 import { EdgeForm } from './forms/edge-form';
 import { NODE_META } from './types/flow';
+import { flowNodeIconClass } from './accent-classes';
 import type { FlowNode } from '@ai-call/shared';
 import styles from './flow-builder.module.scss';
 
@@ -49,7 +50,7 @@ export function PropertyPanel() {
       <aside className={styles.flowPropertyPanel}>
         <div className={styles.flowPropertyPanelHeader}>
           <div className={styles.flowPropertyPanelHeaderLeft}>
-            <div className={`${styles.flowPropertyPanelIcon} flow-node-icon-primary`}>
+            <div className={`${styles.flowPropertyPanelIcon} ${flowNodeIconClass.primary}`}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
                 <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
                 <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
@@ -84,7 +85,7 @@ export function PropertyPanel() {
     <aside className={styles.flowPropertyPanel}>
       <div className={styles.flowPropertyPanelHeader}>
         <div className={styles.flowPropertyPanelHeaderLeft}>
-          <div className={`${styles.flowPropertyPanelIcon} flow-node-icon-${meta.accent}`}>
+          <div className={`${styles.flowPropertyPanelIcon} ${flowNodeIconClass[meta.accent]}`}>
             <Icon className="w-4 h-4" />
           </div>
           <div>

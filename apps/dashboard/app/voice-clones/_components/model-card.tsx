@@ -1,4 +1,7 @@
+import { cn } from '@/lib/utils';
 import type { VoiceCloneModelOption } from './types';
+
+import styles from './model-card.module.scss';
 
 export function ModelCard({
   model,
@@ -13,23 +16,23 @@ export function ModelCard({
     <button
       type="button"
       onClick={onSelect}
-      className={`voice-clone-model-card ${selected ? 'selected' : ''}`}
+      className={cn(styles.card, selected && styles.selected)}
     >
       {model.badge && (
-        <span className={`voice-clone-model-badge ${model.badge === '推荐' ? 'primary' : 'success'}`}>
+        <span className={cn(styles.badge, styles.badgePrimary)}>
           {model.badge}
         </span>
       )}
-      <span className="voice-clone-model-heading">
-        <span className="voice-clone-radio">
+      <span className={styles.heading}>
+        <span className={styles.radio}>
           {selected && <span />}
         </span>
         <strong>{model.name}</strong>
       </span>
-      <span className="voice-clone-model-desc">{model.description}</span>
-      <span className="voice-clone-model-tags">
+      <span className={styles.description}>{model.description}</span>
+      <span className={styles.tags}>
         {model.tags.map((tag) => (
-          <span key={tag}>{tag}</span>
+          <span key={tag} className={styles.tag}>{tag}</span>
         ))}
       </span>
     </button>

@@ -1,0 +1,38 @@
+.waveform {
+  display: flex;
+  height: 32px;
+  min-width: 0;
+  align-items: center;
+  gap: 2px;
+  overflow: hidden;
+}
+
+.bar {
+  width: 4px;
+  min-height: 5px;
+  flex: 1;
+  border-radius: 999px;
+  opacity: 0.22;
+}
+
+.active .bar {
+  opacity: 0.78;
+  animation: voice-wave-pulse 720ms ease-in-out infinite alternate;
+}
+
+.primary {
+  background: #3b5bf6;
+}
+
+.red {
+  background: #ef4444;
+}
+
+.muted {
+  background: #94a3b8;
+}
+
+@keyframes voice-wave-pulse {
+  from { transform: scaleY(0.42); }
+  to { transform: scaleY(1.12); }
+}

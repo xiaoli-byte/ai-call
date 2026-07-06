@@ -5,6 +5,7 @@ import { Handle, Position } from '@xyflow/react';
 import { NODE_META } from '../types/flow';
 import { AddButton } from '../add-button';
 import { useFlowStore } from '../store/flow-store';
+import { flowNodeAccentClass, flowNodeIconClass } from '../accent-classes';
 import type { FlowNodeType } from '@ai-call/shared';
 import styles from '../flow-builder.module.scss';
 
@@ -52,7 +53,7 @@ export function NodeShell({
   return (
     <div className="relative">
       <div
-        className={`${styles.flowNode} flow-node-accent-${meta.accent} ${
+        className={`${styles.flowNode} ${flowNodeAccentClass[meta.accent]} ${
           selected ? styles.selected : ''
         }`}
         onMouseEnter={() => setHovered(true)}
@@ -130,7 +131,7 @@ export function NodeShell({
 
         {/* Header */}
         <div className={styles.flowNodeHeader}>
-          <div className={`${styles.flowNodeIcon} flow-node-icon-${meta.accent}`}>
+          <div className={`${styles.flowNodeIcon} ${flowNodeIconClass[meta.accent]}`}>
             <Icon className="w-4 h-4" />
           </div>
           <div className={styles.flowNodeTitle}>{meta.title}</div>
