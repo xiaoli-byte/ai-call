@@ -97,9 +97,10 @@ describe('TasksService', () => {
     const prisma = {
       outboundTask: {
         findUnique: async () => taskRecord(),
-        update: async (args: unknown) => {
-          calls.push(['outboundTask.update', args]);
-          return { attemptCount: 1 };
+        findUniqueOrThrow: async () => ({ attemptCount: 1 }),
+        updateMany: async (args: unknown) => {
+          calls.push(['outboundTask.updateMany', args]);
+          return { count: 1 };
         },
       },
       callAttempt: {
@@ -126,9 +127,9 @@ describe('TasksService', () => {
 
     await service.dispatch('task-1');
 
-    assert.equal(calls[0][0], 'outboundTask.update');
+    assert.equal(calls[0][0], 'outboundTask.updateMany');
     assert.deepEqual(calls[0][1], {
-      where: { id: 'task-1' },
+      where: { id: 'task-1', status: TaskStatus.PENDING },
       data: { status: TaskStatus.CALLING, attemptCount: { increment: 1 } },
     });
     assert.equal(calls[1][0], 'callAttempt.create');
@@ -153,9 +154,10 @@ describe('TasksService', () => {
       outboundTask: {
         findMany: async () => [{ id: 'task-1' }],
         findUnique: async () => taskRecord(),
-        update: async (args: unknown) => {
-          calls.push(['outboundTask.update', args]);
-          return { attemptCount: 1 };
+        findUniqueOrThrow: async () => ({ attemptCount: 1 }),
+        updateMany: async (args: unknown) => {
+          calls.push(['outboundTask.updateMany', args]);
+          return { count: 1 };
         },
       },
       callAttempt: {
@@ -183,8 +185,72 @@ describe('TasksService', () => {
     const result = await service.dispatchDuePending(5);
 
     assert.deepEqual(result, { scanned: 1, dispatched: 1 });
-    assert.equal(calls[0][0], 'outboundTask.update');
+    assert.equal(calls[0][0], 'outboundTask.updateMany');
     assert.equal(calls[3][1].data.type, 'call.dispatch_requested');
+  });
+
+  it('dispatch claims the current task status before creating an attempt', async () => {
+    const calls: Call[] = [];
+    let currentStatus: TaskStatus = TaskStatus.PENDING;
+    let attemptCount = 0;
+    let taskReads = 0;
+    const prisma = {
+      outboundTask: {
+        findUnique: async (args: any) => {
+          if (args.select?.attemptCount) return { attemptCount };
+          taskReads += 1;
+          return taskRecord({
+            status: taskReads <= 2 ? TaskStatus.PENDING : currentStatus,
+            attemptCount,
+          });
+        },
+        update: async (args: any) => {
+          calls.push(['outboundTask.update', args]);
+          currentStatus = args.data.status;
+          attemptCount += 1;
+          return { attemptCount };
+        },
+        updateMany: async (args: any) => {
+          calls.push(['outboundTask.updateMany', args]);
+          if (currentStatus !== args.where.status) return { count: 0 };
+          currentStatus = args.data.status;
+          attemptCount += 1;
+          return { count: 1 };
+        },
+        findUniqueOrThrow: async () => ({ attemptCount }),
+      },
+      callAttempt: {
+        create: async (args: unknown) => {
+          calls.push(['callAttempt.create', args]);
+          return args;
+        },
+      },
+      callEvent: {
+        create: async (args: unknown) => {
+          calls.push(['callEvent.create', args]);
+          return args;
+        },
+      },
+      outboxEvent: {
+        create: async (args: unknown) => {
+          calls.push(['outboxEvent.create', args]);
+          return args;
+        },
+      },
+      $transaction: async (fn: (tx: unknown) => Promise<void>) => fn(prisma),
+    };
+    const service = new TasksService(prisma as never, {} as never, scenarios as never, {} as never);
+
+    const results = await Promise.allSettled([
+      service.dispatch('task-1'),
+      service.dispatch('task-1'),
+    ]);
+
+    assert.equal(results.filter((result) => result.status === 'fulfilled').length, 1);
+    assert.equal(results.filter((result) => result.status === 'rejected').length, 1);
+    assert.equal(calls.filter(([name]) => name === 'callAttempt.create').length, 1);
+    assert.equal(calls.filter(([name]) => name === 'outboxEvent.create').length, 1);
+    assert.equal(calls.filter(([name]) => name === 'outboundTask.updateMany').length, 2);
   });
 
   it('enqueueAction accepts CRM actions into the outbox', async () => {

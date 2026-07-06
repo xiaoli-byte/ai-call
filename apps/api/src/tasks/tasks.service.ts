@@ -473,9 +473,16 @@ export class TasksService {
     await this.assertOutboundPolicyAllowed(task.to, new Date(), id, id);
     const attemptId = randomUUID();
     await this.prisma.$transaction(async (tx) => {
-      const updated = await tx.outboundTask.update({
-        where: { id },
+      const claimed = await tx.outboundTask.updateMany({
+        where: { id, status: task.status },
         data: { status: TaskStatus.CALLING, attemptCount: { increment: 1 } },
+      });
+      if (claimed.count === 0) {
+        throw new ConflictException(`Task ${id} was already claimed for dispatch`);
+      }
+      const updated = await tx.outboundTask.findUniqueOrThrow({
+        where: { id },
+        select: { attemptCount: true },
       });
       await tx.callAttempt.create({
         data: {

@@ -137,8 +137,14 @@ class InMemoryPrisma {
   readonly outboundTask = {
     create: async (args: any) => this.createTask(args),
     findUnique: async (args: any) => this.findTask(args),
+    findUniqueOrThrow: async (args: any) => {
+      const task = this.findTask(args);
+      if (!task) throw new Error(`Task not found: ${args.where.id}`);
+      return task;
+    },
     findMany: async (args: any) => this.findTasks(args),
     update: async (args: any) => this.updateTask(args),
+    updateMany: async (args: any) => this.updateManyTasks(args),
     delete: async (_args: any) => undefined,
   };
 
@@ -244,6 +250,17 @@ class InMemoryPrisma {
     if (!task) throw new Error(`Task not found: ${args.where.id}`);
     applyData(task, args.data);
     return this.cloneTask(task);
+  }
+
+  private updateManyTasks(args: any): { count: number } {
+    let count = 0;
+    for (const task of this.tasks) {
+      if (args.where?.id && task.id !== args.where.id) continue;
+      if (args.where?.status && task.status !== args.where.status) continue;
+      applyData(task, args.data);
+      count += 1;
+    }
+    return { count };
   }
 
   private createAttempt(args: any): AttemptRecord {
