@@ -100,4 +100,50 @@ describe('CampaignsService', () => {
       BadRequestException,
     );
   });
+
+  it('simulates outbound strategy using phone contact history and blocked numbers', async () => {
+    const prisma = {
+      campaign: {
+        findUnique: async () => ({
+          id: 'campaign-1',
+          retryPolicy: {
+            maxAttempts: 3,
+            failureReasonRules: {
+              NO_ANSWER: { maxAttempts: 2, intervalMinutes: 120 },
+            },
+          },
+          leads: [
+            { phoneNumber: '+8613800138000', status: 'imported' },
+            { phoneNumber: '+8613800138001', status: 'imported' },
+            { phoneNumber: '+8613800138002', status: 'imported' },
+          ],
+        }),
+      },
+      contactAttemptHistory: {
+        findMany: async () => [
+          { phoneNumber: '+8613800138000', outcome: 'NO_ANSWER', attemptedAt: new Date() },
+          { phoneNumber: '+8613800138000', outcome: 'NO_ANSWER', attemptedAt: new Date() },
+        ],
+      },
+    };
+    const globalConfig = {
+      get: async () => ({
+        outboundRules: {
+          blockedNumbers: [{ phoneNumber: '+8613800138001' }],
+          globalWhitelist: [],
+          dailyCallLimitPerCallee: 3,
+          maxAttemptsPerNumber: 3,
+        },
+      }),
+    };
+    const service = new CampaignsService(prisma as any, {} as any, globalConfig as any);
+
+    const result = await service.simulateStrategy('campaign-1');
+
+    assert.equal(result.totalLeads, 3);
+    assert.equal(result.callableLeads, 1);
+    assert.equal(result.blockedLeads, 2);
+    assert.equal(result.blockReasons.some((item) => item.reason === 'blocked_number'), true);
+    assert.equal(result.blockReasons.some((item) => item.reason === 'failure_reason_retry_limit'), true);
+  });
 });
