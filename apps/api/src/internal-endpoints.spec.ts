@@ -5,6 +5,7 @@ import { GUARDS_METADATA } from '@nestjs/common/constants.js';
 import { IS_PUBLIC_KEY } from './auth/decorators/public.decorator.js';
 import { ServiceAuthGuard } from './common/service-auth.guard.js';
 import { KnowledgeBaseController } from './knowledge-base/knowledge-base.controller.js';
+import { MetricsController } from './metrics/metrics.controller.js';
 import { ToolsController } from './tools/tools.controller.js';
 
 function guardList(target: object | Function): unknown[] {
@@ -22,5 +23,17 @@ describe('internal service endpoints', () => {
 
     assert.equal(Reflect.getMetadata(IS_PUBLIC_KEY, retrieveHandler), true);
     assert.ok(guardList(retrieveHandler).includes(ServiceAuthGuard));
+  });
+
+  it('keeps metrics snapshots public to user JWT while requiring service token auth', () => {
+    const snapshotHandler = MetricsController.prototype.snapshot;
+
+    assert.equal(Reflect.getMetadata(IS_PUBLIC_KEY, MetricsController), true);
+    assert.ok(guardList(MetricsController).includes(ServiceAuthGuard));
+    assert.deepEqual(
+      new MetricsController({ snapshot: () => ({ ok: true }) } as never).snapshot(),
+      { ok: true },
+    );
+    assert.equal(typeof snapshotHandler, 'function');
   });
 });

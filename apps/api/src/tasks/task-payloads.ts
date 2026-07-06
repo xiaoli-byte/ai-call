@@ -18,6 +18,7 @@ export type CallEventType =
   | 'transcript.appended'
   | 'call.outcome_set'
   | 'call.hung_up'
+  | 'call.provider_event'
   | 'call.dispatch_requested'
   | 'call.dispatch_accepted'
   | 'call.dispatch_requested.retrying'
@@ -32,12 +33,26 @@ export type CallEventPayloadFor<T extends CallEventType> =
   T extends 'transcript.appended' ? { role: TranscriptTurn['role'] } :
   T extends 'call.outcome_set' ? { outcome: string; tags?: string[] } :
   T extends 'call.hung_up' ? { outcome?: string; duration?: number; channelId?: string; hangupError?: string } :
+  T extends 'call.provider_event' ? ProviderCallEventPayload :
   T extends 'call.dispatch_requested' | 'call.dispatch_accepted' | `action.${FlowActionType}.delivered` ? Record<string, never> :
   T extends 'call.policy_blocked' ? { code: string; message: string; details?: Record<string, unknown> } :
   T extends 'call.transferred' ? { extension: string; channelId: string } :
   T extends `action.${FlowActionType}.requested` ? { outboxEventId: string } :
   T extends 'call.dispatch_requested.retrying' | 'call.dispatch_requested.failed' | `action.${FlowActionType}.retrying` | `action.${FlowActionType}.failed` ? { attempts: number; error: string } :
   Record<string, never>;
+
+export type ProviderCallEventPayload = {
+  provider: string;
+  eventType: string;
+  taskId: string;
+  attemptId?: string;
+  providerCallId?: string;
+  occurredAt: string;
+  hangupCause?: string;
+  recordingPath?: string;
+  recordingUrl?: string;
+  raw?: Record<string, unknown>;
+};
 
 export type CallDispatchRequestedPayload = {
   taskId: string;

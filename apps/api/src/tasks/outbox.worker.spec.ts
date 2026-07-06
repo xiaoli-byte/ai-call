@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { TaskStatus } from '@ai-call/shared';
+import { MetricsService } from '../metrics/metrics.service.js';
 import { OutboxWorker } from './outbox.worker.js';
 
 type Call = [string, any, any?];
@@ -82,6 +83,86 @@ describe('OutboxWorker', () => {
     assert.equal(calls[2][0], 'callEvent.create');
     assert.equal(calls[2][1].data.type, 'call.dispatch_accepted');
     assert.deepEqual(calls[2][1].data.payload, {});
+  });
+
+  it('records processed batch metrics and backlog snapshots', async () => {
+    const metrics = new MetricsService();
+    const event = {
+      id: 'event-1',
+      aggregateId: 'attempt-1',
+      type: 'call.dispatch_requested',
+      attempts: 0,
+      deduplicationKey: 'dispatch-1',
+      payload: {
+        taskId: 'task-1',
+        attemptId: 'attempt-1',
+        to: '+1001',
+        from: '+1000',
+      },
+    };
+    const prisma = {
+      $transaction: async (operations: unknown[]) => Promise.all(operations as Promise<unknown>[]),
+      outboxEvent: {
+        updateMany: async (args: any) => (
+          args.where?.id === 'event-1' ? { count: 1 } : { count: 0 }
+        ),
+        findMany: async () => [event],
+        update: async (args: unknown) => args,
+      },
+      callAttempt: {
+        update: async (args: unknown) => args,
+      },
+      callEvent: {
+        create: async (args: unknown) => args,
+      },
+    };
+    const freeswitch = {
+      originate: async () => '+OK',
+    };
+
+    const worker = new OutboxWorker(prisma as never, freeswitch as never, {} as never, metrics);
+
+    await worker.processBatch();
+
+    const snapshot = metrics.snapshot();
+    assert.equal(snapshot.counters['outbox.tick'], 1);
+    assert.equal(snapshot.counters['outbox.processed'], 1);
+    assert.equal(snapshot.gauges['outbox.backlog'], 1);
+    assert.equal(snapshot.durations['outbox.batch.duration_ms'].count, 1);
+  });
+
+  it('records retrying and terminal failure metrics', async () => {
+    const metrics = new MetricsService();
+    const prisma = {
+      $transaction: async (fn: (tx: unknown) => Promise<void>) => fn({
+        outboxEvent: { update: async (args: unknown) => args },
+        callEvent: { create: async (args: unknown) => args },
+        callAttempt: { update: async (args: unknown) => args },
+        outboundTask: { update: async (args: unknown) => args },
+      }),
+    };
+    const worker = new OutboxWorker(prisma as never, {} as never, {} as never, metrics);
+    const baseEvent = {
+      id: 'event-1',
+      aggregateId: 'attempt-1',
+      type: 'call.dispatch_requested',
+      deduplicationKey: 'dispatch-1',
+      payload: {
+        taskId: 'task-1',
+        attemptId: 'attempt-1',
+        to: '+1001',
+        from: '+1000',
+      },
+    };
+
+    await (worker as unknown as { handleFailure(event: unknown, error: Error): Promise<void> })
+      .handleFailure({ ...baseEvent, attempts: 0 }, new Error('temporary'));
+    await (worker as unknown as { handleFailure(event: unknown, error: Error): Promise<void> })
+      .handleFailure({ ...baseEvent, attempts: 4 }, new Error('terminal'));
+
+    const snapshot = metrics.snapshot();
+    assert.equal(snapshot.counters['outbox.retrying'], 1);
+    assert.equal(snapshot.counters['outbox.failed'], 1);
   });
 
   it('routes sms action payloads through ActionDeliveryService', async () => {

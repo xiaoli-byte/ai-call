@@ -9,3 +9,4 @@ export * from './task-flow-templates.js';
 export * from './flow-validation.js';
 export * from './auth.js';
 export * from './phase1.js';
+export * from './tenants.js';

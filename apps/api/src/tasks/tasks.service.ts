@@ -32,6 +32,7 @@ import { TaskFlowsService } from '../task-flows/task-flows.service.js';
 import { ScenariosService } from '../scenarios/scenarios.service.js';
 import { GlobalConfigService } from '../global-config/global-config.service.js';
 import { callEventPayload, outboxPayload, toPrismaJson } from './task-payloads.js';
+import type { ProviderCallEventDto } from './dto/provider-call-event.dto.js';
 
 type ResolvedContext = {
   taskId: string;
@@ -55,6 +56,16 @@ const STATUS_TRANSITIONS: Record<TaskStatus, ReadonlySet<TaskStatus>> = {
   [TaskStatus.NO_ANSWER]: new Set([TaskStatus.CALLING]),
   [TaskStatus.CANCELLED]: new Set(),
 };
+
+const NO_ANSWER_HANGUP_CAUSES = new Set([
+  'NO_ANSWER',
+  'NO_USER_RESPONSE',
+  'USER_BUSY',
+  'CALL_REJECTED',
+  'ORIGINATOR_CANCEL',
+  'SUBSCRIBER_ABSENT',
+  'UNALLOCATED_NUMBER',
+]);
 
 const PRIORITY_WEIGHT: Record<TaskPriority, number> = {
   [TaskPriority.HIGH]: 3,
@@ -227,6 +238,109 @@ export class TasksService {
           attemptId: context.attemptId,
           type: 'task.status_changed',
           payload: callEventPayload('task.status_changed', { from: current.status, to: status }),
+        },
+      });
+    });
+    return this.get(context.taskId);
+  }
+
+  async recordProviderCallEvent(event: ProviderCallEventDto): Promise<OutboundTask> {
+    const context = await this.resolveProviderEventContext(event);
+    const eventType = normalizeProviderEventType(event.eventType);
+    const occurredAt = parseProviderDate(event.occurredAt) ?? new Date();
+    const providerCallId = cleanString(event.providerCallId)
+      ?? context.providerCallId
+      ?? rawString(event.raw, ['Unique-ID', 'Channel-Call-UUID', 'variable_uuid']);
+    const hangupCause = cleanString(event.hangupCause)
+      ?? rawString(event.raw, ['Hangup-Cause', 'variable_hangup_cause', 'hangup_cause']);
+    const recordingPath = cleanString(event.recordingPath)
+      ?? rawString(event.raw, [
+        'Record-File-Path',
+        'Record-File-Name',
+        'variable_record_file_path',
+        'record_file_path',
+      ]);
+    const recordingUrl = cleanString(event.recordingUrl)
+      ?? (recordingPath ? this.buildRecordingUrl(recordingPath) : undefined);
+
+    await this.prisma.$transaction(async (tx) => {
+      const currentTask = await tx.outboundTask.findUnique({
+        where: { id: context.taskId },
+        select: { status: true, calledAt: true, endedAt: true },
+      });
+      if (!currentTask) throw new NotFoundException(`Task ${context.taskId} not found`);
+      const currentAttempt = context.attemptId
+        ? await tx.callAttempt.findUniqueOrThrow({ where: { id: context.attemptId } })
+        : undefined;
+      const taskUpdate: Record<string, unknown> = {};
+      const attemptUpdate: Record<string, unknown> = {};
+      const taskStatus = currentTask.status as TaskStatus;
+      const attemptStatus = currentAttempt?.status as TaskStatus | undefined;
+
+      if (isAnswerProviderEvent(eventType)) {
+        if (!TERMINAL_STATUSES.has(taskStatus)) {
+          taskUpdate.status = TaskStatus.IN_CALL;
+          taskUpdate.calledAt = currentTask.calledAt ?? occurredAt;
+        }
+        if (currentAttempt && !TERMINAL_STATUSES.has(attemptStatus ?? TaskStatus.CALLING)) {
+          attemptUpdate.status = TaskStatus.IN_CALL;
+          attemptUpdate.answeredAt = currentAttempt.answeredAt ?? occurredAt;
+        }
+      }
+
+      if (isHangupProviderEvent(eventType)) {
+        const nextStatus = TERMINAL_STATUSES.has(taskStatus)
+          ? taskStatus
+          : deriveTerminalStatus(hangupCause, currentTask, currentAttempt);
+        taskUpdate.status = nextStatus;
+        taskUpdate.endedAt = currentTask.endedAt ?? occurredAt;
+        taskUpdate.duration = durationSeconds(currentTask.calledAt, occurredAt);
+
+        if (currentAttempt) {
+          const nextAttemptStatus = TERMINAL_STATUSES.has(attemptStatus ?? TaskStatus.CALLING)
+            ? attemptStatus
+            : nextStatus;
+          attemptUpdate.status = nextAttemptStatus;
+          attemptUpdate.endedAt = currentAttempt.endedAt ?? occurredAt;
+          attemptUpdate.duration = durationSeconds(currentAttempt.answeredAt, occurredAt);
+          if (hangupCause) attemptUpdate.hangupCause = hangupCause;
+        }
+      }
+
+      if (isRecordingProviderEvent(eventType) && recordingUrl) {
+        taskUpdate.recordingUrl = recordingUrl;
+        if (currentAttempt) attemptUpdate.recordingUrl = recordingUrl;
+      }
+
+      if (Object.keys(taskUpdate).length > 0) {
+        await tx.outboundTask.update({
+          where: { id: context.taskId },
+          data: taskUpdate,
+        });
+      }
+      if (context.attemptId && Object.keys(attemptUpdate).length > 0) {
+        await tx.callAttempt.update({
+          where: { id: context.attemptId },
+          data: attemptUpdate,
+        });
+      }
+      await tx.callEvent.create({
+        data: {
+          taskId: context.taskId,
+          attemptId: context.attemptId,
+          type: 'call.provider_event',
+          payload: callEventPayload('call.provider_event', {
+            provider: cleanString(event.provider) ?? 'freeswitch',
+            eventType,
+            taskId: context.taskId,
+            attemptId: context.attemptId,
+            providerCallId,
+            occurredAt: occurredAt.toISOString(),
+            hangupCause,
+            recordingPath,
+            recordingUrl,
+            raw: event.raw,
+          }),
         },
       });
     });
@@ -500,7 +614,7 @@ export class TasksService {
       at,
       dailyCallCount,
     });
-    if (decision.allowed) return;
+    if (decision.allowed === true) return;
 
     if (eventTaskId) {
       await this.prisma.callEvent.create({
@@ -587,6 +701,48 @@ export class TasksService {
     if (flowVersion?.scenarioConfig) return flowVersion.scenarioConfig;
     if (flowVersion?.scenarioId) return await this.scenarios.get(flowVersion.scenarioId);
     return await this.scenarios.resolveConfig(dto.scenario);
+  }
+
+  private async resolveProviderEventContext(event: ProviderCallEventDto): Promise<ResolvedContext> {
+    const providerIdentifier = cleanString(event.providerCallId) ?? cleanString(event.attemptId);
+    if (providerIdentifier) {
+      try {
+        const context = await this.resolveContext(providerIdentifier);
+        if (!event.taskId || context.taskId === event.taskId) return context;
+      } catch (err) {
+        if (!event.taskId) throw err;
+      }
+    }
+    if (event.taskId) return this.resolveContext(event.taskId, true);
+    throw new BadRequestException('Provider call event requires taskId, attemptId, or providerCallId');
+  }
+
+  private buildRecordingUrl(recordingPath: string): string {
+    if (isPublicUrl(recordingPath)) return recordingPath;
+    const publicBaseUrl = cleanString(process.env.CALL_RECORDING_PUBLIC_BASE_URL) ?? '/recordings';
+    const relativePath = this.relativeRecordingPath(recordingPath);
+    return joinUrlPath(publicBaseUrl, relativePath);
+  }
+
+  private relativeRecordingPath(recordingPath: string): string {
+    const normalizedPath = normalizeRecordingPath(recordingPath);
+    const roots = [
+      process.env.FREESWITCH_SHARED_RECORDINGS_CONTAINER,
+      process.env.FREESWITCH_SHARED_RECORDINGS_HOST,
+    ]
+      .map((value) => cleanString(value))
+      .filter((value): value is string => Boolean(value))
+      .map(normalizeRecordingPath);
+
+    for (const root of roots) {
+      if (normalizedPath.toLowerCase() === root.toLowerCase()) return '';
+      const prefix = `${root.replace(/\/+$/, '')}/`;
+      if (normalizedPath.toLowerCase().startsWith(prefix.toLowerCase())) {
+        return normalizedPath.slice(prefix.length).replace(/^\/+/, '');
+      }
+    }
+
+    return normalizedPath.split('/').filter(Boolean).at(-1) ?? normalizedPath.replace(/^\/+/, '');
   }
 
   private async resolveContext(id: string, preferActiveAttempt = false): Promise<ResolvedContext> {
@@ -760,4 +916,93 @@ function localDayRange(at: Date): { start: Date; end: Date } {
   const end = new Date(start);
   end.setDate(end.getDate() + 1);
   return { start, end };
+}
+
+function normalizeProviderEventType(value: string): string {
+  return value.trim().replace(/[\s.-]+/g, '_').toUpperCase();
+}
+
+function isAnswerProviderEvent(eventType: string): boolean {
+  return eventType === 'CHANNEL_ANSWER';
+}
+
+function isHangupProviderEvent(eventType: string): boolean {
+  return eventType === 'CHANNEL_HANGUP_COMPLETE' || eventType === 'CHANNEL_HANGUP';
+}
+
+function isRecordingProviderEvent(eventType: string): boolean {
+  return eventType === 'RECORD_STOP' ||
+    eventType === 'RECORD_AVAILABLE' ||
+    eventType === 'RECORDING_AVAILABLE';
+}
+
+function deriveTerminalStatus(
+  hangupCause: string | undefined,
+  task: { status: string; calledAt?: Date | null },
+  attempt?: { answeredAt?: Date | null },
+): TaskStatus {
+  const normalizedCause = cleanString(hangupCause)?.toUpperCase();
+  if (normalizedCause && NO_ANSWER_HANGUP_CAUSES.has(normalizedCause)) {
+    return TaskStatus.NO_ANSWER;
+  }
+  if (normalizedCause === 'NORMAL_CLEARING' || task.status === TaskStatus.IN_CALL || task.calledAt || attempt?.answeredAt) {
+    return TaskStatus.COMPLETED;
+  }
+  return TaskStatus.FAILED;
+}
+
+function durationSeconds(start: Date | string | null | undefined, end: Date): number | undefined {
+  const startedAt = parseProviderDate(start);
+  if (!startedAt) return undefined;
+  return Math.max(0, Math.floor((end.getTime() - startedAt.getTime()) / 1000));
+}
+
+function parseProviderDate(value: Date | string | null | undefined): Date | undefined {
+  if (!value) return undefined;
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? undefined : value;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? undefined : date;
+}
+
+function rawString(raw: Record<string, unknown> | undefined, keys: string[]): string | undefined {
+  if (!raw) return undefined;
+  for (const key of keys) {
+    const value = cleanString(raw[key]);
+    if (value) return value;
+  }
+  const entries = Object.entries(raw);
+  for (const key of keys) {
+    const match = entries.find(([candidate]) => candidate.toLowerCase() === key.toLowerCase());
+    const value = cleanString(match?.[1]);
+    if (value) return value;
+  }
+  return undefined;
+}
+
+function cleanString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+function isPublicUrl(value: string): boolean {
+  return /^https?:\/\//i.test(value);
+}
+
+function normalizeRecordingPath(value: string): string {
+  return value.trim().replace(/\\/g, '/').replace(/\/+$/, '');
+}
+
+function joinUrlPath(baseUrl: string, relativePath: string): string {
+  const base = baseUrl.replace(/\/+$/, '');
+  const relative = encodeRecordingRelativePath(relativePath);
+  if (!relative) return base;
+  return `${base}/${relative}`;
+}
+
+function encodeRecordingRelativePath(relativePath: string): string {
+  return relativePath
+    .replace(/\\/g, '/')
+    .split('/')
+    .filter(Boolean)
+    .map(encodeURIComponent)
+    .join('/');
 }

@@ -1,8 +1,9 @@
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy, OnModuleInit, Optional } from '@nestjs/common';
 import { TaskStatus } from '@ai-call/shared';
 import { hostname } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { FreeSwitchService } from '../freeswitch/freeswitch.service.js';
+import { MetricsService } from '../metrics/metrics.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { ActionDeliveryService } from './action-delivery.service.js';
 import {
@@ -33,6 +34,7 @@ export class OutboxWorker implements OnModuleInit, OnModuleDestroy {
     private readonly prisma: PrismaService,
     private readonly freeswitch: FreeSwitchService,
     private readonly actions: ActionDeliveryService,
+    @Optional() private readonly metrics?: MetricsService,
   ) {}
 
   onModuleInit(): void {
@@ -49,7 +51,9 @@ export class OutboxWorker implements OnModuleInit, OnModuleDestroy {
 
   async processBatch(): Promise<void> {
     if (this.processing) return;
+    const startedAt = Date.now();
     this.processing = true;
+    this.metrics?.incrementCounter('outbox.tick');
     try {
       await this.recoverExpiredLeases();
       const events = await this.prisma.outboxEvent.findMany({
@@ -57,10 +61,13 @@ export class OutboxWorker implements OnModuleInit, OnModuleDestroy {
         orderBy: { createdAt: 'asc' },
         take: Number(process.env.OUTBOX_BATCH_SIZE ?? 10),
       });
+      this.metrics?.setGauge('outbox.backlog', events.length);
       for (const event of events) await this.processEvent(event);
     } catch (error) {
+      this.metrics?.incrementCounter('outbox.failure');
       this.logger.error(`outbox 批处理失败：${(error as Error).message}`);
     } finally {
+      this.metrics?.observeDuration('outbox.batch.duration_ms', Date.now() - startedAt);
       this.processing = false;
     }
   }
@@ -102,6 +109,7 @@ export class OutboxWorker implements OnModuleInit, OnModuleDestroy {
           lockedBy: null,
         },
       });
+      this.metrics?.incrementCounter('outbox.processed');
     } catch (error) {
       await this.handleFailure(event, error as Error);
     }
@@ -208,6 +216,7 @@ export class OutboxWorker implements OnModuleInit, OnModuleDestroy {
         });
       }
     });
+    this.metrics?.incrementCounter(terminal ? 'outbox.failed' : 'outbox.retrying');
     this.logger.warn(`outbox event ${event.id} failed (${attempts}): ${message}`);
   }
 }

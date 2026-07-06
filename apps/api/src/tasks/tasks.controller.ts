@@ -27,6 +27,7 @@ import {
   UpdateTaskStatusDto,
 } from './dto/task-events.dto.js';
 import { ListTasksDto } from './dto/list-tasks.dto.js';
+import { ProviderCallEventDto } from './dto/provider-call-event.dto.js';
 
 /**
  * 外呼任务 Controller
@@ -65,6 +66,15 @@ export class TasksController {
   @Permissions(PERMISSIONS.TASK_READ)
   list(@Query() query: ListTasksDto) {
     return this.tasksService.list(query);
+  }
+
+  /** FreeSWITCH/Voice bridge writes provider-side call events back into task history. */
+  @Post('provider-events')
+  @Public()
+  @UseGuards(ServiceAuthGuard)
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  recordProviderCallEvent(@Body() body: ProviderCallEventDto) {
+    return this.tasksService.recordProviderCallEvent(body);
   }
 
   /** 获取任务详情 */

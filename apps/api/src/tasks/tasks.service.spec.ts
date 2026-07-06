@@ -1,11 +1,17 @@
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
+import { afterEach, describe, it } from 'node:test';
 import { Scenario, TaskPriority, TaskStatus } from '@ai-call/shared';
 import { TasksService } from './tasks.service.js';
 
 type Call = [string, any];
 
 const now = new Date('2026-07-02T00:00:00.000Z');
+const ENV_KEYS = [
+  'CALL_RECORDING_PUBLIC_BASE_URL',
+  'FREESWITCH_SHARED_RECORDINGS_CONTAINER',
+  'FREESWITCH_SHARED_RECORDINGS_HOST',
+] as const;
+const savedEnv = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
 
 const scenarios = {
   resolveConfig: async () => undefined,
@@ -13,6 +19,14 @@ const scenarios = {
   mergeDefaultVariables: (_config: unknown, variables: Record<string, string>) => variables,
   toDomain: (record: unknown) => record,
 };
+
+afterEach(() => {
+  for (const key of ENV_KEYS) {
+    const value = savedEnv[key];
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+});
 
 function taskRecord(overrides: Record<string, unknown> = {}) {
   return {
@@ -359,4 +373,171 @@ describe('TasksService', () => {
     assert.equal(calls[3][1].data.type, 'call.hung_up');
     assert.equal(calls[3][1].data.payload.channelId, 'provider-1');
   });
+
+  it('records CHANNEL_ANSWER provider events and marks the attempt in call', async () => {
+    const calls: Call[] = [];
+    const occurredAt = '2026-07-02T00:01:00.000Z';
+    const prisma = providerEventPrisma(calls, {
+      task: taskRecord({ status: TaskStatus.CALLING, calledAt: null }),
+      attempt: attemptRecord({ status: TaskStatus.CALLING }),
+    });
+    const service = new TasksService(prisma as never, {} as never, scenarios as never, {} as never);
+
+    await service.recordProviderCallEvent({
+      provider: 'freeswitch',
+      eventType: 'CHANNEL_ANSWER',
+      providerCallId: 'provider-1',
+      occurredAt,
+      raw: { 'Event-Name': 'CHANNEL_ANSWER', 'Unique-ID': 'provider-1' },
+    });
+
+    assert.equal(calls[0][0], 'outboundTask.update');
+    assert.equal(calls[0][1].data.status, TaskStatus.IN_CALL);
+    assert.deepEqual(calls[0][1].data.calledAt, new Date(occurredAt));
+    assert.equal(calls[1][0], 'callAttempt.update');
+    assert.equal(calls[1][1].data.status, TaskStatus.IN_CALL);
+    assert.deepEqual(calls[1][1].data.answeredAt, new Date(occurredAt));
+    assert.equal(calls[2][0], 'callEvent.create');
+    assert.equal(calls[2][1].data.type, 'call.provider_event');
+    assert.equal(calls[2][1].data.taskId, 'task-1');
+    assert.equal(calls[2][1].data.attemptId, 'attempt-1');
+    assert.equal(calls[2][1].data.payload.eventType, 'CHANNEL_ANSWER');
+    assert.equal(calls[2][1].data.payload.providerCallId, 'provider-1');
+    assert.deepEqual(calls[2][1].data.payload.raw, {
+      'Event-Name': 'CHANNEL_ANSWER',
+      'Unique-ID': 'provider-1',
+    });
+  });
+
+  it('records CHANNEL_HANGUP_COMPLETE by task id and stores no-answer hangup details', async () => {
+    const calls: Call[] = [];
+    const occurredAt = '2026-07-02T00:02:00.000Z';
+    const prisma = providerEventPrisma(calls, {
+      task: taskRecord({ status: TaskStatus.CALLING, calledAt: null }),
+      attempt: attemptRecord({ status: TaskStatus.CALLING, answeredAt: null }),
+    });
+    const service = new TasksService(prisma as never, {} as never, scenarios as never, {} as never);
+
+    await service.recordProviderCallEvent({
+      provider: 'freeswitch',
+      eventType: 'CHANNEL_HANGUP_COMPLETE',
+      taskId: 'task-1',
+      providerCallId: 'provider-1',
+      occurredAt,
+      hangupCause: 'NO_ANSWER',
+      raw: { 'Hangup-Cause': 'NO_ANSWER' },
+    });
+
+    assert.equal(calls[0][0], 'outboundTask.update');
+    assert.equal(calls[0][1].data.status, TaskStatus.NO_ANSWER);
+    assert.deepEqual(calls[0][1].data.endedAt, new Date(occurredAt));
+    assert.equal(calls[1][0], 'callAttempt.update');
+    assert.equal(calls[1][1].data.status, TaskStatus.NO_ANSWER);
+    assert.equal(calls[1][1].data.hangupCause, 'NO_ANSWER');
+    assert.deepEqual(calls[1][1].data.endedAt, new Date(occurredAt));
+    assert.equal(calls[2][1].data.payload.hangupCause, 'NO_ANSWER');
+  });
+
+  it('records RECORD_STOP events and derives a public recording URL from configured paths', async () => {
+    const calls: Call[] = [];
+    process.env.CALL_RECORDING_PUBLIC_BASE_URL = 'https://recordings.example.test/calls';
+    process.env.FREESWITCH_SHARED_RECORDINGS_CONTAINER = '/var/lib/freeswitch/recordings';
+    const prisma = providerEventPrisma(calls, {
+      task: taskRecord({ status: TaskStatus.COMPLETED }),
+      attempt: attemptRecord({ status: TaskStatus.COMPLETED }),
+    });
+    const service = new TasksService(prisma as never, {} as never, scenarios as never, {} as never);
+
+    await service.recordProviderCallEvent({
+      provider: 'freeswitch',
+      eventType: 'RECORD_STOP',
+      providerCallId: 'provider-1',
+      recordingPath: '/var/lib/freeswitch/recordings/2026/07/attempt-1.wav',
+      raw: { 'Record-File-Path': '/var/lib/freeswitch/recordings/2026/07/attempt-1.wav' },
+    });
+
+    assert.equal(calls[0][0], 'outboundTask.update');
+    assert.equal(
+      calls[0][1].data.recordingUrl,
+      'https://recordings.example.test/calls/2026/07/attempt-1.wav',
+    );
+    assert.equal(calls[1][0], 'callAttempt.update');
+    assert.equal(
+      calls[1][1].data.recordingUrl,
+      'https://recordings.example.test/calls/2026/07/attempt-1.wav',
+    );
+    assert.equal(calls[2][1].data.payload.recordingUrl, 'https://recordings.example.test/calls/2026/07/attempt-1.wav');
+  });
 });
+
+function attemptRecord(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'attempt-1',
+    taskId: 'task-1',
+    attemptNo: 1,
+    providerCallId: 'provider-1',
+    status: TaskStatus.CALLING,
+    startedAt: now,
+    ringingAt: now,
+    answeredAt: null,
+    endedAt: null,
+    duration: null,
+    hangupCause: null,
+    recordingUrl: null,
+    createdAt: now,
+    updatedAt: now,
+    ...overrides,
+  };
+}
+
+function providerEventPrisma(
+  calls: Call[],
+  records: { task: any; attempt: any },
+) {
+  const task = { ...records.task };
+  const attempt = { ...records.attempt };
+  const prisma = {
+    outboundTask: {
+      findUnique: async (args: any) => {
+        if (args.where.id !== task.id) return null;
+        if (args.select) {
+          return Object.fromEntries(
+            Object.keys(args.select).map((key) => [key, task[key]]),
+          );
+        }
+        return { ...task, attempts: [{ ...attempt }], transcripts: [], flowVersion: null };
+      },
+      update: async (args: any) => {
+        calls.push(['outboundTask.update', args]);
+        Object.assign(task, args.data);
+        return { ...task };
+      },
+    },
+    callAttempt: {
+      findFirst: async (args: any) => {
+        if (args.where?.taskId === task.id) return { ...attempt };
+        const values = args.where?.OR?.flatMap((entry: any) => [entry.id, entry.providerCallId]).filter(Boolean);
+        return values?.includes(attempt.id) || values?.includes(attempt.providerCallId)
+          ? { ...attempt }
+          : null;
+      },
+      findUniqueOrThrow: async (args: any) => {
+        if (args.where.id !== attempt.id) throw new Error(`Attempt not found: ${args.where.id}`);
+        return { ...attempt };
+      },
+      update: async (args: any) => {
+        calls.push(['callAttempt.update', args]);
+        Object.assign(attempt, args.data);
+        return { ...attempt };
+      },
+    },
+    callEvent: {
+      create: async (args: any) => {
+        calls.push(['callEvent.create', args]);
+        return args;
+      },
+    },
+    $transaction: async (fn: (tx: unknown) => Promise<void>) => fn(prisma),
+  };
+  return prisma;
+}

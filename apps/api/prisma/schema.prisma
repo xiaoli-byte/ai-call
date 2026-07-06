@@ -47,6 +47,108 @@ model GlobalConfig {
   @@map("global_configs")
 }
 
+model Tenant {
+  id              String                 @id @default(uuid())
+  slug            String                 @unique
+  name            String
+  status          String                 @default("active")
+  metadata        Json                   @default("{}")
+  providerConfigs TenantProviderConfig[]
+  quotaPolicies   TenantQuotaPolicy[]
+  usageEvents     UsageEvent[]
+  usageAggregates UsageAggregate[]
+  billingAccount  BillingAccount?
+  createdAt       DateTime               @default(now()) @map("created_at")
+  updatedAt       DateTime               @updatedAt @map("updated_at")
+
+  @@index([status, updatedAt])
+  @@map("tenants")
+}
+
+model TenantProviderConfig {
+  id              String   @id @default(uuid())
+  tenantId        String   @map("tenant_id")
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  providerType    String   @map("provider_type")
+  providerName    String   @map("provider_name")
+  enabled         Boolean  @default(true)
+  secretRef       String?  @map("secret_ref")
+  configEncrypted Json     @default("{}") @map("config_encrypted")
+  metadata        Json     @default("{}")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, providerType, providerName])
+  @@index([providerType, providerName])
+  @@map("tenant_provider_configs")
+}
+
+model TenantQuotaPolicy {
+  id         String   @id @default(uuid())
+  tenantId   String   @map("tenant_id")
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  metric     String
+  period     String
+  quotaLimit Int      @map("quota_limit")
+  enabled    Boolean  @default(true)
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, metric, period])
+  @@index([metric, period])
+  @@map("tenant_quota_policies")
+}
+
+model UsageEvent {
+  id             String   @id @default(uuid())
+  tenantId       String   @map("tenant_id")
+  tenant         Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  idempotencyKey String   @map("idempotency_key")
+  metric         String
+  period         String   @default("day")
+  quantity       Int      @default(1)
+  eventAt        DateTime @default(now()) @map("event_at")
+  source         String?
+  metadata       Json     @default("{}")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@unique([tenantId, idempotencyKey])
+  @@index([tenantId, metric, period, eventAt])
+  @@map("usage_events")
+}
+
+model UsageAggregate {
+  id          String   @id @default(uuid())
+  tenantId    String   @map("tenant_id")
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  metric      String
+  period      String
+  bucketStart DateTime @map("bucket_start")
+  quantity    Int      @default(0)
+  eventCount  Int      @default(0) @map("event_count")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, metric, period, bucketStart])
+  @@index([tenantId, period, bucketStart])
+  @@map("usage_aggregates")
+}
+
+model BillingAccount {
+  id                  String   @id @default(uuid())
+  tenantId            String   @unique @map("tenant_id")
+  tenant              Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  status              String   @default("trial")
+  providerCustomerRef String?  @map("provider_customer_ref")
+  billingEmail        String?  @map("billing_email")
+  metadata            Json     @default("{}")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  @@index([status])
+  @@map("billing_accounts")
+}
+
 model VoiceClone {
   id                 String   @id @default(uuid())
   voiceId            String   @unique @map("voice_id")

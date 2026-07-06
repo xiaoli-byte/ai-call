@@ -16,8 +16,10 @@ import { CampaignsModule } from './campaigns/campaigns.module.js';
 import { AnalyticsModule } from './analytics/analytics.module.js';
 import { QualityModule } from './quality/quality.module.js';
 import { ComplianceModule } from './compliance/compliance.module.js';
+import { TenantsModule } from './tenants/tenants.module.js';
 import { JwtAuthGuard } from './auth/jwt-auth.guard.js';
 import { PermissionsGuard } from './auth/permissions.guard.js';
+import { MetricsModule } from './metrics/metrics.module.js';
 
 @Module({
   imports: [
@@ -37,6 +39,8 @@ import { PermissionsGuard } from './auth/permissions.guard.js';
     AnalyticsModule,
     QualityModule,
     ComplianceModule,
+    TenantsModule,
+    MetricsModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: JwtAuthGuard },
