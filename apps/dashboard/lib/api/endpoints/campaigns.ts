@@ -4,6 +4,7 @@ import type {
   CampaignDetail,
   CampaignListPage,
   CampaignQueryDto,
+  CampaignStrategySimulation,
   CreateCampaignDto,
   UpdateCampaignStatusDto,
 } from '@ai-call/shared';
@@ -19,5 +20,7 @@ export function campaignsEndpoints(http: HttpAdapter) {
       http.request<CampaignDetail>('/campaigns', { method: 'POST', body: dto }),
     updateStatus: (id: string, dto: UpdateCampaignStatusDto) =>
       http.request<CampaignDetail>(`/campaigns/${id}/status`, { method: 'PATCH', body: dto }),
+    strategySimulation: (id: string) =>
+      http.request<CampaignStrategySimulation>(`/campaigns/${id}/strategy-simulation`),
   };
 }

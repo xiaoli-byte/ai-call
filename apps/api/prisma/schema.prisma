@@ -8,7 +8,7 @@ datasource db {
 }
 
 model OutboundScenario {
-  id                       String            @id @default(uuid())
+  id                       String            @id @default(uuid()) @db.Uuid
   scenario                 String            @unique
   name                     String
   description              String            @default("")
@@ -24,13 +24,13 @@ model OutboundScenario {
   knowledgeBaseId          String            @default("") @map("knowledge_base_id")
   allowedTools             Json              @default("[]") @map("allowed_tools")
   escalationRules          Json              @default("[]") @map("escalation_rules")
-  defaultFlowId            String?           @map("default_flow_id")
+  defaultFlowId            String?           @map("default_flow_id") @db.Uuid
   defaultFlow              TaskFlow?         @relation("ScenarioDefaultFlow", fields: [defaultFlowId], references: [id], onDelete: SetNull)
   taskFlows                TaskFlow[]        @relation("TaskFlowScenario")
   taskFlowVersions         TaskFlowVersion[] @relation("TaskFlowVersionScenario")
   tasks                    OutboundTask[]
   createdAt                DateTime          @default(now()) @map("created_at")
-  updatedAt                DateTime          @updatedAt @map("updated_at")
+  updatedAt                DateTime          @default(now()) @updatedAt @map("updated_at")
 
   @@index([status, updatedAt])
   @@map("outbound_scenarios")
@@ -40,7 +40,7 @@ model GlobalConfig {
   id              String   @id @default("default")
   globalVariables Json     @default("[]") @map("global_variables")
   apiPlugins      Json     @default("[]") @map("api_plugins")
-  outboundRules   Json     @default("{}") @map("outbound_rules")
+  outboundRules   Json     @default("{\"callWindow\":{\"startTime\":\"09:00\",\"endTime\":\"18:00\",\"weekdaysOnly\":true,\"nonHolidayOnly\":false},\"dailyCallLimitPerCallee\":3,\"blockedNumbers\":[],\"globalWhitelist\":[]}") @map("outbound_rules")
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @updatedAt @map("updated_at")
 
@@ -78,7 +78,7 @@ model TenantProviderConfig {
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @updatedAt @map("updated_at")
 
-  @@unique([tenantId, providerType, providerName])
+  @@unique([tenantId, providerType, providerName], map: "tenant_provider_configs_tenant_id_provider_type_provider_name_k")
   @@index([providerType, providerName])
   @@map("tenant_provider_configs")
 }
@@ -150,61 +150,63 @@ model BillingAccount {
 }
 
 model VoiceClone {
-  id                 String   @id @default(uuid())
-  voiceId            String   @unique @map("voice_id")
+  id                 String    @id @default(uuid()) @db.Uuid
+  voiceId            String    @unique @map("voice_id")
   name               String
-  model              String   @default("cosyvoice")
-  promptText         String   @map("prompt_text")
-  description        String   @default("")
-  status             String   @default("ready")
-  sourceFilename     String   @map("source_filename")
-  sourceMimeType     String   @map("source_mime_type")
-  sourceFilePath     String   @map("source_file_path")
-  sourceFileSize     Int      @map("source_file_size")
-  previewText        String?  @map("preview_text")
-  previewFilePath    String?  @map("preview_file_path")
-  previewMimeType    String?  @map("preview_mime_type")
+  model              String    @default("cosyvoice")
+  promptText         String    @map("prompt_text")
+  description        String    @default("")
+  status             String    @default("ready")
+  sourceFilename     String    @map("source_filename")
+  sourceMimeType     String    @map("source_mime_type")
+  sourceFilePath     String    @map("source_file_path")
+  sourceFileSize     Int       @map("source_file_size")
+  previewText        String?   @map("preview_text")
+  previewFilePath    String?   @map("preview_file_path")
+  previewMimeType    String?   @map("preview_mime_type")
   previewGeneratedAt DateTime? @map("preview_generated_at")
-  createdAt          DateTime @default(now()) @map("created_at")
-  updatedAt          DateTime @updatedAt @map("updated_at")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @default(now()) @updatedAt @map("updated_at")
 
   @@index([status, updatedAt])
   @@map("voice_clones")
 }
 
 model TaskFlow {
-  id          String            @id @default(uuid())
-  name        String
-  description String            @default("")
-  scenarioId  String?           @map("scenario_id")
-  scenarioConfig OutboundScenario? @relation("TaskFlowScenario", fields: [scenarioId], references: [id], onDelete: SetNull)
+  id                  String             @id @default(uuid()) @db.Uuid
+  name                String
+  description         String             @default("")
+  scenarioId          String?            @map("scenario_id") @db.Uuid
+  scenarioConfig      OutboundScenario?  @relation("TaskFlowScenario", fields: [scenarioId], references: [id], onDelete: SetNull)
   defaultForScenarios OutboundScenario[] @relation("ScenarioDefaultFlow")
-  status      String            @default("draft")
-  nodes       Json              @default("[]")
-  edges       Json              @default("[]")
-  version     Int               @default(0)
-  versions    TaskFlowVersion[]
-  tasks       OutboundTask[]
-  createdAt   DateTime          @default(now()) @map("created_at")
-  updatedAt   DateTime          @updatedAt @map("updated_at")
+  status              String             @default("draft")
+  nodes               Json               @default("[]")
+  edges               Json               @default("[]")
+  version             Int                @default(0)
+  versions            TaskFlowVersion[]
+  scenarioTestRuns    ScenarioTestRun[]
+  tasks               OutboundTask[]
+  createdAt           DateTime           @default(now()) @map("created_at")
+  updatedAt           DateTime           @updatedAt @map("updated_at")
 
   @@map("task_flows")
 }
 
 model TaskFlowVersion {
-  id          String         @id @default(uuid())
-  flowId      String         @map("flow_id")
-  flow        TaskFlow       @relation(fields: [flowId], references: [id], onDelete: Restrict)
-  version     Int
-  name        String
-  description String         @default("")
-  scenarioId  String?        @map("scenario_id")
-  scenarioConfig OutboundScenario? @relation("TaskFlowVersionScenario", fields: [scenarioId], references: [id], onDelete: SetNull)
-  scenarioSnapshot Json?     @map("scenario_snapshot")
-  nodes       Json
-  edges       Json
-  tasks       OutboundTask[]
-  createdAt   DateTime       @default(now()) @map("created_at")
+  id               String            @id @default(uuid()) @db.Uuid
+  flowId           String            @map("flow_id") @db.Uuid
+  flow             TaskFlow          @relation(fields: [flowId], references: [id], onDelete: Restrict)
+  version          Int
+  name             String
+  description      String            @default("")
+  scenarioId       String?           @map("scenario_id") @db.Uuid
+  scenarioConfig   OutboundScenario? @relation("TaskFlowVersionScenario", fields: [scenarioId], references: [id], onDelete: SetNull)
+  scenarioSnapshot Json?             @map("scenario_snapshot")
+  nodes            Json
+  edges            Json
+  tasks            OutboundTask[]
+  scenarioTestRuns ScenarioTestRun[]
+  createdAt        DateTime          @default(now()) @map("created_at")
 
   @@unique([flowId, version])
   @@index([flowId, createdAt])
@@ -212,36 +214,38 @@ model TaskFlowVersion {
 }
 
 model OutboundTask {
-  id            String            @id @default(uuid())
-  to            String
-  from          String
-  scenario      String
-  scenarioId    String?           @map("scenario_id")
-  scenarioConfig OutboundScenario? @relation(fields: [scenarioId], references: [id], onDelete: SetNull)
-  variables     Json              @default("{}")
-  status        String            @default("pending")
-  scheduledAt   DateTime          @map("scheduled_at")
-  calledAt      DateTime?         @map("called_at")
-  endedAt       DateTime?         @map("ended_at")
-  duration      Int?
-  outcome       String?
-  recordingUrl  String?           @map("recording_url")
-  intentTags    String[]          @default([]) @map("intent_tags")
-  campaignId    String?           @map("campaign_id")
-  campaign      Campaign?         @relation(fields: [campaignId], references: [id], onDelete: SetNull)
-  campaignLeadId String?          @map("campaign_lead_id")
-  campaignLead  CampaignLead?     @relation(fields: [campaignLeadId], references: [id], onDelete: SetNull)
-  attemptCount  Int               @default(0) @map("attempt_count")
-  flowId        String?           @map("flow_id")
-  flow           TaskFlow?        @relation(fields: [flowId], references: [id], onDelete: Restrict)
-  flowVersionId String?           @map("flow_version_id")
-  flowVersion   TaskFlowVersion?  @relation(fields: [flowVersionId], references: [id], onDelete: Restrict)
-  transcripts   TranscriptTurn[]
-  events        CallEvent[]
-  attempts      CallAttempt[]
+  id             String                  @id @default(uuid()) @db.Uuid
+  to             String
+  from           String
+  scenario       String
+  scenarioId     String?                 @map("scenario_id") @db.Uuid
+  scenarioConfig OutboundScenario?       @relation(fields: [scenarioId], references: [id], onDelete: SetNull)
+  variables      Json                    @default("{}")
+  status         String                  @default("pending")
+  scheduledAt    DateTime                @map("scheduled_at")
+  calledAt       DateTime?               @map("called_at")
+  endedAt        DateTime?               @map("ended_at")
+  duration       Int?
+  outcome        String?
+  recordingUrl   String?                 @map("recording_url")
+  intentTags     String[]                @default([]) @map("intent_tags")
+  campaignId     String?                 @map("campaign_id")
+  campaign       Campaign?               @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  campaignLeadId String?                 @map("campaign_lead_id")
+  campaignLead   CampaignLead?           @relation(fields: [campaignLeadId], references: [id], onDelete: SetNull)
+  attemptCount   Int                     @default(0) @map("attempt_count")
+  flowId         String?                 @map("flow_id") @db.Uuid
+  flow           TaskFlow?               @relation(fields: [flowId], references: [id], onDelete: Restrict)
+  flowVersionId  String?                 @map("flow_version_id") @db.Uuid
+  flowVersion    TaskFlowVersion?        @relation(fields: [flowVersionId], references: [id], onDelete: Restrict)
+  transcripts    TranscriptTurn[]
+  events         CallEvent[]
+  attempts       CallAttempt[]
   callAnalyses   CallAnalysis[]
-  createdAt     DateTime          @default(now()) @map("created_at")
-  updatedAt     DateTime          @updatedAt @map("updated_at")
+  handoffTickets HandoffTicket[]
+  contactHistory ContactAttemptHistory[]
+  createdAt      DateTime                @default(now()) @map("created_at")
+  updatedAt      DateTime                @updatedAt @map("updated_at")
 
   @@index([status, scheduledAt])
   @@index([scenarioId])
@@ -252,24 +256,26 @@ model OutboundTask {
 }
 
 model CallAttempt {
-  id             String            @id @default(uuid())
-  taskId         String            @map("task_id")
-  task           OutboundTask      @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  attemptNo      Int               @map("attempt_no")
-  providerCallId String?           @unique @map("provider_call_id")
-  status         String            @default("calling")
-  startedAt      DateTime          @default(now()) @map("started_at")
-  ringingAt      DateTime?         @map("ringing_at")
-  answeredAt     DateTime?         @map("answered_at")
-  endedAt        DateTime?         @map("ended_at")
+  id             String                  @id @default(uuid()) @db.Uuid
+  taskId         String                  @map("task_id") @db.Uuid
+  task           OutboundTask            @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  attemptNo      Int                     @map("attempt_no")
+  providerCallId String?                 @unique @map("provider_call_id")
+  status         String                  @default("calling")
+  startedAt      DateTime                @default(now()) @map("started_at")
+  ringingAt      DateTime?               @map("ringing_at")
+  answeredAt     DateTime?               @map("answered_at")
+  endedAt        DateTime?               @map("ended_at")
   duration       Int?
-  hangupCause    String?           @map("hangup_cause")
-  recordingUrl   String?           @map("recording_url")
+  hangupCause    String?                 @map("hangup_cause")
+  recordingUrl   String?                 @map("recording_url")
   transcripts    TranscriptTurn[]
   events         CallEvent[]
   analysis       CallAnalysis?
-  createdAt      DateTime          @default(now()) @map("created_at")
-  updatedAt      DateTime          @updatedAt @map("updated_at")
+  handoffTickets HandoffTicket[]
+  contactHistory ContactAttemptHistory[]
+  createdAt      DateTime                @default(now()) @map("created_at")
+  updatedAt      DateTime                @updatedAt @map("updated_at")
 
   @@unique([taskId, attemptNo])
   @@index([taskId, createdAt])
@@ -278,22 +284,25 @@ model CallAttempt {
 }
 
 model Campaign {
-  id               String           @id @default(uuid())
+  id               String                  @id @default(uuid())
   name             String
-  description      String           @default("")
+  description      String                  @default("")
   scenario         String
-  scenarioId       String?          @map("scenario_id")
-  flowId           String?          @map("flow_id")
-  status           String           @default("draft")
-  scheduledAt      DateTime?        @map("scheduled_at")
-  concurrencyLimit Int              @default(3) @map("concurrency_limit")
-  retryPolicy      Json             @default("{}") @map("retry_policy")
-  endCondition     Json             @default("{}") @map("end_condition")
+  scenarioId       String?                 @map("scenario_id")
+  flowId           String?                 @map("flow_id")
+  status           String                  @default("draft")
+  scheduledAt      DateTime?               @map("scheduled_at")
+  concurrencyLimit Int                     @default(3) @map("concurrency_limit")
+  retryPolicy      Json                    @default("{}") @map("retry_policy")
+  strategyConfig   Json                    @default("{}") @map("strategy_config")
+  endCondition     Json                    @default("{}") @map("end_condition")
   leads            CampaignLead[]
   importBatches    LeadImportBatch[]
   tasks            OutboundTask[]
-  createdAt        DateTime         @default(now()) @map("created_at")
-  updatedAt        DateTime         @updatedAt @map("updated_at")
+  contactHistory   ContactAttemptHistory[]
+  handoffTickets   HandoffTicket[]
+  createdAt        DateTime                @default(now()) @map("created_at")
+  updatedAt        DateTime                @updatedAt @map("updated_at")
 
   @@index([status, scheduledAt])
   @@index([scenario, createdAt])
@@ -301,36 +310,37 @@ model Campaign {
 }
 
 model LeadImportBatch {
-  id         String         @id @default(uuid())
-  campaignId String        @map("campaign_id")
-  campaign   Campaign      @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-  filename   String?       @map("filename")
-  totalRows  Int           @map("total_rows")
-  validRows  Int           @map("valid_rows")
-  invalidRows Int          @map("invalid_rows")
-  errors     Json          @default("[]")
-  leads      CampaignLead[]
-  createdAt  DateTime      @default(now()) @map("created_at")
+  id          String         @id @default(uuid())
+  campaignId  String         @map("campaign_id")
+  campaign    Campaign       @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  filename    String?        @map("filename")
+  totalRows   Int            @map("total_rows")
+  validRows   Int            @map("valid_rows")
+  invalidRows Int            @map("invalid_rows")
+  errors      Json           @default("[]")
+  leads       CampaignLead[]
+  createdAt   DateTime       @default(now()) @map("created_at")
 
   @@index([campaignId, createdAt])
   @@map("lead_import_batches")
 }
 
 model CampaignLead {
-  id              String          @id @default(uuid())
-  campaignId      String          @map("campaign_id")
-  campaign        Campaign        @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-  batchId         String?         @map("batch_id")
-  batch           LeadImportBatch? @relation(fields: [batchId], references: [id], onDelete: SetNull)
-  rowNumber       Int             @map("row_number")
-  phoneNumber     String          @map("phone_number")
-  displayName     String?         @map("display_name")
-  variables       Json            @default("{}")
-  status          String          @default("imported")
-  validationError String?         @map("validation_error")
+  id              String                  @id @default(uuid())
+  campaignId      String                  @map("campaign_id")
+  campaign        Campaign                @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  batchId         String?                 @map("batch_id")
+  batch           LeadImportBatch?        @relation(fields: [batchId], references: [id], onDelete: SetNull)
+  rowNumber       Int                     @map("row_number")
+  phoneNumber     String                  @map("phone_number")
+  displayName     String?                 @map("display_name")
+  variables       Json                    @default("{}")
+  status          String                  @default("imported")
+  validationError String?                 @map("validation_error")
   tasks           OutboundTask[]
-  createdAt       DateTime        @default(now()) @map("created_at")
-  updatedAt       DateTime        @updatedAt @map("updated_at")
+  contactHistory  ContactAttemptHistory[]
+  createdAt       DateTime                @default(now()) @map("created_at")
+  updatedAt       DateTime                @updatedAt @map("updated_at")
 
   @@unique([campaignId, rowNumber])
   @@index([campaignId, status])
@@ -339,23 +349,24 @@ model CampaignLead {
 }
 
 model CallAnalysis {
-  id              String       @id @default(uuid())
-  callAttemptId   String       @unique @map("call_attempt_id")
-  callAttempt     CallAttempt  @relation(fields: [callAttemptId], references: [id], onDelete: Cascade)
-  taskId          String       @map("task_id")
-  task            OutboundTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  id              String         @id @default(uuid())
+  callAttemptId   String         @unique @map("call_attempt_id") @db.Uuid
+  callAttempt     CallAttempt    @relation(fields: [callAttemptId], references: [id], onDelete: Cascade)
+  taskId          String         @map("task_id") @db.Uuid
+  task            OutboundTask   @relation(fields: [taskId], references: [id], onDelete: Cascade)
   summary         String
   intent          String
   outcome         String?
-  refusalReason   String?      @map("refusal_reason")
-  nextAction      String       @map("next_action")
-  riskLevel       String       @default("low") @map("risk_level")
-  complianceFlags Json         @default("[]") @map("compliance_flags")
-  confidence      Float        @default(0)
-  correctedAt     DateTime?    @map("corrected_at")
-  correctedBy     String?      @map("corrected_by")
-  createdAt       DateTime     @default(now()) @map("created_at")
-  updatedAt       DateTime     @updatedAt @map("updated_at")
+  refusalReason   String?        @map("refusal_reason")
+  nextAction      String         @map("next_action")
+  riskLevel       String         @default("low") @map("risk_level")
+  complianceFlags Json           @default("[]") @map("compliance_flags")
+  confidence      Float          @default(0)
+  correctedAt     DateTime?      @map("corrected_at")
+  correctedBy     String?        @map("corrected_by")
+  handoffTicket   HandoffTicket?
+  createdAt       DateTime       @default(now()) @map("created_at")
+  updatedAt       DateTime       @updatedAt @map("updated_at")
 
   @@index([taskId])
   @@index([riskLevel, createdAt])
@@ -378,29 +389,29 @@ model ComplianceAuditLog {
 }
 
 model TranscriptTurn {
-  id        String       @id @default(uuid())
-  taskId    String       @map("task_id")
-  task      OutboundTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  attemptId String?      @map("attempt_id")
-  attempt   CallAttempt? @relation(fields: [attemptId], references: [id], onDelete: SetNull)
-  role      String
-  content   String
-  timestamp Float
-  emotion   String?
+  id         String       @id @default(uuid()) @db.Uuid
+  taskId     String       @map("task_id") @db.Uuid
+  task       OutboundTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  attemptId  String?      @map("attempt_id") @db.Uuid
+  attempt    CallAttempt? @relation(fields: [attemptId], references: [id], onDelete: SetNull)
+  role       String
+  content    String
+  timestamp  Float
+  emotion    String?
   externalId String?      @map("external_id")
-  createdAt DateTime     @default(now()) @map("created_at")
+  createdAt  DateTime     @default(now()) @map("created_at")
 
+  @@unique([taskId, externalId])
   @@index([taskId, createdAt])
   @@index([attemptId, createdAt])
-  @@unique([taskId, externalId])
   @@map("transcript_turns")
 }
 
 model CallEvent {
-  id        String       @id @default(uuid())
-  taskId    String       @map("task_id")
+  id        String       @id @default(uuid()) @db.Uuid
+  taskId    String       @map("task_id") @db.Uuid
   task      OutboundTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  attemptId String?      @map("attempt_id")
+  attemptId String?      @map("attempt_id") @db.Uuid
   attempt   CallAttempt? @relation(fields: [attemptId], references: [id], onDelete: SetNull)
   type      String
   payload   Json         @default("{}")
@@ -411,22 +422,181 @@ model CallEvent {
   @@map("call_events")
 }
 
+model KnowledgeDocument {
+  id              String    @id @default(uuid())
+  knowledgeBaseId String    @map("knowledge_base_id")
+  filename        String
+  mimeType        String?   @map("mime_type")
+  content         String
+  chunkCount      Int       @default(0) @map("chunk_count")
+  indexStatus     String    @default("uploaded") @map("index_status")
+  indexError      String?   @map("index_error")
+  version         Int       @default(1)
+  metadata        Json      @default("{}")
+  indexedAt       DateTime? @map("indexed_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  @@index([knowledgeBaseId, indexStatus])
+  @@index([knowledgeBaseId, version])
+  @@map("knowledge_documents")
+}
+
+model KnowledgeRetrievalLog {
+  id                String   @id @default(uuid())
+  knowledgeBaseId   String   @map("knowledge_base_id")
+  query             String
+  results           Json     @default("[]")
+  topScore          Float    @default(0) @map("top_score")
+  lowConfidence     Boolean  @default(false) @map("low_confidence")
+  source            String   @default("dashboard")
+  taskId            String?  @map("task_id")
+  scenarioTestRunId String?  @map("scenario_test_run_id")
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  @@index([knowledgeBaseId, createdAt])
+  @@index([lowConfidence, createdAt])
+  @@map("knowledge_retrieval_logs")
+}
+
+model ScenarioTestRun {
+  id              String           @id @default(uuid())
+  scenarioKey     String           @map("scenario_key")
+  flowId          String?          @map("flow_id") @db.Uuid
+  flow            TaskFlow?        @relation(fields: [flowId], references: [id], onDelete: SetNull)
+  flowVersionId   String?          @map("flow_version_id") @db.Uuid
+  flowVersion     TaskFlowVersion? @relation(fields: [flowVersionId], references: [id], onDelete: SetNull)
+  input           String
+  expectedOutcome String?          @map("expected_outcome")
+  modelOutput     String           @map("model_output")
+  nodePath        Json             @default("[]") @map("node_path")
+  knowledgeHits   Json             @default("[]") @map("knowledge_hits")
+  result          String           @default("warning")
+  score           Float            @default(0)
+  riskItems       Json             @default("[]") @map("risk_items")
+  golden          Boolean          @default(false)
+  createdAt       DateTime         @default(now()) @map("created_at")
+
+  @@index([scenarioKey, createdAt])
+  @@index([flowId, golden])
+  @@map("scenario_test_runs")
+}
+
+model IntegrationConnector {
+  id              String        @id @default(uuid())
+  name            String
+  type            String
+  description     String        @default("")
+  endpoint        String
+  method          String        @default("POST")
+  authType        String        @default("none") @map("auth_type")
+  authConfig      Json          @default("{}") @map("auth_config")
+  requestTemplate Json          @default("{}") @map("request_template")
+  responseMapping Json          @default("{}") @map("response_mapping")
+  enabled         Boolean       @default(true)
+  lastTestAt      DateTime?     @map("last_test_at")
+  logs            ToolCallLog[]
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+
+  @@index([type, enabled])
+  @@map("integration_connectors")
+}
+
+model ToolCallLog {
+  id           String                @id @default(uuid())
+  connectorId  String?               @map("connector_id")
+  connector    IntegrationConnector? @relation(fields: [connectorId], references: [id], onDelete: SetNull)
+  sourceType   String?               @map("source_type")
+  sourceId     String?               @map("source_id")
+  taskId       String?               @map("task_id")
+  attemptId    String?               @map("attempt_id")
+  status       String
+  method       String
+  endpoint     String
+  request      Json                  @default("{}")
+  response     Json?
+  durationMs   Int                   @default(0) @map("duration_ms")
+  errorCode    String?               @map("error_code")
+  errorMessage String?               @map("error_message")
+  retryCount   Int                   @default(0) @map("retry_count")
+  createdAt    DateTime              @default(now()) @map("created_at")
+
+  @@index([connectorId, createdAt])
+  @@index([taskId, createdAt])
+  @@index([status, createdAt])
+  @@map("tool_call_logs")
+}
+
+model HandoffTicket {
+  id                String        @id @default(uuid())
+  status            String        @default("pending")
+  taskId            String        @map("task_id") @db.Uuid
+  task              OutboundTask  @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  callAttemptId     String?       @map("call_attempt_id") @db.Uuid
+  callAttempt       CallAttempt?  @relation(fields: [callAttemptId], references: [id], onDelete: SetNull)
+  callAnalysisId    String?       @unique @map("call_analysis_id")
+  callAnalysis      CallAnalysis? @relation(fields: [callAnalysisId], references: [id], onDelete: SetNull)
+  campaignId        String?       @map("campaign_id")
+  campaign          Campaign?     @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  phoneNumber       String        @map("phone_number")
+  customerName      String?       @map("customer_name")
+  summary           String
+  intent            String
+  riskTags          Json          @default("[]") @map("risk_tags")
+  recommendedAction String        @map("recommended_action")
+  disposition       String?
+  notes             String?
+  assignedTo        String?       @map("assigned_to")
+  callbackTaskId    String?       @map("callback_task_id")
+  createdAt         DateTime      @default(now()) @map("created_at")
+  updatedAt         DateTime      @updatedAt @map("updated_at")
+  completedAt       DateTime?     @map("completed_at")
+
+  @@index([status, createdAt])
+  @@index([campaignId, createdAt])
+  @@index([taskId])
+  @@map("handoff_tickets")
+}
+
+model ContactAttemptHistory {
+  id             String        @id @default(uuid())
+  phoneNumber    String        @map("phone_number")
+  phoneHash      String        @map("phone_hash")
+  campaignId     String?       @map("campaign_id")
+  campaign       Campaign?     @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  campaignLeadId String?       @map("campaign_lead_id")
+  campaignLead   CampaignLead? @relation(fields: [campaignLeadId], references: [id], onDelete: SetNull)
+  taskId         String?       @map("task_id") @db.Uuid
+  task           OutboundTask? @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  attemptId      String?       @unique @map("attempt_id") @db.Uuid
+  attempt        CallAttempt?  @relation(fields: [attemptId], references: [id], onDelete: SetNull)
+  status         String?
+  outcome        String?
+  attemptedAt    DateTime      @default(now()) @map("attempted_at")
+  createdAt      DateTime      @default(now()) @map("created_at")
+
+  @@index([phoneHash, attemptedAt])
+  @@index([campaignId, attemptedAt])
+  @@map("contact_attempt_history")
+}
+
 model OutboxEvent {
-  id            String    @id @default(uuid())
-  aggregateType String    @map("aggregate_type")
-  aggregateId   String    @map("aggregate_id")
-  type          String
-  payload       Json      @default("{}")
-  status        String    @default("pending")
-  attempts      Int       @default(0)
-  availableAt   DateTime  @default(now()) @map("available_at")
-  processedAt   DateTime? @map("processed_at")
-  lastError     String?   @map("last_error")
-  lockedAt      DateTime? @map("locked_at")
-  lockedBy      String?   @map("locked_by")
-  deduplicationKey String? @unique @map("deduplication_key")
-  createdAt     DateTime  @default(now()) @map("created_at")
-  updatedAt     DateTime  @updatedAt @map("updated_at")
+  id               String    @id @default(uuid()) @db.Uuid
+  aggregateType    String    @map("aggregate_type")
+  aggregateId      String    @map("aggregate_id")
+  type             String
+  payload          Json      @default("{}")
+  status           String    @default("pending")
+  attempts         Int       @default(0)
+  availableAt      DateTime  @default(now()) @map("available_at")
+  processedAt      DateTime? @map("processed_at")
+  lastError        String?   @map("last_error")
+  lockedAt         DateTime? @map("locked_at")
+  lockedBy         String?   @map("locked_by")
+  deduplicationKey String?   @unique @map("deduplication_key")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
 
   @@index([status, availableAt])
   @@index([lockedAt])
@@ -435,21 +605,21 @@ model OutboxEvent {
 }
 
 model User {
-  id            String        @id @default(uuid())
-  email         String        @unique
-  passwordHash  String        @map("password_hash")
-  name          String
-  status        String        @default("active")
-  createdAt     DateTime      @default(now()) @map("created_at")
-  updatedAt     DateTime      @updatedAt @map("updated_at")
-  roles         UserRole[]
-  sessions      UserSession[]
+  id           String        @id @default(uuid()) @db.Uuid
+  email        String        @unique
+  passwordHash String        @map("password_hash")
+  name         String
+  status       String        @default("active")
+  createdAt    DateTime      @default(now()) @map("created_at")
+  updatedAt    DateTime      @updatedAt @map("updated_at")
+  roles        UserRole[]
+  sessions     UserSession[]
 
   @@map("users")
 }
 
 model Role {
-  id          String           @id @default(uuid())
+  id          String           @id @default(uuid()) @db.Uuid
   name        String           @unique
   description String           @default("")
   permissions RolePermission[]
@@ -459,7 +629,7 @@ model Role {
 }
 
 model Permission {
-  id          String           @id @default(uuid())
+  id          String           @id @default(uuid()) @db.Uuid
   code        String           @unique
   description String           @default("")
   roles       RolePermission[]
@@ -468,8 +638,8 @@ model Permission {
 }
 
 model RolePermission {
-  roleId       String     @map("role_id")
-  permissionId String     @map("permission_id")
+  roleId       String     @map("role_id") @db.Uuid
+  permissionId String     @map("permission_id") @db.Uuid
   role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
   permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
 
@@ -478,8 +648,8 @@ model RolePermission {
 }
 
 model UserRole {
-  userId String @map("user_id")
-  roleId String @map("role_id")
+  userId String @map("user_id") @db.Uuid
+  roleId String @map("role_id") @db.Uuid
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
   role   Role   @relation(fields: [roleId], references: [id], onDelete: Cascade)
 
@@ -488,8 +658,8 @@ model UserRole {
 }
 
 model UserSession {
-  id               String   @id @default(uuid())
-  userId           String   @map("user_id")
+  id               String   @id @default(uuid()) @db.Uuid
+  userId           String   @map("user_id") @db.Uuid
   refreshTokenHash String   @map("refresh_token_hash")
   expiresAt        DateTime @map("expires_at")
   createdAt        DateTime @default(now()) @map("created_at")

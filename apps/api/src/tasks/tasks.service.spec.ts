@@ -421,6 +421,12 @@ describe('TasksService', () => {
           return args;
         },
       },
+      contactAttemptHistory: {
+        upsert: async (args: unknown) => {
+          calls.push(['contactAttemptHistory.upsert', args]);
+          return args;
+        },
+      },
       $transaction: async (fn: (tx: unknown) => Promise<void>) => fn(prisma),
     };
     const freeswitch = {
@@ -438,6 +444,8 @@ describe('TasksService', () => {
     assert.equal(calls[2][1].data.status, TaskStatus.COMPLETED);
     assert.equal(calls[3][1].data.type, 'call.hung_up');
     assert.equal(calls[3][1].data.payload.channelId, 'provider-1');
+    assert.equal(calls[4][0], 'contactAttemptHistory.upsert');
+    assert.deepEqual(calls[4][1].where, { attemptId: 'attempt-1' });
   });
 
   it('records CHANNEL_ANSWER provider events and marks the attempt in call', async () => {
@@ -502,6 +510,31 @@ describe('TasksService', () => {
     assert.equal(calls[1][1].data.hangupCause, 'NO_ANSWER');
     assert.deepEqual(calls[1][1].data.endedAt, new Date(occurredAt));
     assert.equal(calls[2][1].data.payload.hangupCause, 'NO_ANSWER');
+  });
+
+  it('records provider hangup history idempotently by attempt id', async () => {
+    const calls: Call[] = [];
+    const occurredAt = '2026-07-02T00:02:00.000Z';
+    const prisma = providerEventPrisma(calls, {
+      task: taskRecord({ status: TaskStatus.CALLING, calledAt: null }),
+      attempt: attemptRecord({ status: TaskStatus.CALLING, answeredAt: null }),
+    });
+    const service = new TasksService(prisma as never, {} as never, scenarios as never, {} as never);
+
+    await service.recordProviderCallEvent({
+      provider: 'freeswitch',
+      eventType: 'CHANNEL_HANGUP_COMPLETE',
+      taskId: 'task-1',
+      providerCallId: 'provider-1',
+      occurredAt,
+      hangupCause: 'NO_ANSWER',
+    });
+
+    const historyCall = calls.find(([name]) => name === 'contactAttemptHistory.upsert');
+    assert.ok(historyCall);
+    assert.deepEqual(historyCall[1].where, { attemptId: 'attempt-1' });
+    assert.equal(historyCall[1].create.status, TaskStatus.NO_ANSWER);
+    assert.equal(calls.some(([name]) => name === 'contactAttemptHistory.create'), false);
   });
 
   it('records RECORD_STOP events and derives a public recording URL from configured paths', async () => {
@@ -600,6 +633,16 @@ function providerEventPrisma(
     callEvent: {
       create: async (args: any) => {
         calls.push(['callEvent.create', args]);
+        return args;
+      },
+    },
+    contactAttemptHistory: {
+      create: async (args: any) => {
+        calls.push(['contactAttemptHistory.create', args]);
+        return args;
+      },
+      upsert: async (args: any) => {
+        calls.push(['contactAttemptHistory.upsert', args]);
         return args;
       },
     },

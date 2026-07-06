@@ -1,9 +1,17 @@
 import type { HttpAdapter } from '../types';
+import type {
+  KnowledgeDocument,
+  KnowledgeTestRetrieveDto,
+  KnowledgeTestRetrieveResult,
+} from '@ai-call/shared';
 
 export interface KnowledgeBaseSummary {
   id: string;
   name: string;
   docCount: number;
+  indexedCount?: number;
+  failedCount?: number;
+  staleCount?: number;
 }
 
 export interface KnowledgeBaseDoc {
@@ -16,6 +24,7 @@ export interface KnowledgeBaseDetail {
   id: string;
   name: string;
   docs: KnowledgeBaseDoc[];
+  documents?: KnowledgeDocument[];
 }
 
 export interface KnowledgeRetrieveResult {
@@ -37,6 +46,11 @@ export function knowledgeEndpoints(http: HttpAdapter) {
       http.request<KnowledgeRetrieveResult>(
         `/knowledge-base/${id}/retrieve`,
         { method: 'POST', body: { query } },
+      ),
+    testRetrieve: (id: string, dto: KnowledgeTestRetrieveDto) =>
+      http.request<KnowledgeTestRetrieveResult>(
+        `/knowledge-base/${id}/test-retrieve`,
+        { method: 'POST', body: dto },
       ),
   };
 }

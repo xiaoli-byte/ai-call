@@ -19,11 +19,13 @@ const NAV_ITEMS_PRIMARY = [
   { href: '/task-flows', label: '外呼流程', icon: 'flow' },
   { href: '/analytics', label: '效果分析', icon: 'chart' },
   { href: '/quality', label: '通话质检', icon: 'shield' },
+  { href: '/handoffs', label: '人工承接', icon: 'handoff' },
 ];
 
 const NAV_ITEMS_SECONDARY = [
-  { href: '/scenarios', label: '场景配置', icon: 'scenario' },
+  { href: '/scenarios', label: '场景测试', icon: 'scenario' },
   { href: '/compliance', label: '合规中心', icon: 'check' },
+  { href: '/integrations', label: '集成中心', icon: 'integration' },
   { href: '/voice-clones', label: '音色克隆', icon: 'mic' },
   { href: '/global-config', label: '全局配置', icon: 'key' },
   { href: '/knowledge', label: '知识库', icon: 'knowledge' },
@@ -103,6 +105,27 @@ function NavIcon({ name }: { name: string }) {
           <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
           <path d="M14 2v6h6" />
           <path d="M9 13h6M9 17h6" />
+        </svg>
+      );
+    case 'handoff':
+      return (
+        <svg {...props}>
+          <path d="M16 11a4 4 0 1 0-8 0" />
+          <path d="M4 21a8 8 0 0 1 16 0" />
+          <path d="M17 8h3a2 2 0 0 1 2 2v2" />
+          <path d="M22 12l-3-3" />
+          <path d="M22 12l-3 3" />
+        </svg>
+      );
+    case 'integration':
+      return (
+        <svg {...props}>
+          <path d="M6 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6z" />
+          <path d="M18 22a3 3 0 1 0 0-6 3 3 0 0 0 0 6z" />
+          <path d="M6 8v3a3 3 0 0 0 3 3h6a3 3 0 0 1 3 3v-1" />
+          <path d="M15 5h3a3 3 0 0 1 3 3v2" />
+          <path d="M21 10l-3-3" />
+          <path d="M21 10l-3 3" />
         </svg>
       );
     case 'knowledge':
@@ -229,8 +252,10 @@ function getBreadcrumb(pathname: string) {
   if (pathname.startsWith('/task-flows')) return { group: '工作台', current: '外呼流程' };
   if (pathname.startsWith('/analytics')) return { group: '工作台', current: '效果分析' };
   if (pathname.startsWith('/quality')) return { group: '工作台', current: '通话质检' };
-  if (pathname.startsWith('/scenarios')) return { group: '配置', current: '场景配置' };
+  if (pathname.startsWith('/handoffs')) return { group: '工作台', current: '人工承接' };
+  if (pathname.startsWith('/scenarios')) return { group: '配置', current: '场景测试' };
   if (pathname.startsWith('/compliance')) return { group: '配置', current: '合规中心' };
+  if (pathname.startsWith('/integrations')) return { group: '配置', current: '集成中心' };
   if (pathname.startsWith('/voice-clones')) return { group: '配置', current: '音色克隆' };
   if (pathname.startsWith('/global-config')) return { group: '配置', current: '全局配置' };
   if (pathname.startsWith('/knowledge')) return { group: '配置', current: '知识库' };

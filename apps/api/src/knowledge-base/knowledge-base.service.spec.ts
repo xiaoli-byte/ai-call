@@ -22,6 +22,44 @@ afterEach(() => {
 });
 
 describe('KnowledgeBaseService', () => {
+  it('stores uploaded documents with index status and returns citations from a retrieval test', async () => {
+    const documents: any[] = [];
+    const prisma = {
+      knowledgeDocument: {
+        create: async ({ data }: any) => {
+          const record = {
+            id: 'kdoc-1',
+            ...data,
+            createdAt: new Date('2026-07-07T08:00:00.000Z'),
+            updatedAt: new Date('2026-07-07T08:00:00.000Z'),
+            indexedAt: new Date('2026-07-07T08:00:00.000Z'),
+          };
+          documents.push(record);
+          return record;
+        },
+        findMany: async () => documents,
+      },
+    };
+    const service = new KnowledgeBaseService(prisma as any);
+
+    const uploaded = await service.upload(
+      'kb-demo',
+      '延期政策.md',
+      Buffer.from('延期还款最长 90 天，需提供失业或生病证明。'),
+    );
+    const tested = await service.testRetrieve('kb-demo', {
+      query: '延期还款需要什么材料',
+      topK: 3,
+    });
+
+    assert.ok(uploaded.document);
+    assert.equal(uploaded.document.indexStatus, 'indexed');
+    assert.equal(uploaded.document.chunkCount > 0, true);
+    assert.equal(tested.results[0].source, '延期政策.md');
+    assert.equal(tested.lowConfidence, false);
+    assert.match(tested.answer, /延期/);
+  });
+
   it('uses built-in mock data when external knowledge service is not configured', async () => {
     delete process.env.KNOWLEDGE_SERVICE_BASE_URL;
     const service = new KnowledgeBaseService();

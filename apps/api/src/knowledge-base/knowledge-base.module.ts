@@ -6,5 +6,6 @@ import { ServiceAuthGuard } from '../common/service-auth.guard.js';
 @Module({
   controllers: [KnowledgeBaseController],
   providers: [KnowledgeBaseService, ServiceAuthGuard],
+  exports: [KnowledgeBaseService],
 })
 export class KnowledgeBaseModule {}

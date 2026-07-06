@@ -44,8 +44,8 @@ CREATE TABLE "campaign_leads" (
 
 CREATE TABLE "call_analyses" (
   "id" TEXT NOT NULL,
-  "call_attempt_id" TEXT NOT NULL,
-  "task_id" TEXT NOT NULL,
+  "call_attempt_id" UUID NOT NULL,
+  "task_id" UUID NOT NULL,
   "summary" TEXT NOT NULL,
   "intent" TEXT NOT NULL,
   "outcome" TEXT,

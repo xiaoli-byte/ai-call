@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { ArrowLeft, BarChart3, Download, PhoneCall, Users } from 'lucide-react';
+import { ArrowLeft, BarChart3, Download, PhoneCall, ShieldAlert, Users } from 'lucide-react';
 import { apiServer } from '@/lib/api/server';
 import { cn } from '@/lib/utils';
 import { StatusBadge, type StatusTone } from '@/components/outbound/status-badge';
@@ -50,8 +50,10 @@ export default async function CampaignDetailPage({
   params: { id: string };
 }) {
   let campaign: Awaited<ReturnType<typeof apiServer.campaigns.get>>;
+  let strategy: Awaited<ReturnType<typeof apiServer.campaigns.strategySimulation>> | null = null;
   try {
     campaign = await apiServer.campaigns.get(params.id);
+    strategy = await apiServer.campaigns.strategySimulation(params.id).catch(() => null);
   } catch {
     notFound();
   }
@@ -106,6 +108,28 @@ export default async function CampaignDetailPage({
             <p className={styles.positive}>转化率 {campaign.stats.conversionRate}%</p>
           </article>
         </section>
+
+        {strategy ? (
+          <section className={styles.tableShell} style={{ padding: 16, marginTop: 14 }}>
+            <div className={styles.statLabel}>
+              <span>策略模拟</span>
+              <ShieldAlert size={16} />
+            </div>
+            <div className="tag-list" style={{ marginTop: 10 }}>
+              <span className="badge badge-success">可拨 {number(strategy.callableLeads)}</span>
+              <span className="badge badge-warning">拦截 {number(strategy.blockedLeads)}</span>
+              <span className="badge badge-neutral">预计任务 {number(strategy.estimatedTasks)}</span>
+            </div>
+            <div className="tag-list" style={{ marginTop: 10 }}>
+              {strategy.blockReasons.map((item) => (
+                <span key={item.reason} className="badge badge-neutral">
+                  {item.reason}: {item.count}
+                </span>
+              ))}
+              {strategy.blockReasons.length === 0 ? <span className="badge badge-success">暂无策略拦截</span> : null}
+            </div>
+          </section>
+        ) : null}
 
         <section className={styles.toolbar}>
           <div className={styles.segments}>

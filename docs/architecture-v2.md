@@ -43,6 +43,7 @@ NestJS 是控制面和业务事实来源；Voice Agent 是实时执行面；FunA
 - 设置 `SERVICE_API_TOKEN` 后，内部上下文和状态上报必须携带 `X-Service-Token`。
 - 设置 `VOICE_AGENT_WS_TOKEN` 后，语音 WebSocket 必须携带 token。
 - `CORS_ORIGINS` 使用逗号分隔的明确来源；生产环境不要使用 `*`。
+- `INTEGRATION_CONNECTOR_ALLOWLIST` 使用逗号分隔的连接器目标域名；集成中心只允许 `mock://` 或白名单内的 HTTPS 端点。
 
 ## Database migration
 

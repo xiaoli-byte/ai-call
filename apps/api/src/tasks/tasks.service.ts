@@ -6,7 +6,7 @@ import {
   NotFoundException,
   Optional,
 } from '@nestjs/common';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   CallOutcome,
   SCENARIO_CONFIGS,
@@ -38,6 +38,18 @@ type ResolvedContext = {
   taskId: string;
   attemptId?: string;
   providerCallId?: string;
+};
+
+type ContactAttemptHistoryData = {
+  phoneNumber: string;
+  phoneHash: string;
+  campaignId?: string | null;
+  campaignLeadId?: string | null;
+  taskId?: string;
+  attemptId?: string;
+  status?: string;
+  outcome?: string | null;
+  attemptedAt: Date;
 };
 
 const TERMINAL_STATUSES = new Set<TaskStatus>([
@@ -266,7 +278,15 @@ export class TasksService {
     await this.prisma.$transaction(async (tx) => {
       const currentTask = await tx.outboundTask.findUnique({
         where: { id: context.taskId },
-        select: { status: true, calledAt: true, endedAt: true },
+        select: {
+          status: true,
+          calledAt: true,
+          endedAt: true,
+          to: true,
+          campaignId: true,
+          campaignLeadId: true,
+          outcome: true,
+        },
       });
       if (!currentTask) throw new NotFoundException(`Task ${context.taskId} not found`);
       const currentAttempt = context.attemptId
@@ -343,6 +363,19 @@ export class TasksService {
           }),
         },
       });
+      if (isHangupProviderEvent(eventType)) {
+        await recordContactAttemptHistory(tx, {
+          phoneNumber: currentTask.to,
+          phoneHash: hashPhone(currentTask.to),
+          campaignId: currentTask.campaignId,
+          campaignLeadId: currentTask.campaignLeadId,
+          taskId: context.taskId,
+          attemptId: context.attemptId,
+          status: String(taskUpdate.status ?? currentTask.status),
+          outcome: hangupCause ?? currentTask.outcome,
+          attemptedAt: occurredAt,
+        });
+      }
     });
     return this.get(context.taskId);
   }
@@ -459,6 +492,17 @@ export class TasksService {
             hangupError,
           }),
         },
+      });
+      await recordContactAttemptHistory(tx, {
+        phoneNumber: current.to,
+        phoneHash: hashPhone(current.to),
+        campaignId: current.campaignId,
+        campaignLeadId: current.campaignLeadId,
+        taskId: context.taskId,
+        attemptId: context.attemptId,
+        status: TaskStatus.COMPLETED,
+        outcome: body.outcome,
+        attemptedAt: now,
       });
     });
     return this.get(context.taskId);
@@ -943,6 +987,33 @@ function isRecordingProviderEvent(eventType: string): boolean {
     eventType === 'RECORDING_AVAILABLE';
 }
 
+async function recordContactAttemptHistory(tx: unknown, data: ContactAttemptHistoryData): Promise<void> {
+  const history = (tx as any).contactAttemptHistory;
+  if (!history) return;
+
+  if (data.attemptId && history.upsert) {
+    await history.upsert({
+      where: { attemptId: data.attemptId },
+      update: {
+        phoneNumber: data.phoneNumber,
+        phoneHash: data.phoneHash,
+        campaignId: data.campaignId,
+        campaignLeadId: data.campaignLeadId,
+        taskId: data.taskId,
+        status: data.status,
+        outcome: data.outcome,
+        attemptedAt: data.attemptedAt,
+      },
+      create: data,
+    });
+    return;
+  }
+
+  if (history.create) {
+    await history.create({ data });
+  }
+}
+
 function deriveTerminalStatus(
   hangupCause: string | undefined,
   task: { status: string; calledAt?: Date | null },
@@ -988,6 +1059,10 @@ function rawString(raw: Record<string, unknown> | undefined, keys: string[]): st
 
 function cleanString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+function hashPhone(phoneNumber: string): string {
+  return createHash('sha256').update(phoneNumber.trim()).digest('hex');
 }
 
 function isPublicUrl(value: string): boolean {

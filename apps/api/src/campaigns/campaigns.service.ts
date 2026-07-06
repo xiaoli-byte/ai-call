@@ -10,6 +10,7 @@ import {
   type CampaignListItem,
   type CampaignListPage,
   type CampaignRetryPolicy,
+  type CampaignStrategySimulation,
   type CampaignStats,
   type CampaignStatus,
   type CreateCampaignDto,
@@ -18,6 +19,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service.js';
 import { TasksService } from '../tasks/tasks.service.js';
 import { toPrismaJson } from '../tasks/task-payloads.js';
+import { GlobalConfigService } from '../global-config/global-config.service.js';
 
 const DEFAULT_RETRY_POLICY: CampaignRetryPolicy = {
   maxAttempts: 2,
@@ -30,6 +32,7 @@ export class CampaignsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly tasksService: TasksService,
+    private readonly globalConfig?: GlobalConfigService,
   ) {}
 
   async create(dto: CreateCampaignDto): Promise<CampaignDetail> {
@@ -181,6 +184,77 @@ export class CampaignsService {
     return this.get(id);
   }
 
+  async simulateStrategy(id: string): Promise<CampaignStrategySimulation> {
+    const campaign = await this.prisma.campaign.findUnique({
+      where: { id },
+      include: { leads: true },
+    });
+    if (!campaign) throw new NotFoundException(`Campaign ${id} not found`);
+    const config = this.globalConfig ? await this.globalConfig.get() : undefined;
+    const outboundRules = config?.outboundRules ?? {
+      blockedNumbers: [],
+      globalWhitelist: [],
+      dailyCallLimitPerCallee: 3,
+      maxAttemptsPerNumber: 3,
+    };
+    const leads = (campaign.leads ?? []).filter((lead: any) => lead.status !== 'invalid');
+    const phoneNumbers = [...new Set(leads.map((lead: any) => lead.phoneNumber))];
+    const history = await (this.prisma as any).contactAttemptHistory.findMany?.({
+      where: { phoneNumber: { in: phoneNumbers } },
+      orderBy: { attemptedAt: 'desc' },
+    }) ?? [];
+    const blockedSet = new Set((outboundRules.blockedNumbers ?? []).map((item: any) => item.phoneNumber));
+    const whitelistSet = new Set((outboundRules.globalWhitelist ?? []).map((item: any) => item.phoneNumber));
+    const retryPolicy = normalizeRetryPolicy((campaign as any).retryPolicy);
+    const buckets = new Map<string, Set<string>>();
+    const seenInCampaign = new Set<string>();
+    let callableLeads = 0;
+
+    for (const lead of leads as any[]) {
+      const phone = lead.phoneNumber;
+      if (seenInCampaign.has(phone)) {
+        addBucket(buckets, 'duplicate_in_campaign', phone);
+        continue;
+      }
+      seenInCampaign.add(phone);
+      if (blockedSet.has(phone) && !whitelistSet.has(phone)) {
+        addBucket(buckets, 'blocked_number', phone);
+        continue;
+      }
+      const phoneHistory = history.filter((item: any) => item.phoneNumber === phone);
+      const todayCount = phoneHistory.filter((item: any) => isSameUtcDay(item.attemptedAt, new Date())).length;
+      if (todayCount >= Number(outboundRules.dailyCallLimitPerCallee ?? 3)) {
+        addBucket(buckets, 'daily_limit', phone);
+        continue;
+      }
+      if (phoneHistory.length >= Number(outboundRules.maxAttemptsPerNumber ?? retryPolicy.maxAttempts)) {
+        addBucket(buckets, 'max_attempts_per_number', phone);
+        continue;
+      }
+      if (hitsFailureReasonLimit(phoneHistory, retryPolicy)) {
+        addBucket(buckets, 'failure_reason_retry_limit', phone);
+        continue;
+      }
+      callableLeads += 1;
+    }
+
+    const blockReasons = [...buckets.entries()].map(([reason, phones]) => ({
+      reason: reason as CampaignStrategySimulation['blockReasons'][number]['reason'],
+      count: phones.size,
+      phoneNumbers: [...phones],
+    }));
+    const blockedLeads = blockReasons.reduce((sum, item) => sum + item.count, 0);
+    return {
+      campaignId: id,
+      totalLeads: leads.length,
+      callableLeads,
+      blockedLeads,
+      estimatedTasks: callableLeads,
+      blockReasons,
+      generatedAt: new Date().toISOString(),
+    };
+  }
+
   private readonly listInclude = {
     leads: { select: { id: true, status: true } },
     tasks: {
@@ -310,7 +384,41 @@ function normalizeRetryPolicy(value: unknown): CampaignRetryPolicy {
     retryOn: Array.isArray(input.retryOn) && input.retryOn.length > 0
       ? input.retryOn.map(String)
       : DEFAULT_RETRY_POLICY.retryOn,
+    failureReasonRules: input.failureReasonRules && typeof input.failureReasonRules === 'object'
+      ? Object.fromEntries(
+          Object.entries(input.failureReasonRules).map(([key, rule]) => [
+            key,
+            {
+              maxAttempts: Math.max(1, Math.trunc(Number((rule as any)?.maxAttempts ?? 1))),
+              intervalMinutes: (rule as any)?.intervalMinutes === undefined
+                ? undefined
+                : Math.max(1, Math.trunc(Number((rule as any).intervalMinutes))),
+            },
+          ]),
+        )
+      : undefined,
   };
+}
+
+function addBucket(buckets: Map<string, Set<string>>, reason: string, phone: string): void {
+  const set = buckets.get(reason) ?? new Set<string>();
+  set.add(phone);
+  buckets.set(reason, set);
+}
+
+function isSameUtcDay(left: unknown, right: Date): boolean {
+  const date = left instanceof Date ? left : new Date(String(left));
+  return date.getUTCFullYear() === right.getUTCFullYear() &&
+    date.getUTCMonth() === right.getUTCMonth() &&
+    date.getUTCDate() === right.getUTCDate();
+}
+
+function hitsFailureReasonLimit(history: any[], policy: CampaignRetryPolicy): boolean {
+  const rules = policy.failureReasonRules ?? {};
+  return Object.entries(rules).some(([reason, rule]) => {
+    const count = history.filter((item) => String(item.outcome ?? item.status ?? '').toUpperCase() === reason.toUpperCase()).length;
+    return count >= rule.maxAttempts;
+  });
 }
 
 function buildStats(leads: any[], tasks: any[]): CampaignStats {
