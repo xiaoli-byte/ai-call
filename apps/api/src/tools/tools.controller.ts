@@ -1,6 +1,7 @@
-import { Body, Controller, Post } from '@nestjs/common';
+import { Body, Controller, Post, UseGuards } from '@nestjs/common';
 import { ToolsService } from './tools.service.js';
 import { Public } from '../auth/decorators/public.decorator.js';
+import { ServiceAuthGuard } from '../common/service-auth.guard.js';
 
 /**
  * 业务工具 Controller - Voice Agent Function Calling 的后端实现
@@ -19,6 +20,7 @@ import { Public } from '../auth/decorators/public.decorator.js';
  */
 @Controller('tools')
 @Public()
+@UseGuards(ServiceAuthGuard)
 export class ToolsController {
   constructor(private readonly toolsService: ToolsService) {}
 

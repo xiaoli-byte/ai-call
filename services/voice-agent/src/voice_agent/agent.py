@@ -673,7 +673,7 @@ class _FlowExecutorAdapter:
             if callbacks:
                 await callbacks.on_action(action_type, dict(config))
             return True
-        if action_type not in {"sms", "api"}:
+        if action_type not in {"sms", "api", "crm"}:
             return False
         return await self._agent._tasks.execute_action(
             call_id, action_type, config, idempotency_key

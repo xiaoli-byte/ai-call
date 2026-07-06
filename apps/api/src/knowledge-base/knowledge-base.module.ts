@@ -1,9 +1,10 @@
 import { Module } from '@nestjs/common';
 import { KnowledgeBaseController } from './knowledge-base.controller.js';
 import { KnowledgeBaseService } from './knowledge-base.service.js';
+import { ServiceAuthGuard } from '../common/service-auth.guard.js';
 
 @Module({
   controllers: [KnowledgeBaseController],
-  providers: [KnowledgeBaseService],
+  providers: [KnowledgeBaseService, ServiceAuthGuard],
 })
 export class KnowledgeBaseModule {}

@@ -4,7 +4,8 @@ import { NestFactory } from '@nestjs/core';
 import { OutboxWorkerModule } from './outbox-worker.module.js';
 
 config({ path: resolve(process.cwd(), '..', '..', '.env') });
-process.env.OUTBOX_WORKER_ENABLED = 'true';
+process.env.OUTBOX_WORKER_ENABLED ??= 'true';
+process.env.TASK_SCHEDULER_ENABLED ??= 'true';
 
 async function bootstrap() {
   await NestFactory.createApplicationContext(OutboxWorkerModule, {

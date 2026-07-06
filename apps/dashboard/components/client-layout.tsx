@@ -14,12 +14,16 @@ import styles from './client-layout.module.scss';
 
 const NAV_ITEMS_PRIMARY = [
   { href: '/', label: '概览', icon: 'home' },
+  { href: '/campaigns', label: '外呼活动', icon: 'campaign' },
   { href: '/tasks', label: '外呼任务', icon: 'phone' },
   { href: '/task-flows', label: '外呼流程', icon: 'flow' },
+  { href: '/analytics', label: '效果分析', icon: 'chart' },
+  { href: '/quality', label: '通话质检', icon: 'shield' },
 ];
 
 const NAV_ITEMS_SECONDARY = [
   { href: '/scenarios', label: '场景配置', icon: 'scenario' },
+  { href: '/compliance', label: '合规中心', icon: 'check' },
   { href: '/voice-clones', label: '音色克隆', icon: 'mic' },
   { href: '/global-config', label: '全局配置', icon: 'key' },
   { href: '/knowledge', label: '知识库', icon: 'knowledge' },
@@ -72,6 +76,25 @@ function NavIcon({ name }: { name: string }) {
           <rect x="9" y="9" width="6" height="6" rx="1" />
           <path d="M6 9v3a3 3 0 0 0 3 3" />
           <path d="M15 12h-3a3 3 0 0 0-3 3" />
+        </svg>
+      );
+    case 'campaign':
+      return (
+        <svg {...props}>
+          <path d="M4 5h16" />
+          <path d="M4 12h10" />
+          <path d="M4 19h7" />
+          <path d="M17 15l4 4" />
+          <circle cx="16" cy="12" r="3" />
+        </svg>
+      );
+    case 'chart':
+      return (
+        <svg {...props}>
+          <path d="M3 3v18h18" />
+          <rect x="7" y="12" width="3" height="5" rx="1" />
+          <rect x="12" y="8" width="3" height="9" rx="1" />
+          <rect x="17" y="5" width="3" height="12" rx="1" />
         </svg>
       );
     case 'scenario':
@@ -201,9 +224,13 @@ function NavIcon({ name }: { name: string }) {
 
 function getBreadcrumb(pathname: string) {
   if (pathname === '/') return { group: '工作台', current: '概览' };
+  if (pathname.startsWith('/campaigns')) return { group: '工作台', current: '外呼活动' };
   if (pathname.startsWith('/tasks')) return { group: '工作台', current: '外呼任务' };
   if (pathname.startsWith('/task-flows')) return { group: '工作台', current: '外呼流程' };
+  if (pathname.startsWith('/analytics')) return { group: '工作台', current: '效果分析' };
+  if (pathname.startsWith('/quality')) return { group: '工作台', current: '通话质检' };
   if (pathname.startsWith('/scenarios')) return { group: '配置', current: '场景配置' };
+  if (pathname.startsWith('/compliance')) return { group: '配置', current: '合规中心' };
   if (pathname.startsWith('/voice-clones')) return { group: '配置', current: '音色克隆' };
   if (pathname.startsWith('/global-config')) return { group: '配置', current: '全局配置' };
   if (pathname.startsWith('/knowledge')) return { group: '配置', current: '知识库' };

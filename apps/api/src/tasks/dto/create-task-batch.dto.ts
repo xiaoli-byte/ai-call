@@ -31,6 +31,10 @@ export class CreateTaskBatchItemDto {
   @IsOptional()
   @IsEnum(TaskPriority)
   priority?: TaskPriority;
+
+  @IsOptional()
+  @IsUUID()
+  campaignLeadId?: string;
 }
 
 export class CreateTaskBatchDto {
@@ -56,6 +60,10 @@ export class CreateTaskBatchDto {
   @IsOptional()
   @IsUUID()
   flowId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  campaignId?: string;
 
   @IsArray()
   @ArrayMinSize(1)

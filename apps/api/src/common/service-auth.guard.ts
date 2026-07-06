@@ -10,7 +10,12 @@ import { timingSafeEqual } from 'node:crypto';
 export class ServiceAuthGuard implements CanActivate {
   canActivate(context: ExecutionContext): boolean {
     const expected = process.env.SERVICE_API_TOKEN;
-    if (!expected) return true;
+    if (!expected) {
+      if (process.env.NODE_ENV === 'production') {
+        throw new UnauthorizedException('Service token is not configured');
+      }
+      return true;
+    }
     const request = context.switchToHttp().getRequest<{
       headers: Record<string, string | string[] | undefined>;
     }>();

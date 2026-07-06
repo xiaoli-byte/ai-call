@@ -6,6 +6,7 @@ import {
   Post,
   Query,
   UploadedFile,
+  UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
@@ -13,6 +14,7 @@ import { PERMISSIONS } from '@ai-call/shared';
 import { KnowledgeBaseService } from './knowledge-base.service.js';
 import { Permissions } from '../auth/decorators/permissions.decorator.js';
 import { Public } from '../auth/decorators/public.decorator.js';
+import { ServiceAuthGuard } from '../common/service-auth.guard.js';
 
 /**
  * 知识库 Controller
@@ -40,6 +42,8 @@ export class KnowledgeBaseController {
 
   @Post(':id/retrieve')
   @Public()
+  @Permissions()
+  @UseGuards(ServiceAuthGuard)
   async retrieve(
     @Param('id') id: string,
     @Body() body: { query: string; topK?: number },

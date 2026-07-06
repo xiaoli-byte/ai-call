@@ -217,6 +217,14 @@ export class GlobalConfigService {
           : DEFAULT_OUTBOUND_RULES.dailyCallLimitPerCallee,
       blockedNumbers: this.normalizeNumberList(rules.blockedNumbers, actor),
       globalWhitelist: this.normalizeNumberList(rules.globalWhitelist, actor),
+      aiDisclosureTemplate:
+        typeof rules.aiDisclosureTemplate === 'string' && rules.aiDisclosureTemplate.trim()
+          ? rules.aiDisclosureTemplate.trim()
+          : DEFAULT_OUTBOUND_RULES.aiDisclosureTemplate,
+      maxAttemptsPerNumber:
+        typeof rules.maxAttemptsPerNumber === 'number'
+          ? Math.max(1, Math.min(99, Math.trunc(rules.maxAttemptsPerNumber)))
+          : DEFAULT_OUTBOUND_RULES.maxAttemptsPerNumber,
     };
   }
 

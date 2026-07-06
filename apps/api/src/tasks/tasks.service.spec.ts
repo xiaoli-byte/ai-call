@@ -173,6 +173,48 @@ describe('TasksService', () => {
     assert.equal(calls[3][1].data.type, 'call.dispatch_requested');
   });
 
+  it('enqueueAction accepts CRM actions into the outbox', async () => {
+    const calls: Call[] = [];
+    const prisma = {
+      outboundTask: {
+        findUnique: async () => ({ id: 'task-1' }),
+        findUniqueOrThrow: async () => ({ to: '+1001' }),
+      },
+      outboxEvent: {
+        findUnique: async () => null,
+        create: async (args: unknown) => {
+          calls.push(['outboxEvent.create', args]);
+          return { id: 'event-1' };
+        },
+      },
+      callEvent: {
+        create: async (args: unknown) => {
+          calls.push(['callEvent.create', args]);
+          return args;
+        },
+      },
+      $transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn(prisma),
+    };
+    const service = new TasksService(prisma as never, {} as never, scenarios as never, {} as never);
+
+    const result = await service.enqueueAction(
+      'task-1',
+      'crm',
+      { action: 'create_after_sale_ticket', priority: 'high' },
+      'crm-1',
+    );
+
+    assert.deepEqual(result, { accepted: true, eventId: 'event-1' });
+    assert.equal(calls[0][1].data.type, 'action.crm');
+    assert.equal(calls[0][1].data.deduplicationKey, 'crm-1');
+    assert.deepEqual(calls[0][1].data.payload, {
+      taskId: 'task-1',
+      to: '+1001',
+      config: { action: 'create_after_sale_ticket', priority: 'high' },
+    });
+    assert.equal(calls[1][1].data.type, 'action.crm.requested');
+  });
+
   it('create rejects tasks blocked by outbound policy before persisting', async () => {
     const calls: Call[] = [];
     const prisma = {

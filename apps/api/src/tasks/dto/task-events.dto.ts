@@ -47,8 +47,8 @@ export class HangupDto {
 }
 
 export class FlowActionDto {
-  @IsIn(['sms', 'api'])
-  actionType!: 'sms' | 'api';
+  @IsIn(['sms', 'api', 'crm'])
+  actionType!: 'sms' | 'api' | 'crm';
 
   @IsObject()
   config!: Record<string, unknown>;

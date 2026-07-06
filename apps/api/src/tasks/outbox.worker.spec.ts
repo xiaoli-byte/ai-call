@@ -123,4 +123,44 @@ describe('OutboxWorker', () => {
     }, 'sms-1']);
     assert.equal(calls[1][1].data.type, 'action.sms.delivered');
   });
+
+  it('routes crm action payloads through ActionDeliveryService', async () => {
+    const calls: Call[] = [];
+    const prisma = {
+      callEvent: {
+        create: async (args: unknown) => {
+          calls.push(['callEvent.create', args]);
+          return args;
+        },
+      },
+    };
+    const actions = {
+      deliverCrm: async (payload: unknown, idempotencyKey: string) => {
+        calls.push(['deliverCrm', payload, idempotencyKey]);
+      },
+    };
+
+    const worker = new OutboxWorker(prisma as never, {} as never, actions as never);
+    await (worker as unknown as { deliver(event: unknown): Promise<void> }).deliver({
+      id: 'event-3',
+      aggregateId: 'attempt-1',
+      type: 'action.crm',
+      attempts: 0,
+      deduplicationKey: 'crm-1',
+      payload: {
+        taskId: 'task-1',
+        attemptId: 'attempt-1',
+        to: '+1001',
+        config: { action: 'create_after_sale_ticket', priority: 'high' },
+      },
+    });
+
+    assert.deepEqual(calls[0], ['deliverCrm', {
+      taskId: 'task-1',
+      attemptId: 'attempt-1',
+      to: '+1001',
+      config: { action: 'create_after_sale_ticket', priority: 'high' },
+    }, 'crm-1']);
+    assert.equal(calls[1][1].data.type, 'action.crm.delivered');
+  });
 });

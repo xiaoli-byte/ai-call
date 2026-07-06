@@ -39,6 +39,8 @@ export interface GlobalOutboundRulesConfig {
   dailyCallLimitPerCallee: number;
   blockedNumbers: GlobalOutboundNumberListEntry[];
   globalWhitelist: GlobalOutboundNumberListEntry[];
+  aiDisclosureTemplate?: string;
+  maxAttemptsPerNumber?: number;
 }
 
 export const DEFAULT_GLOBAL_VARIABLES: GlobalVariableConfig[] = [
@@ -91,6 +93,8 @@ export const DEFAULT_OUTBOUND_RULES: GlobalOutboundRulesConfig = {
   dailyCallLimitPerCallee: 3,
   blockedNumbers: [],
   globalWhitelist: [],
+  aiDisclosureTemplate: '您好，我是 AI 外呼助手，本次通话将用于业务办理和服务质量改进。',
+  maxAttemptsPerNumber: 3,
 };
 
 export interface GlobalConfig {

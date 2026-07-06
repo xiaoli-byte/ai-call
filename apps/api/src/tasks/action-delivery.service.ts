@@ -1,9 +1,13 @@
 import { BadRequestException, Injectable, Optional } from '@nestjs/common';
 import { GlobalConfigService } from '../global-config/global-config.service.js';
+import { ToolsService } from '../tools/tools.service.js';
 
 @Injectable()
 export class ActionDeliveryService {
-  constructor(@Optional() private readonly globalConfig?: GlobalConfigService) {}
+  constructor(
+    @Optional() private readonly globalConfig?: GlobalConfigService,
+    @Optional() private readonly tools?: ToolsService,
+  ) {}
 
   async deliverSms(payload: {
     taskId: string;
@@ -51,6 +55,21 @@ export class ActionDeliveryService {
     }, Number(config.timeout ?? 10) * 1000);
   }
 
+  async deliverCrm(payload: {
+    taskId: string;
+    attemptId?: string;
+    to?: string;
+    config: Record<string, unknown>;
+  }, _idempotencyKey: string): Promise<unknown> {
+    if (!this.tools) throw new Error('ToolsService is not configured');
+    const action = String(payload.config.action ?? payload.config.toolName ?? '');
+    if (!action) throw new BadRequestException('CRM action is required');
+    const args = isPlainObject(payload.config.arguments)
+      ? payload.config.arguments
+      : omitKeys(payload.config, ['action', 'toolName', 'arguments']);
+    return this.dispatchTool(action, args);
+  }
+
   private async resolveWebhookConfig(config: Record<string, unknown>): Promise<Record<string, unknown>> {
     const pluginKey = String(config.pluginId ?? config.pluginName ?? '');
     if (!pluginKey || !this.globalConfig) return config;
@@ -74,6 +93,50 @@ export class ActionDeliveryService {
       body: config.body ?? pluginConfig.body,
       timeout: config.timeout ?? pluginConfig.timeout,
     };
+  }
+
+  private dispatchTool(action: string, args: Record<string, unknown>): unknown {
+    switch (action) {
+      case 'query_repayment_info':
+        return this.tools!.queryRepaymentInfo(args);
+      case 'calculate_penalty':
+        return this.tools!.calculatePenalty(args as { overdueDays: number; principal: number });
+      case 'create_extension_request':
+        return this.tools!.createExtensionRequest(args as { reason: string; customerId?: string });
+      case 'query_order':
+        return this.tools!.queryOrder(args as { orderNo: string });
+      case 'query_refund_status':
+        return this.tools!.queryRefundStatus(args as { orderNo: string });
+      case 'create_pickup_appointment':
+        return this.tools!.createPickupAppointment(args as {
+          orderNo: string;
+          date: string;
+          timeSlot: string;
+          address?: string;
+        });
+      case 'create_after_sale_ticket':
+        return this.tools!.createAfterSaleTicket(args as {
+          orderNo: string;
+          issueType: string;
+          description: string;
+        });
+      case 'query_car_model':
+        return this.tools!.queryCarModel(args as { model?: string });
+      case 'query_activity':
+        return this.tools!.queryActivity(args as { activityId?: string });
+      case 'create_test_drive_appointment':
+        return this.tools!.createTestDriveAppointment(args as {
+          customerName: string;
+          phone: string;
+          date: string;
+          timeSlot: string;
+          model?: string;
+        });
+      case 'transfer_to_human':
+        return this.tools!.transferToHuman(args as { reason: string });
+      default:
+        throw new BadRequestException(`Unsupported CRM action: ${action}`);
+    }
   }
 
   private assertAllowedWebhook(rawUrl: string): void {
@@ -116,4 +179,17 @@ export class ActionDeliveryService {
       throw new Error(`Action delivery failed: HTTP ${response.status}`);
     }
   }
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function omitKeys(
+  value: Record<string, unknown>,
+  keys: string[],
+): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(value).filter(([key]) => !keys.includes(key)),
+  );
 }

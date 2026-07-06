@@ -48,4 +48,32 @@ describe('ActionDeliveryService', () => {
       BadRequestException,
     );
   });
+
+  it('dispatches CRM actions through the tool service', async () => {
+    const calls: Array<[string, unknown]> = [];
+    const tools = {
+      createAfterSaleTicket: (args: unknown) => {
+        calls.push(['createAfterSaleTicket', args]);
+        return { ticketId: 'AST-1' };
+      },
+    };
+
+    const result = await new ActionDeliveryService(undefined, tools as never).deliverCrm({
+      taskId: 'task-1',
+      attemptId: 'attempt-1',
+      config: {
+        action: 'create_after_sale_ticket',
+        arguments: { orderNo: 'O-1', issueType: 'missing', description: '未收到' },
+      },
+    }, 'crm-1');
+
+    assert.deepEqual(calls, [
+      ['createAfterSaleTicket', {
+        orderNo: 'O-1',
+        issueType: 'missing',
+        description: '未收到',
+      }],
+    ]);
+    assert.deepEqual(result, { ticketId: 'AST-1' });
+  });
 });

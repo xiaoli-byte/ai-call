@@ -12,6 +12,10 @@ import { SystemModule } from './system/system.module.js';
 import { CallsModule } from './calls/calls.module.js';
 import { GlobalConfigModule } from './global-config/global-config.module.js';
 import { VoiceClonesModule } from './voice-clones/voice-clones.module.js';
+import { CampaignsModule } from './campaigns/campaigns.module.js';
+import { AnalyticsModule } from './analytics/analytics.module.js';
+import { QualityModule } from './quality/quality.module.js';
+import { ComplianceModule } from './compliance/compliance.module.js';
 import { JwtAuthGuard } from './auth/jwt-auth.guard.js';
 import { PermissionsGuard } from './auth/permissions.guard.js';
 
@@ -29,6 +33,10 @@ import { PermissionsGuard } from './auth/permissions.guard.js';
     CallsModule,
     GlobalConfigModule,
     VoiceClonesModule,
+    CampaignsModule,
+    AnalyticsModule,
+    QualityModule,
+    ComplianceModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: JwtAuthGuard },

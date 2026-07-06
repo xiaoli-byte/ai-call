@@ -125,6 +125,10 @@ model OutboundTask {
   outcome       String?
   recordingUrl  String?           @map("recording_url")
   intentTags    String[]          @default([]) @map("intent_tags")
+  campaignId    String?           @map("campaign_id")
+  campaign      Campaign?         @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  campaignLeadId String?          @map("campaign_lead_id")
+  campaignLead  CampaignLead?     @relation(fields: [campaignLeadId], references: [id], onDelete: SetNull)
   attemptCount  Int               @default(0) @map("attempt_count")
   flowId        String?           @map("flow_id")
   flow           TaskFlow?        @relation(fields: [flowId], references: [id], onDelete: Restrict)
@@ -133,12 +137,15 @@ model OutboundTask {
   transcripts   TranscriptTurn[]
   events        CallEvent[]
   attempts      CallAttempt[]
+  callAnalyses   CallAnalysis[]
   createdAt     DateTime          @default(now()) @map("created_at")
   updatedAt     DateTime          @updatedAt @map("updated_at")
 
   @@index([status, scheduledAt])
   @@index([scenarioId])
   @@index([flowVersionId])
+  @@index([campaignId, status])
+  @@index([campaignLeadId])
   @@map("outbound_tasks")
 }
 
@@ -158,6 +165,7 @@ model CallAttempt {
   recordingUrl   String?           @map("recording_url")
   transcripts    TranscriptTurn[]
   events         CallEvent[]
+  analysis       CallAnalysis?
   createdAt      DateTime          @default(now()) @map("created_at")
   updatedAt      DateTime          @updatedAt @map("updated_at")
 
@@ -165,6 +173,106 @@ model CallAttempt {
   @@index([taskId, createdAt])
   @@index([status, startedAt])
   @@map("call_attempts")
+}
+
+model Campaign {
+  id               String           @id @default(uuid())
+  name             String
+  description      String           @default("")
+  scenario         String
+  scenarioId       String?          @map("scenario_id")
+  flowId           String?          @map("flow_id")
+  status           String           @default("draft")
+  scheduledAt      DateTime?        @map("scheduled_at")
+  concurrencyLimit Int              @default(3) @map("concurrency_limit")
+  retryPolicy      Json             @default("{}") @map("retry_policy")
+  endCondition     Json             @default("{}") @map("end_condition")
+  leads            CampaignLead[]
+  importBatches    LeadImportBatch[]
+  tasks            OutboundTask[]
+  createdAt        DateTime         @default(now()) @map("created_at")
+  updatedAt        DateTime         @updatedAt @map("updated_at")
+
+  @@index([status, scheduledAt])
+  @@index([scenario, createdAt])
+  @@map("campaigns")
+}
+
+model LeadImportBatch {
+  id         String         @id @default(uuid())
+  campaignId String        @map("campaign_id")
+  campaign   Campaign      @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  filename   String?       @map("filename")
+  totalRows  Int           @map("total_rows")
+  validRows  Int           @map("valid_rows")
+  invalidRows Int          @map("invalid_rows")
+  errors     Json          @default("[]")
+  leads      CampaignLead[]
+  createdAt  DateTime      @default(now()) @map("created_at")
+
+  @@index([campaignId, createdAt])
+  @@map("lead_import_batches")
+}
+
+model CampaignLead {
+  id              String          @id @default(uuid())
+  campaignId      String          @map("campaign_id")
+  campaign        Campaign        @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  batchId         String?         @map("batch_id")
+  batch           LeadImportBatch? @relation(fields: [batchId], references: [id], onDelete: SetNull)
+  rowNumber       Int             @map("row_number")
+  phoneNumber     String          @map("phone_number")
+  displayName     String?         @map("display_name")
+  variables       Json            @default("{}")
+  status          String          @default("imported")
+  validationError String?         @map("validation_error")
+  tasks           OutboundTask[]
+  createdAt       DateTime        @default(now()) @map("created_at")
+  updatedAt       DateTime        @updatedAt @map("updated_at")
+
+  @@unique([campaignId, rowNumber])
+  @@index([campaignId, status])
+  @@index([batchId])
+  @@map("campaign_leads")
+}
+
+model CallAnalysis {
+  id              String       @id @default(uuid())
+  callAttemptId   String       @unique @map("call_attempt_id")
+  callAttempt     CallAttempt  @relation(fields: [callAttemptId], references: [id], onDelete: Cascade)
+  taskId          String       @map("task_id")
+  task            OutboundTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  summary         String
+  intent          String
+  outcome         String?
+  refusalReason   String?      @map("refusal_reason")
+  nextAction      String       @map("next_action")
+  riskLevel       String       @default("low") @map("risk_level")
+  complianceFlags Json         @default("[]") @map("compliance_flags")
+  confidence      Float        @default(0)
+  correctedAt     DateTime?    @map("corrected_at")
+  correctedBy     String?      @map("corrected_by")
+  createdAt       DateTime     @default(now()) @map("created_at")
+  updatedAt       DateTime     @updatedAt @map("updated_at")
+
+  @@index([taskId])
+  @@index([riskLevel, createdAt])
+  @@map("call_analyses")
+}
+
+model ComplianceAuditLog {
+  id          String   @id @default(uuid())
+  action      String
+  subjectType String?  @map("subject_type")
+  subjectId   String?  @map("subject_id")
+  actorId     String?  @map("actor_id")
+  actorName   String?  @map("actor_name")
+  details     Json     @default("{}")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([action, createdAt])
+  @@index([subjectType, subjectId])
+  @@map("compliance_audit_logs")
 }
 
 model TranscriptTurn {

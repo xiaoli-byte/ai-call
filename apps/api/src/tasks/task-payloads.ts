@@ -4,7 +4,7 @@ import { toPrismaJson } from '../common/prisma-json.js';
 
 export { toPrismaJson } from '../common/prisma-json.js';
 
-export type FlowActionType = 'sms' | 'api';
+export type FlowActionType = 'sms' | 'api' | 'crm';
 export type FlowActionEventType =
   | `action.${FlowActionType}`
   | `action.${FlowActionType}.requested`
@@ -110,7 +110,7 @@ export function parseOutboxPayload<T extends OutboxEventType>(
       from: value.from,
     } as OutboxPayloadFor<T>;
   }
-  if (type === 'action.sms' || type === 'action.api') {
+  if (type === 'action.sms' || type === 'action.api' || type === 'action.crm') {
     if (typeof value.taskId !== 'string') {
       throw new Error(`Invalid ${type} payload`);
     }

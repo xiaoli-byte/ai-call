@@ -8,6 +8,10 @@ import { systemEndpoints } from './system';
 import { callsEndpoints } from './calls';
 import { globalConfigEndpoints } from './global-config';
 import { voiceClonesEndpoints } from './voice-clones';
+import { campaignsEndpoints } from './campaigns';
+import { analyticsEndpoints } from './analytics';
+import { qualityEndpoints } from './quality';
+import { complianceEndpoints } from './compliance';
 
 /**
  * 工厂：根据传入的 HttpAdapter（client 或 server）创建完整 API 对象。
@@ -26,6 +30,10 @@ export function createApi(http: HttpAdapter) {
   const calls = callsEndpoints(http);
   const globalConfig = globalConfigEndpoints(http);
   const voiceClones = voiceClonesEndpoints(http);
+  const campaigns = campaignsEndpoints(http);
+  const analytics = analyticsEndpoints(http);
+  const quality = qualityEndpoints(http);
+  const compliance = complianceEndpoints(http);
 
   return {
     // 模块化嵌套（新代码推荐）
@@ -38,6 +46,10 @@ export function createApi(http: HttpAdapter) {
     calls,
     globalConfig,
     voiceClones,
+    campaigns,
+    analytics,
+    quality,
+    compliance,
 
     // 顶层扁平别名（兼容旧 apiClient.xxx 调用）
     // auth
@@ -50,6 +62,21 @@ export function createApi(http: HttpAdapter) {
     createTask: tasks.create,
     createTaskBatch: tasks.createBatch,
     dispatchTask: tasks.dispatch,
+    // campaigns
+    listCampaigns: campaigns.list,
+    getCampaign: campaigns.get,
+    createCampaign: campaigns.create,
+    updateCampaignStatus: campaigns.updateStatus,
+    // analytics
+    getAnalyticsOverview: analytics.overview,
+    // quality
+    listQualityAnalyses: quality.list,
+    analyzeCall: quality.analyze,
+    correctCallAnalysis: quality.correct,
+    // compliance
+    getCompliancePolicy: compliance.getPolicy,
+    updateCompliancePolicy: compliance.updatePolicy,
+    listComplianceAuditLogs: compliance.listAuditLogs,
     // calls
     listCalls: calls.list,
     getCall: calls.get,

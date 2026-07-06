@@ -145,6 +145,15 @@ export class OutboxWorker implements OnModuleInit, OnModuleDestroy {
       await this.recordActionDelivered(payload, 'api');
       return;
     }
+    if (event.type === 'action.crm') {
+      const payload = parseOutboxPayload(event.type, event.payload);
+      await this.actions.deliverCrm(
+        { taskId: payload.taskId, attemptId: payload.attemptId, to: payload.to, config: payload.config },
+        event.deduplicationKey ?? event.id,
+      );
+      await this.recordActionDelivered(payload, 'crm');
+      return;
+    }
     throw new Error(`Unsupported outbox event: ${event.type}`);
   }
 

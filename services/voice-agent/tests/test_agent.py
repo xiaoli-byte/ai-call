@@ -180,6 +180,7 @@ def mock_tasks():
             self.transcripts: list[tuple[str, str, str]] = []
             self.outcomes: list[tuple[str, str]] = []
             self.transfers: list[tuple[str, str | None]] = []
+            self.actions: list[tuple[str, str, dict[str, Any], str]] = []
 
         async def get_task(self, task_id):
             return None
@@ -192,6 +193,10 @@ def mock_tasks():
 
         async def transfer_to_human(self, task_id, extension=None):
             self.transfers.append((task_id, extension))
+
+        async def execute_action(self, task_id, action_type, config, idempotency_key):
+            self.actions.append((task_id, action_type, config, idempotency_key))
+            return True
 
         async def update_status(self, task_id, status):
             pass
@@ -743,6 +748,53 @@ async def test_flow_dry_run_crm_action_only_emits_debug_action(
     assert captured_callbacks.actions == [
         ("crm", {"action": "create_after_sale_ticket", "priority": "high"})
     ]
+    assert captured_callbacks.tool_calls == []
+    assert captured_callbacks.agent_speech == ["已记录"]
+
+
+@pytest.mark.asyncio
+async def test_flow_crm_action_is_enqueued_to_task_control_plane(
+    agent: VoiceAgent,
+    scenario_config,
+    variables,
+    captured_callbacks,
+    mock_tasks,
+) -> None:
+    flow = {
+        "id": "version-crm",
+        "nodes": [
+            {"id": "start", "type": "start", "data": {}},
+            {
+                "id": "crm",
+                "type": "action",
+                "data": {
+                    "actionType": "crm",
+                    "config": {"action": "create_after_sale_ticket", "priority": "high"},
+                },
+            },
+            {"id": "end", "type": "end", "data": {"farewell": "已记录"}},
+        ],
+        "edges": [
+            {"id": "e1", "source": "start", "target": "crm"},
+            {"id": "e2", "source": "crm", "target": "end"},
+        ],
+    }
+
+    await agent.start_session(
+        "flow-call-crm",
+        scenario_config,
+        variables,
+        captured_callbacks,
+        flow_version=flow,
+    )
+
+    assert len(mock_tasks.actions) == 1
+    assert mock_tasks.actions[0][0] == "flow-call-crm"
+    assert mock_tasks.actions[0][1] == "crm"
+    assert mock_tasks.actions[0][2] == {
+        "action": "create_after_sale_ticket",
+        "priority": "high",
+    }
     assert captured_callbacks.tool_calls == []
     assert captured_callbacks.agent_speech == ["已记录"]
 

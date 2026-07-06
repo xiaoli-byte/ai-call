@@ -96,6 +96,8 @@ export class TasksService {
         variables: toPrismaJson(variables),
         status: TaskStatus.PENDING,
         scheduledAt,
+        campaignId: dto.campaignId,
+        campaignLeadId: dto.campaignLeadId,
         flowId: dto.flowId,
         flowVersionId: flowVersion?.id,
         events: {
@@ -129,6 +131,8 @@ export class TasksService {
         flowId: dto.flowId,
         scheduledAt: item.scheduledAt ?? dto.scheduledAt,
         priority: item.priority ?? dto.priority,
+        campaignId: dto.campaignId,
+        campaignLeadId: item.campaignLeadId,
         variables,
       }));
     }
@@ -434,7 +438,7 @@ export class TasksService {
 
   async enqueueAction(
     id: string,
-    actionType: 'sms' | 'api',
+    actionType: 'sms' | 'api' | 'crm',
     config: Record<string, unknown>,
     idempotencyKey?: string,
   ): Promise<{ accepted: true; eventId: string }> {
@@ -560,6 +564,8 @@ export class TasksService {
     duration: true,
     outcome: true,
     intentTags: true,
+    campaignId: true,
+    campaignLeadId: true,
     flowId: true,
     flowVersionId: true,
     attemptCount: true,
@@ -630,6 +636,8 @@ export class TasksService {
       duration: record.duration ?? undefined,
       outcome: (record.outcome as CallOutcome | null) ?? undefined,
       intentTags: record.intentTags,
+      campaignId: record.campaignId ?? undefined,
+      campaignLeadId: record.campaignLeadId ?? undefined,
       flowId: record.flowId ?? undefined,
       flowVersionId: record.flowVersionId ?? undefined,
       attemptCount: record.attemptCount,
@@ -686,6 +694,8 @@ export class TasksService {
       outcome: (record.outcome as CallOutcome | null) ?? undefined,
       recordingUrl: record.recordingUrl ?? undefined,
       intentTags: record.intentTags,
+      campaignId: record.campaignId ?? undefined,
+      campaignLeadId: record.campaignLeadId ?? undefined,
       attemptCount: record.attemptCount,
       attempts,
       flowId: record.flowId ?? undefined,
@@ -719,6 +729,8 @@ export class TasksService {
       duration: task.duration,
       outcome: task.outcome,
       intentTags: task.intentTags,
+      campaignId: task.campaignId,
+      campaignLeadId: task.campaignLeadId,
       flowId: task.flowId,
       flowVersionId: task.flowVersionId,
       attemptCount: task.attemptCount,
