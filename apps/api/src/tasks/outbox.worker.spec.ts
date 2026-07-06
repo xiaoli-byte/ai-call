@@ -6,6 +6,36 @@ import { OutboxWorker } from './outbox.worker.js';
 type Call = [string, any, any?];
 
 describe('OutboxWorker', () => {
+  it('keeps polling available after a batch-level database failure', async () => {
+    let recoverAttempts = 0;
+    const prisma = {
+      outboxEvent: {
+        updateMany: async () => {
+          recoverAttempts += 1;
+          throw new Error('connect ECONNREFUSED 127.0.0.1:5432');
+        },
+        findMany: async () => {
+          throw new Error('findMany should not run after recovery failed');
+        },
+      },
+    };
+
+    const worker = new OutboxWorker(prisma as never, {} as never, {} as never);
+    const logs: string[] = [];
+    (worker as unknown as { logger: { error(message: string): void } }).logger = {
+      error: (message: string) => logs.push(message),
+    };
+
+    await worker.processBatch();
+    await worker.processBatch();
+
+    assert.equal(recoverAttempts, 2);
+    assert.deepEqual(logs, [
+      'outbox 批处理失败：connect ECONNREFUSED 127.0.0.1:5432',
+      'outbox 批处理失败：connect ECONNREFUSED 127.0.0.1:5432',
+    ]);
+  });
+
   it('delivers dispatch requests and records accepted events', async () => {
     const calls: Call[] = [];
     const prisma = {

@@ -1,0 +1,85 @@
+/* ============================================================
+   Design Tokens - AI Call Dashboard (Light Theme)
+   Single source of truth for global theme variables.
+   ============================================================ */
+
+:root {
+  /* Primary - Trust Blue */
+  --primary-50: #eff6ff;
+  --primary-100: #dbeafe;
+  --primary-500: #3b82f6;
+  --primary-600: #2563eb;
+  --primary-700: #1d4ed8;
+
+  /* Neutral */
+  --gray-50: #f8fafc;
+  --gray-100: #f1f5f9;
+  --gray-200: #e2e8f0;
+  --gray-300: #cbd5e1;
+  --gray-400: #94a3b8;
+  --gray-500: #64748b;
+  --gray-600: #475569;
+  --gray-700: #334155;
+  --gray-800: #1e293b;
+  --gray-900: #0f172a;
+
+  /* Semantic */
+  --success: #10b981;
+  --success-bg: #ecfdf5;
+  --warning: #f59e0b;
+  --warning-bg: #fffbeb;
+  --danger: #ef4444;
+  --danger-bg: #fef2f2;
+  --info: #3b82f6;
+  --info-bg: #eff6ff;
+
+  /* Semantic aliases */
+  --bg: #f0f3fa;
+  --bg-elevated: #ffffff;
+  --bg-subtle: #f1f5f9;
+  --border: #e2e8f0;
+  --border-strong: #cbd5e1;
+  --text: #0f172a;
+  --text-secondary: #475569;
+  --text-muted: #94a3b8;
+  --accent: #2563eb;
+  --accent-hover: #1d4ed8;
+  --accent-soft: #eff6ff;
+
+  /* Shadow */
+  --shadow-xs: 0 1px 2px 0 rgba(15, 23, 42, 0.04);
+  --shadow-sm: 0 1px 2px 0 rgba(15, 23, 42, 0.05), 0 1px 3px 0 rgba(15, 23, 42, 0.05);
+  --shadow: 0 1px 3px 0 rgba(15, 23, 42, 0.06), 0 1px 2px -1px rgba(15, 23, 42, 0.06);
+  --shadow-md: 0 4px 6px -1px rgba(15, 23, 42, 0.06), 0 2px 4px -2px rgba(15, 23, 42, 0.06);
+  --shadow-lg: 0 10px 15px -3px rgba(15, 23, 42, 0.06), 0 4px 6px -4px rgba(15, 23, 42, 0.06);
+  --shadow-primary: 0 4px 12px -2px rgba(37, 99, 235, 0.25);
+
+  /* Radius */
+  --radius-sm: 4px;
+  --radius: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-xl: 12px;
+
+  /* shadcn/ui HSL variables.
+     Use tw- prefix to avoid overriding project hex tokens such as --border / --accent. */
+  --tw-background: 210 40% 98%;
+  --tw-foreground: 222 47% 11%;
+  --tw-card: 0 0% 100%;
+  --tw-card-foreground: 222 47% 11%;
+  --tw-popover: 0 0% 100%;
+  --tw-popover-foreground: 222 47% 11%;
+  --tw-primary: 221 83% 53%;
+  --tw-primary-foreground: 0 0% 100%;
+  --tw-secondary: 210 40% 96%;
+  --tw-secondary-foreground: 222 47% 11%;
+  --tw-muted: 210 40% 96%;
+  --tw-muted-foreground: 215 16% 47%;
+  --tw-accent: 214 32% 91%;
+  --tw-accent-foreground: 222 47% 11%;
+  --tw-destructive: 0 84% 60%;
+  --tw-destructive-foreground: 0 0% 100%;
+  --tw-border: 214 32% 91%;
+  --tw-input: 214 32% 91%;
+  --tw-ring: 221 83% 53%;
+}

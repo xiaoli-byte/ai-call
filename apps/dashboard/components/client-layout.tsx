@@ -8,6 +8,9 @@ import { AuthProvider } from '@/components/auth-provider';
 import { useAuthStore } from '@/lib/auth-store';
 import { apiClient } from '@/lib/api/client';
 import { AUTH_KEY } from '@/hooks/use-auth';
+import { cn } from '@/lib/utils';
+
+import styles from './client-layout.module.scss';
 
 const NAV_ITEMS_PRIMARY = [
   { href: '/', label: '概览', icon: 'home' },
@@ -38,7 +41,7 @@ function NavIcon({ name }: { name: string }) {
     strokeWidth: 1.75,
     strokeLinecap: 'round' as const,
     strokeLinejoin: 'round' as const,
-    className: 'nav-icon',
+    className: styles.navIcon,
   };
   switch (name) {
     case 'home':
@@ -233,15 +236,15 @@ function SidebarFooter() {
   const roleLabel = user?.roles?.[0] ?? '未登录';
 
   return (
-    <div className="user-card">
-      <div className="user-avatar">{initials}</div>
-      <div className="user-info">
-        <div className="user-name">{user?.name ?? '企业员工'}</div>
-        <div className="user-role">{roleLabel}</div>
+    <div className={styles.userCard}>
+      <div className={styles.userAvatar}>{initials}</div>
+      <div className={styles.userInfo}>
+        <div className={styles.userName}>{user?.name ?? '企业员工'}</div>
+        <div className={styles.userRole}>{roleLabel}</div>
       </div>
       <button
         onClick={handleLogout}
-        className="topbar-action"
+        className={styles.topbarAction}
         aria-label="退出登录"
         title="退出登录"
       >
@@ -282,19 +285,19 @@ export function ClientLayout({
 
   return (
     <AuthProvider>
-      <div className="app-shell">
-        <aside className={`sidebar ${collapsed ? 'sidebar-collapsed' : ''}`}>
-          <div className="sidebar-header">
-            <Link href="/" className="brand" style={{ textDecoration: 'none' }}>
-              <div className="brand-logo">AI</div>
-              <div className="brand-text">
-                <span className="brand-name">外呼中心</span>
-                <span className="brand-sub">AI 智能外呼系统</span>
+      <div data-dashboard-shell className={cn(styles.appShell, collapsed && styles.sidebarCollapsed)}>
+        <aside className={styles.sidebar}>
+          <div className={styles.sidebarHeader}>
+            <Link href="/" className={styles.brand}>
+              <div className={styles.brandLogo}>AI</div>
+              <div className={styles.brandText}>
+                <span className={styles.brandName}>外呼中心</span>
+                <span className={styles.brandSub}>AI 智能外呼系统</span>
               </div>
             </Link>
             <button
               type="button"
-              className="sidebar-toggle"
+              className={styles.sidebarToggle}
               onClick={toggleSidebar}
               title={collapsed ? '展开菜单' : '收起菜单'}
               aria-label={collapsed ? '展开菜单' : '收起菜单'}
@@ -303,14 +306,18 @@ export function ClientLayout({
             </button>
           </div>
 
-          <nav className="sidebar-nav">
-            <div className="nav-group">
-              <div className="nav-group-label">工作台</div>
+          <nav className={styles.sidebarNav}>
+            <div className={styles.navGroup}>
+              <div className={styles.navGroupLabel}>工作台</div>
               {NAV_ITEMS_PRIMARY.map((item) => (
                 <Link
                   key={item.href}
                   href={item.href}
-                  className={`nav-item ${pathname === item.href || (item.href !== '/' && pathname.startsWith(item.href)) ? 'active' : ''}`}
+                  className={cn(
+                    styles.navItem,
+                    (pathname === item.href || (item.href !== '/' && pathname.startsWith(item.href))) &&
+                      styles.navItemActive,
+                  )}
                   title={item.label}
                 >
                   <NavIcon name={item.icon} />
@@ -319,13 +326,13 @@ export function ClientLayout({
               ))}
             </div>
 
-            <div className="nav-group">
-              <div className="nav-group-label">配置</div>
+            <div className={styles.navGroup}>
+              <div className={styles.navGroupLabel}>配置</div>
               {NAV_ITEMS_SECONDARY.map((item) => (
                 <Link
                   key={item.href}
                   href={item.href}
-                  className={`nav-item ${pathname.startsWith(item.href) ? 'active' : ''}`}
+                  className={cn(styles.navItem, pathname.startsWith(item.href) && styles.navItemActive)}
                   title={item.label}
                 >
                   <NavIcon name={item.icon} />
@@ -335,13 +342,13 @@ export function ClientLayout({
             </div>
 
             {hasSystemPermission && (
-              <div className="nav-group">
-                <div className="nav-group-label">系统管理</div>
+              <div className={styles.navGroup}>
+                <div className={styles.navGroupLabel}>系统管理</div>
                 {NAV_ITEMS_SYSTEM.map((item) => (
                   <Link
                     key={item.href}
                     href={item.href}
-                    className={`nav-item ${pathname.startsWith(item.href) ? 'active' : ''}`}
+                    className={cn(styles.navItem, pathname.startsWith(item.href) && styles.navItemActive)}
                     title={item.label}
                   >
                     <NavIcon name={item.icon} />
@@ -352,33 +359,33 @@ export function ClientLayout({
             )}
           </nav>
 
-          <div className="sidebar-footer">
+          <div className={styles.sidebarFooter}>
             <SidebarFooter />
           </div>
         </aside>
 
-        <main className="main">
-          <header className="topbar">
-            <div className="topbar-left">
-              <span className="breadcrumb">
+        <main className={styles.main}>
+          <header className={styles.topbar}>
+            <div className={styles.topbarLeft}>
+              <span className={styles.breadcrumb}>
                 <span>{breadcrumb.group}</span>
                 <span>/</span>
-                <span className="breadcrumb-current">{breadcrumb.current}</span>
+                <span className={styles.breadcrumbCurrent}>{breadcrumb.current}</span>
               </span>
             </div>
-            <div className="topbar-right">
-              <button className="topbar-action" aria-label="搜索">
+            <div className={styles.topbarRight}>
+              <button className={styles.topbarAction} aria-label="搜索">
                 <NavIcon name="search" />
               </button>
-              <button className="topbar-action" aria-label="通知">
+              <button className={styles.topbarAction} aria-label="通知">
                 <NavIcon name="bell" />
               </button>
-              <button className="topbar-action" aria-label="帮助">
+              <button className={styles.topbarAction} aria-label="帮助">
                 <NavIcon name="help" />
               </button>
             </div>
           </header>
-          <div className="content">{children}</div>
+          <div className={styles.content}>{children}</div>
         </main>
       </div>
     </AuthProvider>

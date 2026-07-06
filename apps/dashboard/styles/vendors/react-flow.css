@@ -1,0 +1,83 @@
+/* ============================================================
+   React Flow Overrides
+   Only third-party DOM classes belong here.
+   ============================================================ */
+
+:where([data-dashboard-shell]) .react-flow {
+  background: var(--bg);
+}
+
+:where([data-dashboard-shell]) .react-flow__background {
+  background-color: var(--bg);
+}
+
+:where([data-dashboard-shell]) .react-flow__edge-path {
+  stroke: #94a3b8;
+  stroke-width: 1.5;
+}
+
+:where([data-dashboard-shell]) .react-flow__edge.selected .react-flow__edge-path,
+:where([data-dashboard-shell]) .react-flow__edge:focus .react-flow__edge-path {
+  stroke: var(--primary-600);
+  stroke-width: 2;
+}
+
+:where([data-dashboard-shell]) .react-flow__connection-path {
+  stroke: var(--primary-600);
+  stroke-width: 2;
+}
+
+:where([data-dashboard-shell]) .react-flow__handle {
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--primary-600);
+  background: white;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+}
+
+:where([data-dashboard-shell]) .react-flow__handle.connectingfrom,
+:where([data-dashboard-shell]) .react-flow__handle.connectingto {
+  background: var(--primary-600);
+}
+
+:where([data-dashboard-shell]) .react-flow__controls {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-sm);
+}
+
+:where([data-dashboard-shell]) .react-flow__controls-button {
+  width: 32px;
+  height: 32px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  transition: all 0.15s;
+}
+
+:where([data-dashboard-shell]) .react-flow__controls-button:hover {
+  background: var(--gray-50);
+  color: var(--primary-600);
+}
+
+:where([data-dashboard-shell]) .react-flow__controls-button svg {
+  fill: currentColor;
+}
+
+:where([data-dashboard-shell]) .react-flow__minimap {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-sm);
+}
+
+:where([data-dashboard-shell]) .react-flow__minimap-mask {
+  fill: rgba(15, 23, 42, 0.04);
+}
+
+:where([data-dashboard-shell]) .react-flow__attribution {
+  display: none !important;
+}

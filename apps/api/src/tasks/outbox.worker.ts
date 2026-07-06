@@ -58,6 +58,8 @@ export class OutboxWorker implements OnModuleInit, OnModuleDestroy {
         take: Number(process.env.OUTBOX_BATCH_SIZE ?? 10),
       });
       for (const event of events) await this.processEvent(event);
+    } catch (error) {
+      this.logger.error(`outbox 批处理失败：${(error as Error).message}`);
     } finally {
       this.processing = false;
     }

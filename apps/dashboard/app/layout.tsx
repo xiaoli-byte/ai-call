@@ -6,6 +6,10 @@ import { authKeyString } from '@/hooks/auth-key';
 import { ClientLayout } from '@/components/client-layout';
 import type { UserProfile } from '@ai-call/shared';
 import './globals.css';
+import '@/styles/tokens.css';
+import '@/styles/base.css';
+import '@/styles/legacy-ui.css';
+import '@/styles/vendors/react-flow.css';
 
 export const metadata: Metadata = {
   title: 'AI Call Console - 企业智能外呼平台',

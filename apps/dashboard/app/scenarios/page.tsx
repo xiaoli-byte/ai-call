@@ -187,9 +187,9 @@ function TabButton({
   onClick: () => void;
 }) {
   return (
-    <button type="button" className={`scenario-tab ${active ? 'active' : ''}`} onClick={onClick}>
+    <ScenarioTab active={active} onClick={onClick}>
       {children}
-    </button>
+    </ScenarioTab>
   );
 }
 
@@ -306,20 +306,12 @@ function ScenarioListView({
 
   return (
     <div className={styles.workbench}>
-      <div className="scenario-page-title">
-        <button type="button" className="scenario-back-icon" aria-label="返回">
-          <ArrowLeft size={22} />
-        </button>
-        <div>
-          <h1>大模型场景列表</h1>
-          <div className="scenario-breadcrumb">智能外呼 / 场景管理 / 大模型场景列表</div>
-        </div>
-      </div>
+      <ScenarioPageTitle title="大模型场景列表" breadcrumb="智能外呼 / 场景管理 / 大模型场景列表" />
 
-      <div className="scenario-tabs">
-        <span className="scenario-tab active">大模型场景列表</span>
-        <span className="scenario-tab">测试记录</span>
-      </div>
+      <ScenarioTabs>
+        <ScenarioTab active>大模型场景列表</ScenarioTab>
+        <ScenarioTab>测试记录</ScenarioTab>
+      </ScenarioTabs>
 
       <div className="scenario-guide">
         <div className="scenario-guide-title">创建方式</div>
@@ -615,25 +607,24 @@ function ScenarioDetailView({
 
   return (
     <div className={cn(styles.workbench, styles.detail)}>
-      <div className="scenario-page-title">
-        <button type="button" className="scenario-back-icon" onClick={onBack} aria-label="返回列表">
-          <ArrowLeft size={22} />
-        </button>
-        <div>
-          <h1>大模型场景管理详情</h1>
-          <div className="scenario-breadcrumb">智能外呼 / 场景管理 / {draft.name || '新建场景'} / 大模型场景管理详情</div>
-        </div>
-        <div className="scenario-debug-toggle">
-          <Volume2 size={15} />
-          <span>语音调试</span>
-          <span className="scenario-toggle-dot" />
-        </div>
-      </div>
+      <ScenarioPageTitle
+        title="大模型场景管理详情"
+        breadcrumb={<>智能外呼 / 场景管理 / {draft.name || '新建场景'} / 大模型场景管理详情</>}
+        onBack={onBack}
+        backLabel="返回列表"
+        extra={(
+          <div className="scenario-debug-toggle">
+            <Volume2 size={15} />
+            <span>语音调试</span>
+            <span className="scenario-toggle-dot" />
+          </div>
+        )}
+      />
 
-      <div className="scenario-tabs">
+      <ScenarioTabs>
         <TabButton active={tab === 'robot'} onClick={() => setTab('robot')}>机器人配置</TabButton>
         <TabButton active={tab === 'voice'} onClick={() => setTab('voice')}>语音&VUI</TabButton>
-      </div>
+      </ScenarioTabs>
 
       <div className="scenario-detail-body">
         {tab === 'robot' && <RobotConfigTab draft={draft} setDraft={setDraft} flows={flows} />}
