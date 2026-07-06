@@ -52,6 +52,7 @@ describe('KnowledgeBaseService', () => {
       topK: 3,
     });
 
+    assert.ok(uploaded.document);
     assert.equal(uploaded.document.indexStatus, 'indexed');
     assert.equal(uploaded.document.chunkCount > 0, true);
     assert.equal(tested.results[0].source, '延期政策.md');

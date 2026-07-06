@@ -378,6 +378,7 @@ function ScenarioListView({
                   <td>
                     <div className="scenario-row-actions">
                       <button type="button" onClick={() => onEdit(scenario)}>进入</button>
+                      <Link href={`/scenarios/${scenario.id ?? scenario.scenario}/tests`}>测试记录</Link>
                       <button type="button" onClick={() => onPublish(scenario)}>发布</button>
                       <button type="button" onClick={() => onDeactivate(scenario)}>停用</button>
                     </div>

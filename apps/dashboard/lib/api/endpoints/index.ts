@@ -12,6 +12,9 @@ import { campaignsEndpoints } from './campaigns';
 import { analyticsEndpoints } from './analytics';
 import { qualityEndpoints } from './quality';
 import { complianceEndpoints } from './compliance';
+import { integrationsEndpoints } from './integrations';
+import { handoffsEndpoints } from './handoffs';
+import { scenarioTestsEndpoints } from './scenario-tests';
 
 /**
  * 工厂：根据传入的 HttpAdapter（client 或 server）创建完整 API 对象。
@@ -34,6 +37,9 @@ export function createApi(http: HttpAdapter) {
   const analytics = analyticsEndpoints(http);
   const quality = qualityEndpoints(http);
   const compliance = complianceEndpoints(http);
+  const integrations = integrationsEndpoints(http);
+  const handoffs = handoffsEndpoints(http);
+  const scenarioTests = scenarioTestsEndpoints(http);
 
   return {
     // 模块化嵌套（新代码推荐）
@@ -50,6 +56,9 @@ export function createApi(http: HttpAdapter) {
     analytics,
     quality,
     compliance,
+    integrations,
+    handoffs,
+    scenarioTests,
 
     // 顶层扁平别名（兼容旧 apiClient.xxx 调用）
     // auth
@@ -67,6 +76,7 @@ export function createApi(http: HttpAdapter) {
     getCampaign: campaigns.get,
     createCampaign: campaigns.create,
     updateCampaignStatus: campaigns.updateStatus,
+    getCampaignStrategySimulation: campaigns.strategySimulation,
     // analytics
     getAnalyticsOverview: analytics.overview,
     // quality
@@ -98,6 +108,20 @@ export function createApi(http: HttpAdapter) {
     listKnowledgeBases: knowledge.list,
     getKnowledgeBase: knowledge.get,
     retrieve: knowledge.retrieve,
+    testKnowledgeRetrieve: knowledge.testRetrieve,
+    // integrations
+    listIntegrations: integrations.list,
+    createIntegration: integrations.create,
+    testIntegration: integrations.test,
+    listIntegrationLogs: integrations.logs,
+    // handoffs
+    listHandoffs: handoffs.list,
+    getHandoff: handoffs.get,
+    updateHandoff: handoffs.update,
+    createHandoffCallbackTask: handoffs.createCallbackTask,
+    // scenario tests
+    listScenarioTests: scenarioTests.list,
+    runScenarioTest: scenarioTests.run,
     // system（旧代码用 apiClient.users / apiClient.roles / apiClient.permissions）
     users: system.users,
     roles: system.roles,

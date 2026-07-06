@@ -20,6 +20,9 @@ import { TenantsModule } from './tenants/tenants.module.js';
 import { JwtAuthGuard } from './auth/jwt-auth.guard.js';
 import { PermissionsGuard } from './auth/permissions.guard.js';
 import { MetricsModule } from './metrics/metrics.module.js';
+import { IntegrationsModule } from './integrations/integrations.module.js';
+import { HandoffsModule } from './handoffs/handoffs.module.js';
+import { ScenarioTestsModule } from './scenario-tests/scenario-tests.module.js';
 
 @Module({
   imports: [
@@ -41,6 +44,9 @@ import { MetricsModule } from './metrics/metrics.module.js';
     ComplianceModule,
     TenantsModule,
     MetricsModule,
+    IntegrationsModule,
+    HandoffsModule,
+    ScenarioTestsModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: JwtAuthGuard },

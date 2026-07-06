@@ -54,6 +54,17 @@ export class KnowledgeBaseController {
     };
   }
 
+  @Post(':id/test-retrieve')
+  async testRetrieve(
+    @Param('id') id: string,
+    @Body() body: { query: string; topK?: number },
+  ) {
+    return this.kbService.testRetrieve(id, {
+      query: body.query,
+      topK: body.topK ?? 3,
+    });
+  }
+
   @Post(':id/upload')
   @Permissions(PERMISSIONS.KNOWLEDGE_CREATE)
   @UseInterceptors(FileInterceptor('file'))

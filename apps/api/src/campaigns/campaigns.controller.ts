@@ -30,6 +30,12 @@ export class CampaignsController {
     return this.campaignsService.get(id);
   }
 
+  @Get(':id/strategy-simulation')
+  @Permissions(PERMISSIONS.TASK_READ)
+  simulateStrategy(@Param('id') id: string) {
+    return this.campaignsService.simulateStrategy(id);
+  }
+
   @Patch(':id/status')
   @Permissions(PERMISSIONS.TASK_UPDATE)
   @UsePipes(new ValidationPipe({ transform: true }))

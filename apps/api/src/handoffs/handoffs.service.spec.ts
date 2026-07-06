@@ -79,4 +79,44 @@ describe('HandoffsService', () => {
     assert.equal(createdTasks[0].scenario, Scenario.COLLECTION);
     assert.equal(createdTasks[0].status, TaskStatus.PENDING);
   });
+
+  it('clears completedAt when reopening a completed ticket', async () => {
+    let ticket: any = {
+      id: 'handoff-1',
+      status: 'completed',
+      taskId: 'task-1',
+      callAttemptId: 'attempt-1',
+      callAnalysisId: 'analysis-1',
+      campaignId: 'campaign-1',
+      phoneNumber: '+8613800138000',
+      customerName: '客户A',
+      summary: '需要继续跟进',
+      intent: '人工处理',
+      riskTags: ['high_risk'],
+      recommendedAction: '重新分配',
+      disposition: null,
+      notes: null,
+      callbackTaskId: null,
+      createdAt: new Date('2026-07-07T08:00:00.000Z'),
+      updatedAt: new Date('2026-07-07T08:00:00.000Z'),
+      completedAt: new Date('2026-07-07T09:00:00.000Z'),
+    };
+    const prisma = {
+      handoffTicket: {
+        findUnique: async () => ticket,
+        update: async ({ data }: any) => {
+          for (const [key, value] of Object.entries(data)) {
+            if (value !== undefined) ticket[key] = value;
+          }
+          return ticket;
+        },
+      },
+    };
+    const service = new HandoffsService(prisma as any, {} as any);
+
+    const updated = await service.update('handoff-1', { status: 'pending' });
+
+    assert.equal(ticket.completedAt, null);
+    assert.equal(updated.completedAt, undefined);
+  });
 });

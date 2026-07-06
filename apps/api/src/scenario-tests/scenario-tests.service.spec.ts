@@ -65,4 +65,49 @@ describe('ScenarioTestsService', () => {
     assert.equal(createdRun.flowId, 'flow-1');
     assert.equal(createdRun.golden, true);
   });
+
+  it('passes a scenario without knowledge base when no other risks are present', async () => {
+    let retrieveCalls = 0;
+    const prisma = {
+      scenarioTestRun: {
+        create: async ({ data }: any) => ({
+          id: 'run-no-kb',
+          ...data,
+          createdAt: new Date('2026-07-07T08:00:00.000Z'),
+        }),
+      },
+    };
+    const scenarios = {
+      get: async () => ({
+        id: 'scenario-1',
+        scenario: 'notification',
+        name: '通知提醒',
+        greeting: '您好，这里是预约提醒。',
+        knowledgeBaseId: undefined,
+        escalationRules: [],
+      }),
+    };
+    const flows = {};
+    const knowledge = {
+      retrieve: async () => {
+        retrieveCalls += 1;
+        return [];
+      },
+    };
+    const service = new ScenarioTestsService(
+      prisma as any,
+      scenarios as any,
+      flows as any,
+      knowledge as any,
+    );
+
+    const run = await service.run('notification', {
+      input: '确认一下预约时间',
+      golden: true,
+    });
+
+    assert.equal(run.result, 'pass');
+    assert.deepEqual(run.riskItems, []);
+    assert.equal(retrieveCalls, 0);
+  });
 });
