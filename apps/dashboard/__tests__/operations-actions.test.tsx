@@ -119,6 +119,20 @@ describe('dashboard operation action components', () => {
     expect(mocks.toastError).toHaveBeenCalledTimes(1);
   });
 
+  it('shows an error and does not refresh when integration creation rejects', async () => {
+    const error = new Error('create failed');
+    mocks.integrationsCreate.mockRejectedValueOnce(error);
+    render(<IntegrationActions />);
+
+    fireEvent.click(screen.getAllByRole('button')[0]);
+
+    await waitFor(() => {
+      expect(mocks.integrationsCreate).toHaveBeenCalledTimes(1);
+      expect(mocks.toastError).toHaveBeenCalledWith(error);
+    });
+    expect(mocks.refresh).not.toHaveBeenCalled();
+  });
+
   it('creates a callback task one hour from now, shows success, and refreshes', async () => {
     vi.spyOn(Date, 'now').mockReturnValue(new Date('2026-07-07T08:00:00.000Z').getTime());
     mocks.handoffsCreateCallbackTask.mockResolvedValueOnce({ id: 'task-1' });
@@ -202,6 +216,32 @@ describe('dashboard operation action components', () => {
 
     expect(fetchMock).not.toHaveBeenCalled();
     expect(mocks.toastError).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows an error and does not refresh when knowledge upload fails', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      text: async () => 'upload failed',
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const { container } = render(<KnowledgeActions knowledgeBaseId="kb-1" />);
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File(['hello'], 'guide.txt', { type: 'text/plain' });
+
+    fireEvent.change(fileInput, { target: { files: [file] } });
+    fireEvent.click(screen.getAllByRole('button')[2]);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith('/api/knowledge-base/kb-1/upload', {
+        method: 'POST',
+        credentials: 'include',
+        body: expect.any(FormData),
+      });
+      expect(mocks.toastError).toHaveBeenCalledTimes(1);
+    });
+    const error = mocks.toastError.mock.calls[0][0] as Error;
+    expect(error.message).toBe('upload failed');
+    expect(mocks.refresh).not.toHaveBeenCalled();
   });
 
   it('runs a scenario test with input and selected defaults, shows success, and refreshes', async () => {

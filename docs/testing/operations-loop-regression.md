@@ -49,7 +49,7 @@ Expected:
 
 ## Manual Smoke
 
-1. Open the dashboard and sign in with the seeded admin user. Seed uses `DEFAULT_ADMIN_EMAIL` / `DEFAULT_ADMIN_PASSWORD`, defaulting to `admin@ai-call.local` / `admin123`.
+1. Open the dashboard and sign in with the seeded admin user. Seed uses `DEFAULT_ADMIN_EMAIL` / `DEFAULT_ADMIN_PASSWORD`; check the local environment or `apps/api/prisma/seed.ts` for development defaults.
 2. Visit `/campaigns`, `/knowledge`, `/scenarios`, `/handoffs`, and `/integrations`.
 3. Create a `mock://crm/leads` integration connector and run a test call.
 4. Run a scenario test for `collection`.
