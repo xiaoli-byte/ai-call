@@ -66,6 +66,48 @@ describe('ScenarioTestsService', () => {
     assert.equal(createdRun.golden, true);
   });
 
+  it('warns when a knowledge-bound scenario has low retrieval confidence', async () => {
+    const prisma = {
+      scenarioTestRun: {
+        create: async ({ data }: any) => ({
+          id: 'run-low-confidence',
+          ...data,
+          createdAt: new Date('2026-07-07T08:00:00.000Z'),
+        }),
+      },
+    };
+    const scenarios = {
+      get: async () => ({
+        id: 'scenario-1',
+        scenario: 'collection',
+        name: '催收提醒',
+        greeting: '您好，请描述您的问题。',
+        knowledgeBaseId: 'kb-collection',
+        escalationRules: [],
+      }),
+    };
+    const flows = {};
+    const knowledge = {
+      retrieve: async () => [
+        { id: 'doc-1', source: '还款政策.pdf', content: '可申请延期还款。', score: 0.2 },
+      ],
+    };
+    const service = new ScenarioTestsService(
+      prisma as any,
+      scenarios as any,
+      flows as any,
+      knowledge as any,
+    );
+
+    const run = await service.run('collection', {
+      input: '我想了解延期还款政策',
+      golden: true,
+    });
+
+    assert.equal(run.result, 'warning');
+    assert.deepEqual(run.riskItems, ['知识库检索置信度低']);
+  });
+
   it('passes a scenario without knowledge base when no other risks are present', async () => {
     let retrieveCalls = 0;
     const prisma = {
@@ -109,5 +151,46 @@ describe('ScenarioTestsService', () => {
     assert.equal(run.result, 'pass');
     assert.deepEqual(run.riskItems, []);
     assert.equal(retrieveCalls, 0);
+  });
+
+  it('fails when expected handoff is not reflected in the default reply', async () => {
+    const prisma = {
+      scenarioTestRun: {
+        create: async ({ data }: any) => ({
+          id: 'run-missing-handoff',
+          ...data,
+          createdAt: new Date('2026-07-07T08:00:00.000Z'),
+        }),
+      },
+    };
+    const scenarios = {
+      get: async () => ({
+        id: 'scenario-1',
+        scenario: 'notification',
+        name: '通知提醒',
+        greeting: '您好，请描述您的问题。',
+        knowledgeBaseId: undefined,
+        escalationRules: [],
+      }),
+    };
+    const flows = {};
+    const knowledge = {
+      retrieve: async () => [],
+    };
+    const service = new ScenarioTestsService(
+      prisma as any,
+      scenarios as any,
+      flows as any,
+      knowledge as any,
+    );
+
+    const run = await service.run('notification', {
+      input: '我需要升级处理这个问题',
+      expectedOutcome: 'handoff',
+      golden: true,
+    });
+
+    assert.equal(run.result, 'fail');
+    assert.deepEqual(run.riskItems, ['未命中预期转人工结果']);
   });
 });
