@@ -4,11 +4,12 @@ import { BadRequestException } from '@nestjs/common';
 import { IntegrationsService } from './integrations.service.js';
 
 const ORIGINAL_ENV = { ...process.env };
+const originalFetch = globalThis.fetch;
 
 describe('IntegrationsService', () => {
   afterEach(() => {
     process.env = { ...ORIGINAL_ENV };
-    delete (globalThis as { fetch?: unknown }).fetch;
+    globalThis.fetch = originalFetch;
   });
 
   it('tests a webhook connector and records a tool call log with request and response evidence', async () => {
@@ -147,5 +148,84 @@ describe('IntegrationsService', () => {
 
     assert.equal(result.status, 'success');
     assert.equal((requestHeaders as Record<string, string>).authorization, 'Basic YWxpY2U6c2VjcmV0');
+  });
+
+  it('allows wildcard allowlisted connector endpoints', async () => {
+    process.env.INTEGRATION_CONNECTOR_ALLOWLIST = '*.example.com';
+    let requestUrl: string | undefined;
+    globalThis.fetch = async (url: string | URL | Request) => {
+      requestUrl = url instanceof Request ? url.url : url.toString();
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    };
+    const prisma = {
+      integrationConnector: {
+        create: async ({ data }: any) => ({
+          id: 'connector-wildcard',
+          ...data,
+          createdAt: new Date('2026-07-07T08:00:00.000Z'),
+          updatedAt: new Date('2026-07-07T08:00:00.000Z'),
+        }),
+      },
+      toolCallLog: {
+        create: async ({ data }: any) => ({
+          id: 'log-wildcard',
+          ...data,
+          createdAt: new Date('2026-07-07T08:00:01.000Z'),
+        }),
+      },
+    };
+    const service = new IntegrationsService(prisma as any);
+
+    const connector = await service.create({
+      name: 'Wildcard CRM',
+      type: 'crm',
+      endpoint: 'https://crm.example.com/hook',
+      authType: 'none',
+    });
+    const result = await service.test(connector.id, { sampleVariables: {} });
+
+    assert.equal(result.status, 'success');
+    assert.equal(requestUrl, 'https://crm.example.com/hook');
+  });
+
+  it('does not fetch stored connector endpoints outside the allowlist', async () => {
+    process.env.INTEGRATION_CONNECTOR_ALLOWLIST = 'api.example.com';
+    let fetchCalls = 0;
+    globalThis.fetch = async () => {
+      fetchCalls += 1;
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    };
+    const prisma = {
+      integrationConnector: {
+        findUnique: async () => ({
+          id: 'connector-blocked',
+          name: 'Blocked CRM',
+          type: 'crm',
+          endpoint: 'https://blocked.example.net/hook',
+          method: 'POST',
+          authType: 'none',
+          authConfig: {},
+          requestTemplate: {},
+          responseMapping: {},
+          enabled: true,
+          createdAt: new Date('2026-07-07T08:00:00.000Z'),
+          updatedAt: new Date('2026-07-07T08:00:00.000Z'),
+        }),
+      },
+      toolCallLog: {
+        create: async ({ data }: any) => ({
+          id: 'log-blocked',
+          ...data,
+          createdAt: new Date('2026-07-07T08:00:01.000Z'),
+        }),
+      },
+    };
+    const service = new IntegrationsService(prisma as any);
+
+    const result = await service.test('connector-blocked', { sampleVariables: {} });
+
+    assert.equal(result.status, 'failed');
+    assert.equal(fetchCalls, 0);
+    assert.match(result.errorMessage ?? '', /allowlist|allowlisted/);
   });
 });
