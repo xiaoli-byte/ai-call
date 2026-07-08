@@ -27,8 +27,9 @@ import { Public, CurrentUser } from './decorators.js';
  * Same-origin BFF proxy on both dev and prod means the dashboard never needs a
  * cross-site cookie, so `sameSite` stays "lax" everywhere (see
  * docs/authz-architecture.md §0 — prod previously used SameSite=None with no
- * CSRF protection; this cookie config fixes that as part of adopting the
- * shared package, ahead of CALL-07).
+ * CSRF protection; this cookie config fixed that as part of adopting the shared
+ * package in CALL-01, which also closed CALL-07's literal scope as a byproduct.
+ * See auth.controller.spec.ts for the regression lock).
  */
 const cookieConfig: AuthCookieConfig = {
   isProd: process.env.NODE_ENV === 'production',
