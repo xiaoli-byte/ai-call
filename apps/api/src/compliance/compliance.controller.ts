@@ -14,13 +14,13 @@ export class ComplianceController {
   ) {}
 
   @Get('policy')
-  @Permissions(PERMISSIONS.SCENARIO_READ)
+  @Permissions(PERMISSIONS.COMPLIANCE_READ)
   getPolicy() {
     return this.complianceService.getPolicy();
   }
 
   @Patch('policy')
-  @Permissions(PERMISSIONS.SCENARIO_UPDATE)
+  @Permissions(PERMISSIONS.COMPLIANCE_UPDATE)
   @UsePipes(new ValidationPipe({ transform: true }))
   async updatePolicy(@Body() dto: CompliancePolicyUpdateDto, @CurrentUser() claims: AuthClaims) {
     const user = claims ? await this.authService.buildUserProfile(claims.sub) : undefined;
@@ -28,7 +28,7 @@ export class ComplianceController {
   }
 
   @Get('audit-logs')
-  @Permissions(PERMISSIONS.SCENARIO_READ)
+  @Permissions(PERMISSIONS.COMPLIANCE_READ)
   listAuditLogs(@Query('limit') limit?: string) {
     return this.complianceService.listAuditLogs(limit ? Number(limit) : undefined);
   }

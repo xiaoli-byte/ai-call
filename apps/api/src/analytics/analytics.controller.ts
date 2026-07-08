@@ -9,7 +9,7 @@ export class AnalyticsController {
   constructor(private readonly analyticsService: AnalyticsService) {}
 
   @Get('overview')
-  @Permissions(PERMISSIONS.CALL_READ)
+  @Permissions(PERMISSIONS.ANALYTICS_READ)
   @UsePipes(new ValidationPipe({ transform: true }))
   overview(@Query() query: AnalyticsQueryDto) {
     return this.analyticsService.getOverview(query);

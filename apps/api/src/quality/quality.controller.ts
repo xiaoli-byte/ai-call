@@ -15,20 +15,20 @@ export class QualityController {
   ) {}
 
   @Get()
-  @Permissions(PERMISSIONS.CALL_READ)
+  @Permissions(PERMISSIONS.QUALITY_READ)
   @UsePipes(new ValidationPipe({ transform: true }))
   list(@Query() query: ListQualityDto) {
     return this.qualityService.list(query);
   }
 
   @Post(':callAttemptId/analyze')
-  @Permissions(PERMISSIONS.CALL_READ)
+  @Permissions(PERMISSIONS.QUALITY_READ)
   analyze(@Param('callAttemptId') callAttemptId: string) {
     return this.qualityService.analyzeCall(callAttemptId);
   }
 
   @Patch(':id')
-  @Permissions(PERMISSIONS.CALL_READ)
+  @Permissions(PERMISSIONS.QUALITY_READ)
   @UsePipes(new ValidationPipe({ transform: true }))
   async correct(@Param('id') id: string, @Body() dto: CorrectCallAnalysisDto, @CurrentUser() claims: AuthClaims) {
     const user = claims ? await this.authService.buildUserProfile(claims.sub) : undefined;

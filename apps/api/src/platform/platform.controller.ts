@@ -9,43 +9,43 @@ export class PlatformController {
   constructor(private readonly platform: PlatformService) {}
 
   @Get('observability/overview')
-  @Permissions(PERMISSIONS.CALL_READ)
+  @Permissions(PERMISSIONS.PLATFORM_READ)
   observability(@Query() query: PlatformQueryDto) {
     return this.platform.getObservabilityOverview(query);
   }
 
   @Get('costs/overview')
-  @Permissions(PERMISSIONS.CALL_READ)
+  @Permissions(PERMISSIONS.PLATFORM_READ)
   costs(@Query() query: PlatformQueryDto) {
     return this.platform.getCostOverview(query);
   }
 
   @Get('templates')
-  @Permissions(PERMISSIONS.FLOW_READ)
+  @Permissions(PERMISSIONS.PLATFORM_READ)
   templates() {
     return this.platform.listTemplates();
   }
 
   @Post('templates/:id/clone')
-  @Permissions(PERMISSIONS.FLOW_CREATE)
+  @Permissions(PERMISSIONS.PLATFORM_CREATE)
   cloneTemplate(@Param('id') id: string, @Body() dto: CloneTemplateDto) {
     return this.platform.cloneTemplate(id, dto);
   }
 
   @Get('organizations/overview')
-  @Permissions(PERMISSIONS.SYSTEM_ROLE_READ)
+  @Permissions(PERMISSIONS.PLATFORM_READ)
   organizations() {
     return this.platform.getOrganizationsOverview();
   }
 
   @Get('datasets/overview')
-  @Permissions(PERMISSIONS.CALL_READ)
+  @Permissions(PERMISSIONS.PLATFORM_READ)
   datasets() {
     return this.platform.getDatasetOverview();
   }
 
   @Get('demo-guide')
-  @Permissions(PERMISSIONS.CALL_READ)
+  @Permissions(PERMISSIONS.PLATFORM_READ)
   demoGuide() {
     return this.platform.getDemoGuide();
   }

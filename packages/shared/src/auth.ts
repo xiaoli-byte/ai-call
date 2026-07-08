@@ -47,6 +47,34 @@ export const PERMISSIONS = {
   SYSTEM_ROLE_CREATE: 'system:role:create',
   SYSTEM_ROLE_UPDATE: 'system:role:update',
   SYSTEM_ROLE_DELETE: 'system:role:delete',
+
+  // 以下模块 CALL-04「去贴标签」：各自持有 3 段码 call:{module}:{action}，
+  // 不再借用 task:*/call:read/scenario:*/system:role:* 等其它模块的权限码。
+
+  // 营销活动（外呼批次）
+  CAMPAIGN_READ: 'call:campaign:read',
+  CAMPAIGN_CREATE: 'call:campaign:create',
+  CAMPAIGN_UPDATE: 'call:campaign:update',
+
+  // 通话质检
+  QUALITY_READ: 'call:quality:read',
+
+  // 合规策略与审计
+  COMPLIANCE_READ: 'call:compliance:read',
+  COMPLIANCE_UPDATE: 'call:compliance:update',
+
+  // 数据分析
+  ANALYTICS_READ: 'call:analytics:read',
+
+  // 租户管理（管理员专属）
+  TENANT_READ: 'call:tenant:read',
+  TENANT_CREATE: 'call:tenant:create',
+  TENANT_UPDATE: 'call:tenant:update',
+  TENANT_DELETE: 'call:tenant:delete',
+
+  // 平台管理（跨租户可观测性/成本/组织/模板，管理员专属）
+  PLATFORM_READ: 'call:platform:read',
+  PLATFORM_CREATE: 'call:platform:create',
 } as const;
 
 export type PermissionCode = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];
@@ -81,6 +109,16 @@ export const ROLE_TEMPLATES = {
       PERMISSIONS.KNOWLEDGE_CREATE,
       PERMISSIONS.KNOWLEDGE_UPDATE,
       PERMISSIONS.KNOWLEDGE_DELETE,
+      // 业务模块（CALL-04 去贴标签后，operator 保留与此前等价的可见范围）
+      PERMISSIONS.CAMPAIGN_READ,
+      PERMISSIONS.CAMPAIGN_CREATE,
+      PERMISSIONS.CAMPAIGN_UPDATE,
+      PERMISSIONS.QUALITY_READ,
+      PERMISSIONS.COMPLIANCE_READ,
+      PERMISSIONS.COMPLIANCE_UPDATE,
+      PERMISSIONS.ANALYTICS_READ,
+      // 注意：租户管理（call:tenant:*）与平台管理（call:platform:*）为管理员专属，
+      // 不授予 operator/viewer。
     ],
   },
   viewer: {
@@ -92,6 +130,11 @@ export const ROLE_TEMPLATES = {
       PERMISSIONS.FLOW_READ,
       PERMISSIONS.SCENARIO_READ,
       PERMISSIONS.KNOWLEDGE_READ,
+      // 业务模块只读（CALL-04）
+      PERMISSIONS.CAMPAIGN_READ,
+      PERMISSIONS.QUALITY_READ,
+      PERMISSIONS.COMPLIANCE_READ,
+      PERMISSIONS.ANALYTICS_READ,
     ],
   },
 } as const;

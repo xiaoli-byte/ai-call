@@ -11,33 +11,33 @@ export class CampaignsController {
   constructor(private readonly campaignsService: CampaignsService) {}
 
   @Get()
-  @Permissions(PERMISSIONS.TASK_READ)
+  @Permissions(PERMISSIONS.CAMPAIGN_READ)
   @UsePipes(new ValidationPipe({ transform: true }))
   list(@Query() query: ListCampaignsDto) {
     return this.campaignsService.list(query);
   }
 
   @Post()
-  @Permissions(PERMISSIONS.TASK_CREATE)
+  @Permissions(PERMISSIONS.CAMPAIGN_CREATE)
   @UsePipes(new ValidationPipe({ transform: true }))
   create(@Body() dto: CreateCampaignDto) {
     return this.campaignsService.create(dto);
   }
 
   @Get(':id')
-  @Permissions(PERMISSIONS.TASK_READ)
+  @Permissions(PERMISSIONS.CAMPAIGN_READ)
   get(@Param('id') id: string) {
     return this.campaignsService.get(id);
   }
 
   @Get(':id/strategy-simulation')
-  @Permissions(PERMISSIONS.TASK_READ)
+  @Permissions(PERMISSIONS.CAMPAIGN_READ)
   simulateStrategy(@Param('id') id: string) {
     return this.campaignsService.simulateStrategy(id);
   }
 
   @Patch(':id/status')
-  @Permissions(PERMISSIONS.TASK_UPDATE)
+  @Permissions(PERMISSIONS.CAMPAIGN_UPDATE)
   @UsePipes(new ValidationPipe({ transform: true }))
   updateStatus(@Param('id') id: string, @Body() dto: UpdateCampaignStatusDto) {
     return this.campaignsService.updateStatus(id, dto);

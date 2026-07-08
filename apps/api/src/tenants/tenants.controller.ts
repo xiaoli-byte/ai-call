@@ -26,39 +26,39 @@ export class TenantsController {
   constructor(private readonly tenantsService: TenantsService) {}
 
   @Get()
-  @Permissions(PERMISSIONS.SYSTEM_ROLE_READ)
+  @Permissions(PERMISSIONS.TENANT_READ)
   list() {
     return this.tenantsService.listTenants();
   }
 
   @Post()
-  @Permissions(PERMISSIONS.SYSTEM_ROLE_CREATE)
+  @Permissions(PERMISSIONS.TENANT_CREATE)
   @UsePipes(adminPipe)
   create(@Body() dto: CreateTenantDto) {
     return this.tenantsService.createTenant(dto);
   }
 
   @Get(':id')
-  @Permissions(PERMISSIONS.SYSTEM_ROLE_READ)
+  @Permissions(PERMISSIONS.TENANT_READ)
   get(@Param('id') id: string) {
     return this.tenantsService.getTenant(id);
   }
 
   @Patch(':id')
-  @Permissions(PERMISSIONS.SYSTEM_ROLE_UPDATE)
+  @Permissions(PERMISSIONS.TENANT_UPDATE)
   @UsePipes(adminPipe)
   update(@Param('id') id: string, @Body() dto: UpdateTenantDto) {
     return this.tenantsService.updateTenant(id, dto);
   }
 
   @Delete(':id')
-  @Permissions(PERMISSIONS.SYSTEM_ROLE_DELETE)
+  @Permissions(PERMISSIONS.TENANT_DELETE)
   delete(@Param('id') id: string) {
     return this.tenantsService.deleteTenant(id);
   }
 
   @Post(':id/provider-configs')
-  @Permissions(PERMISSIONS.SYSTEM_ROLE_UPDATE)
+  @Permissions(PERMISSIONS.TENANT_UPDATE)
   @UsePipes(adminPipe)
   upsertProviderConfig(
     @Param('id') id: string,
@@ -68,21 +68,21 @@ export class TenantsController {
   }
 
   @Post(':id/quota-policies')
-  @Permissions(PERMISSIONS.SYSTEM_ROLE_UPDATE)
+  @Permissions(PERMISSIONS.TENANT_UPDATE)
   @UsePipes(adminPipe)
   setQuotaPolicy(@Param('id') id: string, @Body() dto: SetQuotaPolicyDto) {
     return this.tenantsService.setQuotaPolicy(id, dto);
   }
 
   @Post(':id/quota-check')
-  @Permissions(PERMISSIONS.SYSTEM_ROLE_READ)
+  @Permissions(PERMISSIONS.TENANT_READ)
   @UsePipes(adminPipe)
   checkQuota(@Param('id') id: string, @Body() dto: CheckQuotaDto) {
     return this.tenantsService.checkQuota({ ...dto, tenantId: id });
   }
 
   @Post(':id/usage-events')
-  @Permissions(PERMISSIONS.SYSTEM_ROLE_UPDATE)
+  @Permissions(PERMISSIONS.TENANT_UPDATE)
   @UsePipes(adminPipe)
   recordUsageEvent(@Param('id') id: string, @Body() dto: RecordUsageEventDto) {
     return this.tenantsService.recordUsageEvent({ ...dto, tenantId: id });
