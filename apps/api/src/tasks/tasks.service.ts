@@ -6,6 +6,7 @@ import {
   NotFoundException,
   Optional,
 } from '@nestjs/common';
+import type { ClsService } from 'nestjs-cls';
 import { createHash, randomUUID } from 'node:crypto';
 import {
   CallOutcome,
@@ -33,6 +34,14 @@ import { ScenariosService } from '../scenarios/scenarios.service.js';
 import { GlobalConfigService } from '../global-config/global-config.service.js';
 import { callEventPayload, outboxPayload, toPrismaJson } from './task-payloads.js';
 import type { ProviderCallEventDto } from './dto/provider-call-event.dto.js';
+import {
+  hasViewPerm,
+  isTaskAclBypass,
+  taskGrantWhere,
+  taskVisibilityWhere,
+  type TaskAclSubject,
+} from './task-acl.js';
+import type { Prisma } from '../generated/prisma/client.js';
 
 type ResolvedContext = {
   taskId: string;
@@ -95,6 +104,7 @@ export class TasksService {
     private readonly scenarios: ScenariosService,
     private readonly freeswitch: FreeSwitchService,
     @Optional() private readonly globalConfig?: GlobalConfigService,
+    @Optional() private readonly cls?: ClsService,
   ) {}
 
   async create(dto: CreateTaskDto): Promise<OutboundTask> {
@@ -123,6 +133,9 @@ export class TasksService {
         campaignLeadId: dto.campaignLeadId,
         flowId: dto.flowId,
         flowVersionId: flowVersion?.id,
+        // CALL-05：记录创建人；无 CLS 用户上下文（系统/worker）时留空，
+        // 该任务按 task-acl.ts 的策略对租户内 task:read 持有者可见。
+        ownerId: this.cls?.get<string | undefined>('userId'),
         events: {
           create: {
             type: 'task.created',
@@ -174,11 +187,17 @@ export class TasksService {
     limit?: number;
   }): Promise<TaskListPage> {
     const limit = Math.min(100, Math.max(1, filter.limit ?? 25));
+    const visibility = await this.buildTaskVisibilityWhere();
     const records = await this.prisma.outboundTask.findMany({
       where: {
-        scenario: filter.scenario,
-        status: filter.status,
-        outcome: filter.outcome,
+        AND: [
+          {
+            scenario: filter.scenario,
+            status: filter.status,
+            outcome: filter.outcome,
+          },
+          visibility,
+        ],
       },
       select: this.listSelect,
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
@@ -200,6 +219,47 @@ export class TasksService {
     });
     if (!record) throw new NotFoundException(`Task ${id} not found`);
     return this.toDomain(record);
+  }
+
+  /**
+   * CALL-05：详情端点的资源级 ACL 校验（供 controller 在 `get()` 之后调用）。
+   * 未命中可见性规则时抛 404 而非 403——避免向非授权用户泄露任务是否存在。
+   * 仅用于用户可见的 `GET /tasks/:id`；voice-agent 的 `/context`、worker 内部读取
+   * (`getContext`/`updateStatus` 等经 `get()`) 不经过本方法，不受 ACL 收紧影响。
+   */
+  async assertTaskVisible(id: string): Promise<void> {
+    const subject = this.aclSubject();
+    if (!subject.userId || isTaskAclBypass(subject.roles)) return;
+    const task = await this.prisma.outboundTask.findUnique({
+      where: { id },
+      select: { ownerId: true },
+    });
+    if (!task) return; // 交由调用方的 get() 统一抛 404
+    if (task.ownerId == null || task.ownerId === subject.userId) return;
+    const grant = await this.prisma.resourceGrant.findFirst({
+      where: { ...taskGrantWhere(subject), resourceId: id },
+      select: { perms: true },
+    });
+    if (grant && hasViewPerm(grant.perms)) return;
+    throw new NotFoundException(`Task ${id} not found`);
+  }
+
+  private aclSubject(): TaskAclSubject {
+    return {
+      userId: this.cls?.get<string | undefined>('userId'),
+      roles: this.cls?.get<string[] | undefined>('roles') ?? [],
+    };
+  }
+
+  private async buildTaskVisibilityWhere(): Promise<Prisma.OutboundTaskWhereInput> {
+    const subject = this.aclSubject();
+    if (!subject.userId || isTaskAclBypass(subject.roles)) return {};
+    const grants = await this.prisma.resourceGrant.findMany({
+      where: taskGrantWhere(subject),
+      select: { resourceId: true, perms: true },
+    });
+    const grantedIds = grants.filter((g) => hasViewPerm(g.perms)).map((g) => g.resourceId);
+    return taskVisibilityWhere(subject, grantedIds);
   }
 
   /** Voice Agent 可使用 taskId、attemptId 或 providerCallId 获取同一任务上下文。 */

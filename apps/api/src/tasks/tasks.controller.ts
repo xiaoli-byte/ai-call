@@ -87,8 +87,10 @@ export class TasksController {
 
   @Get(':id')
   @Permissions(PERMISSIONS.TASK_READ)
-  get(@Param('id') id: string) {
-    return this.tasksService.get(id);
+  async get(@Param('id') id: string) {
+    const task = await this.tasksService.get(id);
+    await this.tasksService.assertTaskVisible(id);
+    return task;
   }
 
   /** 派发外呼任务 - 通过 FreeSWITCH ESL originate 发起呼叫 */

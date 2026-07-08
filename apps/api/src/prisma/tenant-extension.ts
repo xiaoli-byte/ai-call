@@ -23,6 +23,8 @@ export const TENANT_MODELS = new Set<string>([
   'LeadImportBatch',
   'ContactAttemptHistory',
   'ScenarioTestRun',
+  // CALL-05：资源级 ACL 授权表，同样按租户强制过滤/注入。
+  'ResourceGrant',
 ]);
 
 /** 仅写入 data、无 where 的操作 */

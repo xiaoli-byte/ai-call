@@ -650,3 +650,171 @@ function providerEventPrisma(
   };
   return prisma;
 }
+
+/** 最小 ClsService 假实现：只暴露 get(key)，供 CALL-05 ACL 测试注入 userId/roles。 */
+function fakeCls(store: Record<string, unknown>) {
+  return { get: (key: string) => store[key] };
+}
+
+describe('TasksService CALL-05 task ACL', () => {
+  it('list() applies owner+grant visibility for a non-bypass user', async () => {
+    const calls: Array<[string, any]> = [];
+    const prisma = {
+      outboundTask: {
+        findMany: async (args: any) => {
+          calls.push(['outboundTask.findMany', args]);
+          return [];
+        },
+      },
+      resourceGrant: {
+        findMany: async (args: any) => {
+          calls.push(['resourceGrant.findMany', args]);
+          return [{ resourceId: 'granted-task', perms: 1 }];
+        },
+      },
+    };
+    const cls = fakeCls({ userId: 'u1', roles: ['operator'] });
+    const service = new TasksService(
+      prisma as never,
+      {} as never,
+      scenarios as never,
+      {} as never,
+      undefined,
+      cls as never,
+    );
+
+    await service.list({});
+
+    const [, grantArgs] = calls.find(([name]) => name === 'resourceGrant.findMany')!;
+    assert.equal(grantArgs.where.resourceType, 'call_task');
+
+    const [, listArgs] = calls.find(([name]) => name === 'outboundTask.findMany')!;
+    assert.deepEqual(listArgs.where.AND[1], {
+      OR: [
+        { ownerId: null },
+        { ownerId: 'u1' },
+        { id: { in: ['granted-task'] } },
+      ],
+    });
+  });
+
+  it('list() skips the ACL query entirely for admin', async () => {
+    const calls: Array<[string, any]> = [];
+    const prisma = {
+      outboundTask: {
+        findMany: async (args: any) => {
+          calls.push(['outboundTask.findMany', args]);
+          return [];
+        },
+      },
+      resourceGrant: {
+        findMany: async () => {
+          throw new Error('resourceGrant.findMany should not be called for admin');
+        },
+      },
+    };
+    const cls = fakeCls({ userId: 'u1', roles: ['admin'] });
+    const service = new TasksService(
+      prisma as never,
+      {} as never,
+      scenarios as never,
+      {} as never,
+      undefined,
+      cls as never,
+    );
+
+    await service.list({});
+
+    const [, listArgs] = calls[0];
+    assert.deepEqual(listArgs.where.AND[1], {});
+  });
+
+  it('assertTaskVisible allows the owner and denies a stranger with 404', async () => {
+    const task = { id: 'task-1', ownerId: 'owner-1' as string | null };
+    const prisma = {
+      outboundTask: {
+        findUnique: async (args: any) =>
+          args.where.id === task.id ? { ownerId: task.ownerId } : null,
+      },
+      resourceGrant: {
+        findFirst: async () => null,
+      },
+    };
+
+    const ownerCls = fakeCls({ userId: 'owner-1', roles: ['operator'] });
+    const ownerService = new TasksService(
+      prisma as never,
+      {} as never,
+      scenarios as never,
+      {} as never,
+      undefined,
+      ownerCls as never,
+    );
+    await ownerService.assertTaskVisible('task-1'); // does not throw
+
+    const strangerCls = fakeCls({ userId: 'stranger-1', roles: ['operator'] });
+    const strangerService = new TasksService(
+      prisma as never,
+      {} as never,
+      scenarios as never,
+      {} as never,
+      undefined,
+      strangerCls as never,
+    );
+    await assert.rejects(
+      () => strangerService.assertTaskVisible('task-1'),
+      (err: any) => err?.status === 404 || err?.constructor?.name === 'NotFoundException',
+    );
+  });
+
+  it('assertTaskVisible allows a stranger with an explicit VIEW grant', async () => {
+    const task = { id: 'task-1', ownerId: 'owner-1' as string | null };
+    const prisma = {
+      outboundTask: {
+        findUnique: async (args: any) =>
+          args.where.id === task.id ? { ownerId: task.ownerId } : null,
+      },
+      resourceGrant: {
+        findFirst: async (args: any) => {
+          assert.equal(args.where.resourceId, 'task-1');
+          return { perms: 1 }; // VIEW
+        },
+      },
+    };
+    const cls = fakeCls({ userId: 'granted-1', roles: ['operator'] });
+    const service = new TasksService(
+      prisma as never,
+      {} as never,
+      scenarios as never,
+      {} as never,
+      undefined,
+      cls as never,
+    );
+    await service.assertTaskVisible('task-1'); // does not throw
+  });
+
+  it('assertTaskVisible allows anyone to see a legacy task with no owner', async () => {
+    const task = { id: 'task-1', ownerId: null as string | null };
+    const prisma = {
+      outboundTask: {
+        findUnique: async (args: any) =>
+          args.where.id === task.id ? { ownerId: task.ownerId } : null,
+      },
+      resourceGrant: {
+        findFirst: async () => {
+          throw new Error('should not need a grant lookup for a legacy task');
+        },
+      },
+    };
+    const cls = fakeCls({ userId: 'anyone', roles: ['viewer'] });
+    const service = new TasksService(
+      prisma as never,
+      {} as never,
+      scenarios as never,
+      {} as never,
+      undefined,
+      cls as never,
+    );
+    await service.assertTaskVisible('task-1'); // does not throw
+  });
+});

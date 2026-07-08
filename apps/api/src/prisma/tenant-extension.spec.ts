@@ -134,8 +134,8 @@ describe('applyTenantScope', () => {
     );
   });
 
-  it('所有 15 张目标模型都在强制过滤集合内', () => {
-    assert.equal(TENANT_MODELS.size, 15);
+  it('所有 16 张目标模型都在强制过滤集合内', () => {
+    assert.equal(TENANT_MODELS.size, 16);
     for (const m of [
       'OutboundScenario',
       'TaskFlow',
@@ -152,6 +152,7 @@ describe('applyTenantScope', () => {
       'LeadImportBatch',
       'ContactAttemptHistory',
       'ScenarioTestRun',
+      'ResourceGrant',
     ]) {
       assert.ok(TENANT_MODELS.has(m), `missing ${m}`);
     }

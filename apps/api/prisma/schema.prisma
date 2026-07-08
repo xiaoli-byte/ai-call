@@ -253,6 +253,11 @@ model OutboundTask {
   createdAt      DateTime                @default(now()) @map("created_at")
   updatedAt      DateTime                @updatedAt @map("updated_at")
   tenantId       String                  @default("tenant_demo") @map("tenant_id")
+  // CALL-05：创建该任务的用户（JWT claims.sub）。为 null 表示历史任务或系统/活动批量
+  // 创建（campaign 派发等）——按当前策略这类任务对本租户内持有 task:read 的用户可见，
+  // 与去 ACL 化之前的行为一致；只有显式由某用户创建的任务才收紧为「仅创建者 + 被授权者
+  // + admin/super_admin」可见。见 task-acl.ts。
+  ownerId        String?                 @map("owner_id") @db.Uuid
 
   @@index([status, scheduledAt])
   @@index([scenarioId])
@@ -260,6 +265,7 @@ model OutboundTask {
   @@index([campaignId, status])
   @@index([campaignLeadId])
   @@index([tenantId])
+  @@index([ownerId])
   @@map("outbound_tasks")
 }
 
@@ -697,4 +703,26 @@ model UserSession {
 
   @@index([userId])
   @@map("user_sessions")
+}
+
+/// 资源级 ACL 显式授权表（CALL-05，对齐 @xiaoli-byte/authz 的 acl/ 模块——
+/// visibleWhereSql/resolveGrantedPerms 假定的通用 resource_grants 结构，见
+/// docs/authz-architecture.md §3/§4）。当前仅 OutboundTask（resourceType = "call_task"）
+/// 接入；subjectType=DEPARTMENT 暂不启用（User 尚无部门字段）。
+model ResourceGrant {
+  id           String   @id @default(uuid()) @db.Uuid
+  tenantId     String   @default("tenant_demo") @map("tenant_id")
+  resourceType String   @map("resource_type")
+  resourceId   String   @map("resource_id")
+  /// "USER" | "DEPARTMENT" | "ROLE"（见 @xiaoli-byte/authz/acl 的 AclSubjectType）
+  subjectType  String   @map("subject_type")
+  subjectId    String   @map("subject_id")
+  /// AclPerm 位掩码（VIEW=1, DOWNLOAD=2, EDIT=4, DELETE=8, MANAGE=16）
+  perms        Int
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@index([tenantId, resourceType, resourceId])
+  @@index([tenantId])
+  @@map("resource_grants")
 }
