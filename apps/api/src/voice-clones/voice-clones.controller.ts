@@ -16,7 +16,7 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import type { Response } from 'express';
 import { PERMISSIONS } from '@ai-call/shared';
-import { Permissions } from '../auth/decorators/permissions.decorator.js';
+import { Permissions } from '../auth/decorators.js';
 import { CreateVoiceCloneDto } from './dto/create-voice-clone.dto.js';
 import { CreateVoiceClonePreviewDto } from './dto/create-voice-clone-preview.dto.js';
 import { SynthesizeVoiceCloneDto } from './dto/synthesize-voice-clone.dto.js';

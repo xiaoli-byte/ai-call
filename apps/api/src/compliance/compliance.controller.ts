@@ -1,13 +1,17 @@
 import { Body, Controller, Get, Patch, Query, UsePipes, ValidationPipe } from '@nestjs/common';
-import { PERMISSIONS, type UserProfile } from '@ai-call/shared';
-import { CurrentUser } from '../auth/decorators/current-user.decorator.js';
-import { Permissions } from '../auth/decorators/permissions.decorator.js';
+import { PERMISSIONS } from '@ai-call/shared';
+import type { AuthClaims } from '@xiaoli-byte/authz/core';
+import { CurrentUser, Permissions } from '../auth/decorators.js';
+import { AuthService } from '../auth/auth.service.js';
 import { CompliancePolicyUpdateDto } from './dto/compliance-policy.dto.js';
 import { ComplianceService } from './compliance.service.js';
 
 @Controller('compliance')
 export class ComplianceController {
-  constructor(private readonly complianceService: ComplianceService) {}
+  constructor(
+    private readonly complianceService: ComplianceService,
+    private readonly authService: AuthService,
+  ) {}
 
   @Get('policy')
   @Permissions(PERMISSIONS.SCENARIO_READ)
@@ -18,7 +22,8 @@ export class ComplianceController {
   @Patch('policy')
   @Permissions(PERMISSIONS.SCENARIO_UPDATE)
   @UsePipes(new ValidationPipe({ transform: true }))
-  updatePolicy(@Body() dto: CompliancePolicyUpdateDto, @CurrentUser() user: UserProfile) {
+  async updatePolicy(@Body() dto: CompliancePolicyUpdateDto, @CurrentUser() claims: AuthClaims) {
+    const user = claims ? await this.authService.buildUserProfile(claims.sub) : undefined;
     return this.complianceService.updatePolicy(dto, user);
   }
 

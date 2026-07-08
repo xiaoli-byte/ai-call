@@ -1,6 +1,6 @@
 import { Body, Controller, Get, Param, Patch, Post, Query, UsePipes, ValidationPipe } from '@nestjs/common';
 import { PERMISSIONS, type HandoffTicketStatus } from '@ai-call/shared';
-import { Permissions } from '../auth/decorators/permissions.decorator.js';
+import { Permissions } from '../auth/decorators.js';
 import { CreateCallbackTaskDto } from './dto/create-callback-task.dto.js';
 import { UpdateHandoffTicketDto } from './dto/update-handoff-ticket.dto.js';
 import { HandoffsService } from './handoffs.service.js';

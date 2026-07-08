@@ -9,64 +9,62 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
-import type { AuthResponse } from '@ai-call/shared';
+import type { AuthResponse, UserProfile } from '@ai-call/shared';
+import type { AuthClaims } from '@xiaoli-byte/authz/core';
+import {
+  accessCookieName,
+  refreshCookieName,
+  buildAccessCookieOptions,
+  buildRefreshCookieOptions,
+  decodeAccessTokenUnsafe,
+  type AuthCookieConfig,
+} from '@xiaoli-byte/authz/jwt';
 import { AuthService } from './auth.service.js';
 import { LoginDto } from './dto/login.dto.js';
-import { Public } from './decorators/public.decorator.js';
-import { CurrentUser } from './decorators/current-user.decorator.js';
-import type { UserProfile } from '@ai-call/shared';
-
-const ACCESS_COOKIE_NAME = 'access_token';
-const REFRESH_COOKIE_NAME = 'refresh_token';
+import { Public, CurrentUser } from './decorators.js';
 
 /**
- * Cookie 配置：环境驱动。
- * - dev（HTTP）：SameSite=Lax, Secure=false，浏览器能正常写入 cookie
- * - prod（HTTPS）：SameSite=None 或 Lax（同源代理后建议 Lax）, Secure=true
- *
- * 同源代理后（Dashboard rewrites / Route Handler）浏览器请求同源 /api/*，
- * 不再需要跨站 cookie，dev 用 Lax 修复 HTTP 环境下 SameSite=None 被拒绝的问题。
+ * Same-origin BFF proxy on both dev and prod means the dashboard never needs a
+ * cross-site cookie, so `sameSite` stays "lax" everywhere (see
+ * docs/authz-architecture.md §0 — prod previously used SameSite=None with no
+ * CSRF protection; this cookie config fixes that as part of adopting the
+ * shared package, ahead of CALL-07).
  */
-const IS_PROD = process.env.NODE_ENV === 'production';
-const COOKIE_SECURE = process.env.COOKIE_SECURE ?? IS_PROD;
-const COOKIE_SAMESITE: 'none' | 'lax' = IS_PROD ? 'none' : 'lax';
-
-function cookieOptions(path: string, maxAge: number) {
-  return {
-    httpOnly: true,
-    secure: COOKIE_SECURE === true || COOKIE_SECURE === 'true',
-    sameSite: COOKIE_SAMESITE,
-    maxAge,
-    path,
-  };
-}
+const cookieConfig: AuthCookieConfig = {
+  isProd: process.env.NODE_ENV === 'production',
+  secureOverride:
+    process.env.COOKIE_SECURE != null
+      ? process.env.COOKIE_SECURE === 'true'
+      : undefined,
+  refreshCookiePath: '/api/auth/refresh',
+};
 
 function setAuthCookies(
   res: Response,
   tokens: { accessToken: string; refreshToken: string },
 ): void {
   res.cookie(
-    ACCESS_COOKIE_NAME,
+    accessCookieName(cookieConfig),
     tokens.accessToken,
-    cookieOptions('/', AuthService.getAccessExpiresInMs()),
+    buildAccessCookieOptions(cookieConfig, AuthService.getAccessExpiresInMs()),
   );
   res.cookie(
-    REFRESH_COOKIE_NAME,
+    refreshCookieName(cookieConfig),
     tokens.refreshToken,
-    cookieOptions('/api/auth/refresh', AuthService.getRefreshExpiresInMs()),
+    buildRefreshCookieOptions(cookieConfig, AuthService.getRefreshExpiresInMs()),
   );
 }
 
 function clearAuthCookies(res: Response): void {
-  res.clearCookie(ACCESS_COOKIE_NAME, {
+  res.clearCookie(accessCookieName(cookieConfig), {
     path: '/',
-    sameSite: COOKIE_SAMESITE,
-    secure: COOKIE_SECURE === true || COOKIE_SECURE === 'true',
+    sameSite: cookieConfig.sameSite ?? 'lax',
+    secure: cookieConfig.secureOverride ?? cookieConfig.isProd,
   });
-  res.clearCookie(REFRESH_COOKIE_NAME, {
-    path: '/api/auth/refresh',
-    sameSite: COOKIE_SAMESITE,
-    secure: COOKIE_SECURE === true || COOKIE_SECURE === 'true',
+  res.clearCookie(refreshCookieName(cookieConfig), {
+    path: cookieConfig.refreshCookiePath,
+    sameSite: cookieConfig.sameSite ?? 'lax',
+    secure: cookieConfig.secureOverride ?? cookieConfig.isProd,
   });
 }
 
@@ -93,15 +91,19 @@ export class AuthController {
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ): Promise<AuthResponse> {
-    const refreshToken = req.cookies?.refresh_token as string | undefined;
+    const refreshToken = req.cookies?.[refreshCookieName(cookieConfig)] as
+      | string
+      | undefined;
     if (!refreshToken) {
       throw new UnauthorizedException('Refresh token required');
     }
     const tokens = await this.authService.refreshTokens(refreshToken);
     setAuthCookies(res, tokens);
-    const user = await this.authService.buildUserProfile(
-      this.extractUserIdFromToken(tokens.accessToken),
-    );
+    const claims = decodeAccessTokenUnsafe(tokens.accessToken);
+    if (!claims?.sub) {
+      throw new UnauthorizedException('Invalid access token');
+    }
+    const user = await this.authService.buildUserProfile(claims.sub);
     return { user };
   }
 
@@ -112,20 +114,15 @@ export class AuthController {
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ): Promise<void> {
-    const refreshToken = req.cookies?.refresh_token as string | undefined;
+    const refreshToken = req.cookies?.[refreshCookieName(cookieConfig)] as
+      | string
+      | undefined;
     await this.authService.logout(refreshToken);
     clearAuthCookies(res);
   }
 
   @Get('me')
-  me(@CurrentUser() user: UserProfile): UserProfile {
-    return user;
-  }
-
-  private extractUserIdFromToken(token: string): string {
-    const payload = JSON.parse(
-      Buffer.from(token.split('.')[1] ?? '', 'base64url').toString('utf8'),
-    ) as { sub: string };
-    return payload.sub;
+  async me(@CurrentUser() claims: AuthClaims): Promise<UserProfile> {
+    return this.authService.buildUserProfile(claims.sub);
   }
 }

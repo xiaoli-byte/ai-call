@@ -12,8 +12,8 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { PERMISSIONS } from '@ai-call/shared';
 import { KnowledgeBaseService } from './knowledge-base.service.js';
-import { Permissions } from '../auth/decorators/permissions.decorator.js';
-import { Public } from '../auth/decorators/public.decorator.js';
+import { Permissions } from '../auth/decorators.js';
+import { Public } from '../auth/decorators.js';
 import { ServiceAuthGuard } from '../common/service-auth.guard.js';
 
 /**

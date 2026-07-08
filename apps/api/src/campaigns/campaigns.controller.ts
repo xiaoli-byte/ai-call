@@ -1,6 +1,6 @@
 import { Body, Controller, Get, Param, Patch, Post, Query, UsePipes, ValidationPipe } from '@nestjs/common';
 import { PERMISSIONS } from '@ai-call/shared';
-import { Permissions } from '../auth/decorators/permissions.decorator.js';
+import { Permissions } from '../auth/decorators.js';
 import { CampaignsService } from './campaigns.service.js';
 import { CreateCampaignDto } from './dto/create-campaign.dto.js';
 import { ListCampaignsDto } from './dto/list-campaigns.dto.js';

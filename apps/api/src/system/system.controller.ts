@@ -9,7 +9,7 @@ import {
 } from '@nestjs/common';
 import { PERMISSIONS } from '@ai-call/shared';
 import type { PermissionCode } from '@ai-call/shared';
-import { Permissions } from '../auth/decorators/permissions.decorator.js';
+import { Permissions } from '../auth/decorators.js';
 import { SystemService } from './system.service.js';
 
 @Controller('system')

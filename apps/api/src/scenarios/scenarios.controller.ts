@@ -10,7 +10,7 @@ import {
   ValidationPipe,
 } from '@nestjs/common';
 import { PERMISSIONS } from '@ai-call/shared';
-import { Permissions } from '../auth/decorators/permissions.decorator.js';
+import { Permissions } from '../auth/decorators.js';
 import { ScenariosService } from './scenarios.service.js';
 import { CreateScenarioDto } from './dto/create-scenario.dto.js';
 import { UpdateScenarioDto } from './dto/update-scenario.dto.js';

@@ -10,7 +10,7 @@ import {
   ValidationPipe,
 } from '@nestjs/common';
 import { PERMISSIONS } from '@ai-call/shared';
-import { Permissions } from '../auth/decorators/permissions.decorator.js';
+import { Permissions } from '../auth/decorators.js';
 import { CheckQuotaDto } from './dto/check-quota.dto.js';
 import { CreateTenantDto } from './dto/create-tenant.dto.js';
 import { RecordUsageEventDto } from './dto/record-usage-event.dto.js';

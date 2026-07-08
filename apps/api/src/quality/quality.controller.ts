@@ -1,14 +1,18 @@
 import { Body, Controller, Get, Param, Patch, Post, Query, UsePipes, ValidationPipe } from '@nestjs/common';
-import { PERMISSIONS, type UserProfile } from '@ai-call/shared';
-import { CurrentUser } from '../auth/decorators/current-user.decorator.js';
-import { Permissions } from '../auth/decorators/permissions.decorator.js';
+import { PERMISSIONS } from '@ai-call/shared';
+import type { AuthClaims } from '@xiaoli-byte/authz/core';
+import { CurrentUser, Permissions } from '../auth/decorators.js';
+import { AuthService } from '../auth/auth.service.js';
 import { CorrectCallAnalysisDto } from './dto/correct-call-analysis.dto.js';
 import { ListQualityDto } from './dto/list-quality.dto.js';
 import { QualityService } from './quality.service.js';
 
 @Controller('quality')
 export class QualityController {
-  constructor(private readonly qualityService: QualityService) {}
+  constructor(
+    private readonly qualityService: QualityService,
+    private readonly authService: AuthService,
+  ) {}
 
   @Get()
   @Permissions(PERMISSIONS.CALL_READ)
@@ -26,7 +30,8 @@ export class QualityController {
   @Patch(':id')
   @Permissions(PERMISSIONS.CALL_READ)
   @UsePipes(new ValidationPipe({ transform: true }))
-  correct(@Param('id') id: string, @Body() dto: CorrectCallAnalysisDto, @CurrentUser() user: UserProfile) {
+  async correct(@Param('id') id: string, @Body() dto: CorrectCallAnalysisDto, @CurrentUser() claims: AuthClaims) {
+    const user = claims ? await this.authService.buildUserProfile(claims.sub) : undefined;
     return this.qualityService.correctAnalysis(id, dto, user);
   }
 }

@@ -2,7 +2,7 @@ import 'reflect-metadata';
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { GUARDS_METADATA } from '@nestjs/common/constants.js';
-import { IS_PUBLIC_KEY } from './auth/decorators/public.decorator.js';
+import { IS_PUBLIC_KEY } from '@xiaoli-byte/authz/nestjs';
 import { ServiceAuthGuard } from './common/service-auth.guard.js';
 import { KnowledgeBaseController } from './knowledge-base/knowledge-base.controller.js';
 import { MetricsController } from './metrics/metrics.controller.js';

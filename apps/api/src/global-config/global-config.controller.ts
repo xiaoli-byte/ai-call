@@ -6,16 +6,20 @@ import {
   UsePipes,
   ValidationPipe,
 } from '@nestjs/common';
-import { PERMISSIONS, type UserProfile } from '@ai-call/shared';
-import { CurrentUser } from '../auth/decorators/current-user.decorator.js';
-import { Permissions } from '../auth/decorators/permissions.decorator.js';
+import { PERMISSIONS } from '@ai-call/shared';
+import type { AuthClaims } from '@xiaoli-byte/authz/core';
+import { CurrentUser, Permissions } from '../auth/decorators.js';
+import { AuthService } from '../auth/auth.service.js';
 import { UpdateGlobalConfigDto } from './dto/update-global-config.dto.js';
 import { GlobalConfigService } from './global-config.service.js';
 
 @Controller('global-config')
 @Permissions(PERMISSIONS.SCENARIO_READ)
 export class GlobalConfigController {
-  constructor(private readonly globalConfigService: GlobalConfigService) {}
+  constructor(
+    private readonly globalConfigService: GlobalConfigService,
+    private readonly authService: AuthService,
+  ) {}
 
   @Get()
   get() {
@@ -25,7 +29,8 @@ export class GlobalConfigController {
   @Patch()
   @Permissions(PERMISSIONS.SCENARIO_UPDATE)
   @UsePipes(new ValidationPipe({ transform: true }))
-  update(@Body() dto: UpdateGlobalConfigDto, @CurrentUser() user: UserProfile) {
+  async update(@Body() dto: UpdateGlobalConfigDto, @CurrentUser() claims: AuthClaims) {
+    const user = claims ? await this.authService.buildUserProfile(claims.sub) : undefined;
     return this.globalConfigService.update(dto, user);
   }
 }

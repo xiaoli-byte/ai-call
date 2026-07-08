@@ -17,8 +17,8 @@ import { TasksService } from './tasks.service.js';
 import { CreateTaskDto } from './dto/create-task.dto.js';
 import { CreateTaskBatchDto } from './dto/create-task-batch.dto.js';
 import { ServiceAuthGuard } from '../common/service-auth.guard.js';
-import { Permissions } from '../auth/decorators/permissions.decorator.js';
-import { Public } from '../auth/decorators/public.decorator.js';
+import { Permissions } from '../auth/decorators.js';
+import { Public } from '../auth/decorators.js';
 import {
   HangupDto,
   FlowActionDto,

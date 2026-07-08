@@ -1,6 +1,6 @@
 import { Body, Controller, Get, Param, Post, Query, UsePipes, ValidationPipe } from '@nestjs/common';
 import { PERMISSIONS } from '@ai-call/shared';
-import { Permissions } from '../auth/decorators/permissions.decorator.js';
+import { Permissions } from '../auth/decorators.js';
 import { CreateIntegrationConnectorDto } from './dto/create-integration-connector.dto.js';
 import { TestIntegrationConnectorDto } from './dto/test-integration-connector.dto.js';
 import { IntegrationsService } from './integrations.service.js';

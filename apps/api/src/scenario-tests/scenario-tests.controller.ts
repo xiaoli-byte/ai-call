@@ -1,6 +1,6 @@
 import { Body, Controller, Get, Param, Post, UsePipes, ValidationPipe } from '@nestjs/common';
 import { PERMISSIONS } from '@ai-call/shared';
-import { Permissions } from '../auth/decorators/permissions.decorator.js';
+import { Permissions } from '../auth/decorators.js';
 import { RunScenarioTestDto } from './dto/run-scenario-test.dto.js';
 import { ScenarioTestsService } from './scenario-tests.service.js';
 

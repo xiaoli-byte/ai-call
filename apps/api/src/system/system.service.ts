@@ -8,10 +8,14 @@ import { hash } from 'bcryptjs';
 import { ALL_PERMISSIONS } from '@ai-call/shared';
 import type { PermissionCode } from '@ai-call/shared';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { RolePermissionMapRefresher } from '../auth/role-permission-map.refresher.js';
 
 @Injectable()
 export class SystemService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly rolePermissionMapRefresher: RolePermissionMapRefresher,
+  ) {}
 
   // ===== 用户管理 =====
 
@@ -168,6 +172,7 @@ export class SystemService {
           : undefined,
       },
     });
+    await this.rolePermissionMapRefresher.refresh();
     return { id: role.id };
   }
 
@@ -206,6 +211,7 @@ export class SystemService {
     }
 
     await this.prisma.role.update({ where: { id }, data });
+    await this.rolePermissionMapRefresher.refresh();
   }
 
   async deleteRole(id: string) {
@@ -223,6 +229,7 @@ export class SystemService {
       );
     }
     await this.prisma.role.delete({ where: { id } });
+    await this.rolePermissionMapRefresher.refresh();
   }
 
   // ===== 权限查询 =====

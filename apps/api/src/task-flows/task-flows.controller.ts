@@ -17,8 +17,8 @@ import { TaskFlowsService } from './task-flows.service.js';
 import { CreateTaskFlowDto } from './dto/create-task-flow.dto.js';
 import { UpdateTaskFlowDto } from './dto/update-task-flow.dto.js';
 import { ServiceAuthGuard } from '../common/service-auth.guard.js';
-import { Permissions } from '../auth/decorators/permissions.decorator.js';
-import { Public } from '../auth/decorators/public.decorator.js';
+import { Permissions } from '../auth/decorators.js';
+import { Public } from '../auth/decorators.js';
 
 /**
  * 外呼任务流程 Controller

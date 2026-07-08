@@ -1,6 +1,6 @@
 import { Controller, Get, Param, Query, UsePipes, ValidationPipe } from '@nestjs/common';
 import { PERMISSIONS } from '@ai-call/shared';
-import { Permissions } from '../auth/decorators/permissions.decorator.js';
+import { Permissions } from '../auth/decorators.js';
 import { CallsService } from './calls.service.js';
 import { ListCallsDto } from './dto/list-calls.dto.js';
 

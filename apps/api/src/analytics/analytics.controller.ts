@@ -1,6 +1,6 @@
 import { Controller, Get, Query, UsePipes, ValidationPipe } from '@nestjs/common';
 import { PERMISSIONS } from '@ai-call/shared';
-import { Permissions } from '../auth/decorators/permissions.decorator.js';
+import { Permissions } from '../auth/decorators.js';
 import { AnalyticsService } from './analytics.service.js';
 import { AnalyticsQueryDto } from './dto/analytics-query.dto.js';
 

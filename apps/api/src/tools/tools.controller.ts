@@ -1,6 +1,6 @@
 import { Body, Controller, Post, UseGuards } from '@nestjs/common';
 import { ToolsService } from './tools.service.js';
-import { Public } from '../auth/decorators/public.decorator.js';
+import { Public } from '../auth/decorators.js';
 import { ServiceAuthGuard } from '../common/service-auth.guard.js';
 
 /**

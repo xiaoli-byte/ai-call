@@ -2,7 +2,7 @@ import 'reflect-metadata';
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { PERMISSIONS } from '@ai-call/shared';
-import { PERMISSIONS_KEY } from './auth/decorators/permissions.decorator.js';
+import { PERMISSIONS_KEY } from '@xiaoli-byte/authz/nestjs';
 import { HandoffsController } from './handoffs/handoffs.controller.js';
 import { IntegrationsController } from './integrations/integrations.controller.js';
 import { ScenarioTestsController } from './scenario-tests/scenario-tests.controller.js';
