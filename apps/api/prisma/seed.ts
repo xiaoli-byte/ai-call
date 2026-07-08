@@ -296,6 +296,16 @@ function buildPresaleFlow(): { nodes: FlowNode[]; edges: FlowEdge[] } {
 // ============================================================
 
 async function seedAuth(): Promise<void> {
+  // CALL-02：共享默认租户（与 ai-knowledge BOOTSTRAP_TENANT_ID 对齐为 tenant_demo）。
+  // 业务表 tenant_id 默认值与迁移回填均指向它；先建，保证外键/引用一致。
+  console.log('🌱 Seeding default tenant...');
+  await prisma.tenant.upsert({
+    where: { id: 'tenant_demo' },
+    update: {},
+    create: { id: 'tenant_demo', slug: 'demo', name: 'Demo 租户', status: 'active' },
+  });
+  console.log('  ✅ tenant tenant_demo');
+
   console.log('🌱 Seeding permissions & roles...');
 
   const permissionMap = new Map<PermissionCode, string>();

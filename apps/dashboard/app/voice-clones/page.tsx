@@ -321,24 +321,24 @@ export default function VoiceClonesPage() {
 
   return (
     <div className={styles.page}>
-      <header className={styles.header}>
-        <button type="button" className={styles.backButton} onClick={() => router.back()}>
-          <ChevronLeft size={15} />
-          返回
-        </button>
-        <div className={styles.titleRow}>
-          <span className={styles.titleIcon}>
-            <Wand2 size={18} />
-          </span>
-          <div>
-            <h1>音色克隆</h1>
-            <p>上传或录制真人音频，一键复刻专属音色用于智能外呼</p>
-          </div>
-        </div>
-      </header>
-
       <div className={styles.layout}>
         <main className={styles.main}>
+          <header className={styles.header}>
+            <button type="button" className={styles.backButton} onClick={() => router.back()}>
+              <ChevronLeft size={15} />
+              返回
+            </button>
+            <div className={styles.titleRow}>
+              <span className={styles.titleIcon}>
+                <Wand2 size={18} />
+              </span>
+              <div>
+                <h1>音色克隆</h1>
+                <p>上传或录制真人音频，一键复刻专属音色用于智能外呼</p>
+              </div>
+            </div>
+          </header>
+
           <section className={styles.section}>
             <div className={styles.sectionTitle}>
               <StepBadge n={1} />

@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, Pencil, Plus, Trash2 } from 'lucide-react';
+import { ArrowLeft, Info, Pencil, Plus, Trash2 } from 'lucide-react';
 import {
   DEFAULT_OUTBOUND_RULES,
   type GlobalApiPluginConfig,
@@ -14,11 +14,32 @@ import {
 import { useGlobalConfig, useGlobalConfigMutations } from '@/hooks/use-global-config';
 import { cn } from '@/lib/utils';
 import { appToast } from '@/lib/toast';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 
 import styles from './global-config.module.scss';
 
 type GlobalConfigTab = 'variables' | 'api' | 'outbound-rules';
 type NumberListKey = 'blockedNumbers' | 'globalWhitelist';
+
+type VariableListRow = {
+  key: string;
+  item: GlobalVariableConfig;
+  editing: boolean;
+  isNew: boolean;
+};
+
+type VariableRowDraft = {
+  original?: GlobalVariableConfig;
+  draft: GlobalVariableConfig;
+  isNew: boolean;
+};
 
 type NumberListRow = {
   key: string;
@@ -32,6 +53,12 @@ type NumberRowDraft = {
   original?: GlobalOutboundNumberListEntry;
   draft: GlobalOutboundNumberListEntry;
   isNew: boolean;
+};
+
+type ApiPluginDialogState = {
+  mode: 'create' | 'edit';
+  index?: number;
+  draft: GlobalApiPluginConfig;
 };
 
 function TabButton({
@@ -181,7 +208,9 @@ export default function GlobalConfigPage() {
   const { update } = useGlobalConfigMutations();
   const [tab, setTab] = useState<GlobalConfigTab>('variables');
   const [variables, setVariables] = useState<GlobalVariableConfig[]>([]);
+  const [variableRowDrafts, setVariableRowDrafts] = useState<Record<string, VariableRowDraft>>({});
   const [apiPlugins, setApiPlugins] = useState<GlobalApiPluginConfig[]>([]);
+  const [apiPluginDialog, setApiPluginDialog] = useState<ApiPluginDialogState | null>(null);
   const [outboundRules, setOutboundRules] = useState<GlobalOutboundRulesConfig>(
     cloneOutboundRules(DEFAULT_OUTBOUND_RULES),
   );
@@ -201,6 +230,7 @@ export default function GlobalConfigPage() {
     }
     suppressNextAutoSaveRef.current = true;
     setVariables((data.globalVariables ?? []).map((item) => ({ ...item })));
+    setVariableRowDrafts({});
     setApiPlugins((data.apiPlugins ?? []).map((item) => ({ ...item })));
     const rules = cloneOutboundRules(data.outboundRules ?? DEFAULT_OUTBOUND_RULES);
     setOutboundRules(rules);
@@ -249,12 +279,145 @@ export default function GlobalConfigPage() {
     variables,
   ]);
 
-  function updateVariable(index: number, patch: Partial<GlobalVariableConfig>) {
-    setVariables((prev) => prev.map((item, i) => (i === index ? { ...item, ...patch } : item)));
+  function getVariableRows(): VariableListRow[] {
+    const savedRows = variables.map((item, index) => {
+      const key = createVariableRowKey(item, index);
+      const draft = variableRowDrafts[key];
+      return {
+        key,
+        item: draft?.draft ?? item,
+        editing: Boolean(draft),
+        isNew: false,
+      };
+    });
+    const newRows = Object.entries(variableRowDrafts)
+      .filter(([, draft]) => draft.isNew)
+      .map(([key, draft]) => ({
+        key,
+        item: draft.draft,
+        editing: true,
+        isNew: true,
+      }));
+    return [...savedRows, ...newRows];
   }
 
-  function updatePlugin(index: number, patch: Partial<GlobalApiPluginConfig>) {
-    setApiPlugins((prev) => prev.map((item, i) => (i === index ? { ...item, ...patch } : item)));
+  function addVariableItem() {
+    const draft: GlobalVariableConfig = {
+      key: '',
+      label: '',
+      description: '',
+      defaultValue: '',
+    };
+    setVariableRowDrafts((prev) => ({
+      ...prev,
+      [`variable:new:${createListEntryId()}`]: {
+        draft,
+        isNew: true,
+      },
+    }));
+  }
+
+  function editVariableItem(key: string) {
+    const item = findVariableItemByKey(key);
+    if (!item) return;
+    setVariableRowDrafts((prev) => ({
+      ...prev,
+      [key]: {
+        original: item,
+        draft: { ...item },
+        isNew: false,
+      },
+    }));
+  }
+
+  function updateVariableDraft(key: string, patch: Partial<GlobalVariableConfig>) {
+    setVariableRowDrafts((prev) => {
+      const draft = prev[key];
+      if (!draft) return prev;
+      return {
+        ...prev,
+        [key]: {
+          ...draft,
+          draft: { ...draft.draft, ...patch },
+        },
+      };
+    });
+  }
+
+  function cancelVariableDraft(key: string) {
+    setVariableRowDrafts((prev) => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+  }
+
+  function saveVariableDraft(key: string) {
+    const draft = variableRowDrafts[key];
+    if (!draft) return;
+    const entry = normalizeGlobalVariableEntry(draft.draft);
+    if (!entry?.key) {
+      appToast.error('请输入变量标识');
+      return;
+    }
+    setVariables((prev) => (
+      draft.isNew
+        ? [...prev, entry]
+        : prev.map((item, index) => (createVariableRowKey(item, index) === key ? entry : item))
+    ));
+    cancelVariableDraft(key);
+  }
+
+  function deleteVariableItem(key: string) {
+    setVariables((prev) => prev.filter((item, index) => createVariableRowKey(item, index) !== key));
+    cancelVariableDraft(key);
+  }
+
+  function findVariableItemByKey(key: string) {
+    return variables.find((item, index) => createVariableRowKey(item, index) === key);
+  }
+
+  function openCreatePluginDialog() {
+    setApiPluginDialog({
+      mode: 'create',
+      draft: {
+        name: '',
+        description: '',
+        enabled: true,
+        method: 'POST',
+        url: '',
+        timeoutSeconds: 10,
+      },
+    });
+  }
+
+  function openEditPluginDialog(index: number) {
+    const plugin = apiPlugins[index];
+    if (!plugin) return;
+    setApiPluginDialog({
+      mode: 'edit',
+      index,
+      draft: { ...plugin },
+    });
+  }
+
+  function updatePluginDraft(patch: Partial<GlobalApiPluginConfig>) {
+    setApiPluginDialog((prev) => (
+      prev ? { ...prev, draft: { ...prev.draft, ...patch } } : prev
+    ));
+  }
+
+  function savePluginDialog() {
+    if (!apiPluginDialog) return;
+    const plugin = normalizeApiPluginEntry(apiPluginDialog.draft);
+    if (!plugin) return;
+
+    setApiPlugins((prev) => (
+      apiPluginDialog.mode === 'create'
+        ? [...prev, plugin]
+        : prev.map((item, index) => (index === apiPluginDialog.index ? plugin : item))
+    ));
+    setApiPluginDialog(null);
   }
 
   function updateOutboundRules(patch: Partial<GlobalOutboundRulesConfig>) {
@@ -443,71 +606,117 @@ export default function GlobalConfigPage() {
       </div>
 
       <div className="scenario-tabs">
-        <TabButton active={tab === 'variables'} onClick={() => setTab('variables')}>变量配置</TabButton>
-        <TabButton active={tab === 'api'} onClick={() => setTab('api')}>API插件</TabButton>
+        <TabButton active={tab === 'variables'} onClick={() => setTab('variables')}>全局变量</TabButton>
+        <TabButton active={tab === 'api'} onClick={() => setTab('api')}>API 插件</TabButton>
         <TabButton active={tab === 'outbound-rules'} onClick={() => setTab('outbound-rules')}>外呼规则</TabButton>
       </div>
 
       <section className="scenario-section global-config-section">
         {tab === 'variables' && (
           <div className="scenario-global-panel">
-            <p className="scenario-muted-line">这些变量可在场景配置、外呼流程和创建任务时复用。</p>
-            <div className="scenario-config-scroll">
-              <table className="scenario-config-table">
+            <div className="global-variable-tip">
+              <Info size={14} />
+              定义后可在话术模板和流程节点中通过 <code>{'{{key}}'}</code> 语法引用，修改保存后对新会话立即生效。
+            </div>
+            <div className="scenario-config-scroll global-variable-scroll">
+              <table className="scenario-config-table global-variable-table">
                 <thead>
                   <tr>
-                    <th>变量名称</th>
-                    <th>变量显示名称</th>
-                    <th>变量描述</th>
+                    <th>变量标识</th>
+                    <th>显示名称</th>
+                    <th>描述</th>
+                    <th>默认值</th>
                     <th>操作</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {variables.map((item, index) => (
-                    <tr key={`${item.key}-${index}`}>
+                  {getVariableRows().map((row) => {
+                    const { item } = row;
+                    return (
+                    <tr key={row.key}>
                       <td>
-                        <input
-                          className="form-input"
-                          value={item.key}
-                          maxLength={50}
-                          onChange={(event) => updateVariable(index, { key: event.target.value })}
-                          placeholder="请输入变量名称"
-                        />
+                        {row.editing ? (
+                          <input
+                            className="form-input"
+                            value={item.key}
+                            maxLength={50}
+                            onChange={(event) => updateVariableDraft(row.key, { key: event.target.value })}
+                            placeholder="请输入变量标识"
+                          />
+                        ) : (
+                          <span className="global-variable-token">{formatVariableToken(item.key)}</span>
+                        )}
                       </td>
                       <td>
-                        <input
-                          className="form-input"
-                          value={item.label}
-                          maxLength={50}
-                          onChange={(event) => updateVariable(index, { label: event.target.value })}
-                          placeholder="请输入变量显示名称"
-                        />
+                        {row.editing ? (
+                          <input
+                            className="form-input"
+                            value={item.label}
+                            maxLength={50}
+                            onChange={(event) => updateVariableDraft(row.key, { label: event.target.value })}
+                            placeholder="请输入显示名称"
+                          />
+                        ) : (
+                          <span className="global-variable-name-cell">{item.label || item.key || '-'}</span>
+                        )}
                       </td>
                       <td>
-                        <input
-                          className="form-input"
-                          value={item.description ?? ''}
-                          maxLength={100}
-                          onChange={(event) => updateVariable(index, { description: event.target.value })}
-                          placeholder="请输入变量描述"
-                        />
+                        {row.editing ? (
+                          <input
+                            className="form-input"
+                            value={item.description ?? ''}
+                            maxLength={100}
+                            onChange={(event) => updateVariableDraft(row.key, { description: event.target.value })}
+                            placeholder="请输入变量描述"
+                          />
+                        ) : (
+                          <span className="global-variable-description">{item.description || '-'}</span>
+                        )}
+                      </td>
+                      <td>
+                        {row.editing ? (
+                          <input
+                            className="form-input"
+                            value={item.defaultValue ?? ''}
+                            maxLength={100}
+                            onChange={(event) => updateVariableDraft(row.key, { defaultValue: event.target.value })}
+                            placeholder="请输入默认值"
+                          />
+                        ) : (
+                          <span className="global-variable-default">{formatVariableDefaultValue(item)}</span>
+                        )}
                       </td>
                       <td>
                         <div className="scenario-config-actions">
-                          <button
-                            type="button"
-                            onClick={() => setVariables((prev) => prev.filter((_, i) => i !== index))}
-                          >
-                            <Trash2 size={14} />
-                            删除
-                          </button>
+                          {row.editing ? (
+                            <>
+                              <button type="button" onClick={() => saveVariableDraft(row.key)}>
+                                保存
+                              </button>
+                              <button type="button" onClick={() => cancelVariableDraft(row.key)}>
+                                取消
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <button type="button" onClick={() => editVariableItem(row.key)}>
+                                <Pencil size={14} />
+                                编辑
+                              </button>
+                              <button type="button" onClick={() => deleteVariableItem(row.key)}>
+                                <Trash2 size={14} />
+                                删除
+                              </button>
+                            </>
+                          )}
                         </div>
                       </td>
                     </tr>
-                  ))}
-                  {variables.length === 0 && (
+                    );
+                  })}
+                  {getVariableRows().length === 0 && (
                     <tr>
-                      <td colSpan={4} className="scenario-config-empty">
+                      <td colSpan={5} className="scenario-config-empty">
                         {isLoading ? '正在加载配置' : '暂无变量配置'}
                       </td>
                     </tr>
@@ -518,10 +727,7 @@ export default function GlobalConfigPage() {
             <button
               type="button"
               className="scenario-add-link"
-              onClick={() => setVariables((prev) => [
-                ...prev,
-                { key: '', label: '', description: '', defaultValue: '' },
-              ])}
+              onClick={addVariableItem}
             >
               <Plus size={14} />
               添加
@@ -531,13 +737,17 @@ export default function GlobalConfigPage() {
 
         {tab === 'api' && (
           <div className="scenario-global-panel">
-            <p className="scenario-muted-line">这些 API 插件可在外呼流程动作中复用。</p>
+            <div className="scenario-tips">
+              <Info size={14} />
+              <span>API 插件可在外呼流程节点中调用，用于实时查询数据或将结果回写至外部系统。</span>
+            </div>
             <div className="scenario-config-scroll">
               <table className="scenario-config-table api">
                 <thead>
                   <tr>
-                    <th>插件名称</th>
-                    <th>URL</th>
+                    <th>方法</th>
+                    <th>工具名称</th>
+                    <th>接口 URL / 描述</th>
                     <th>状态</th>
                     <th>操作</th>
                   </tr>
@@ -546,33 +756,28 @@ export default function GlobalConfigPage() {
                   {apiPlugins.map((item, index) => (
                     <tr key={`${item.name}-${index}`}>
                       <td>
-                        <input
-                          className="form-input"
-                          value={item.name}
-                          onChange={(event) => updatePlugin(index, { name: event.target.value })}
-                          placeholder="插件名称"
-                        />
+                        <span className={`api-method-tag method-${(item.method ?? 'POST').toLowerCase()}`}>
+                          {item.method ?? 'POST'}
+                        </span>
                       </td>
                       <td>
-                        <input
-                          className="form-input"
-                          value={item.url ?? ''}
-                          onChange={(event) => updatePlugin(index, { url: event.target.value })}
-                          placeholder="https://api.example.com"
-                        />
+                        <span className="api-plugin-name">{item.name || '-'}</span>
                       </td>
                       <td>
-                        <label className="scenario-switch">
-                          <input
-                            type="checkbox"
-                            checked={item.enabled}
-                            onChange={(event) => updatePlugin(index, { enabled: event.target.checked })}
-                          />
-                          <span>{item.enabled ? '启用' : '停用'}</span>
-                        </label>
+                        <div className="api-url-cell">{item.url || '-'}</div>
+                        <div className="api-description-cell">{item.description || '-'}</div>
+                      </td>
+                      <td>
+                        <span className={`api-status-pill ${item.enabled ? 'enabled' : 'disabled'}`}>
+                          {item.enabled ? '启用' : '停用'}
+                        </span>
                       </td>
                       <td>
                         <div className="scenario-config-actions">
+                          <button type="button" onClick={() => openEditPluginDialog(index)}>
+                            <Pencil size={14} />
+                            编辑
+                          </button>
                           <button
                             type="button"
                             onClick={() => setApiPlugins((prev) => prev.filter((_, i) => i !== index))}
@@ -586,7 +791,7 @@ export default function GlobalConfigPage() {
                   ))}
                   {apiPlugins.length === 0 && (
                     <tr>
-                      <td colSpan={4} className="scenario-config-empty">
+                      <td colSpan={5} className="scenario-config-empty">
                         {isLoading ? '正在加载配置' : '暂无 API 插件'}
                       </td>
                     </tr>
@@ -597,20 +802,116 @@ export default function GlobalConfigPage() {
             <button
               type="button"
               className="scenario-add-link"
-              onClick={() => setApiPlugins((prev) => [
-                ...prev,
-                { name: '', enabled: true, method: 'POST', timeoutSeconds: 10 },
-              ])}
+              onClick={openCreatePluginDialog}
             >
               <Plus size={14} />
               添加
             </button>
+            <Dialog open={Boolean(apiPluginDialog)} onOpenChange={(open) => {
+              if (!open) setApiPluginDialog(null);
+            }}>
+              <DialogContent className="api-plugin-dialog">
+                <DialogHeader>
+                  <DialogTitle>{apiPluginDialog?.mode === 'create' ? '新增 API 插件' : '编辑 API 插件'}</DialogTitle>
+                  <DialogDescription>
+                    配置流程节点可调用的外部接口工具。
+                  </DialogDescription>
+                </DialogHeader>
+                {apiPluginDialog && (
+                  <div className="api-plugin-form">
+                    <label className="api-plugin-field">
+                      <span>
+                        <i>*</i>
+                        工具名称
+                      </span>
+                      <input
+                        className="form-input"
+                        value={apiPluginDialog.draft.name}
+                        maxLength={50}
+                        onChange={(event) => updatePluginDraft({ name: event.target.value })}
+                        placeholder="query_order"
+                      />
+                      <small>仅支持英文、数字和下划线，且不能以数字开头。</small>
+                    </label>
+                    <label className="api-plugin-field">
+                      <span>
+                        <i>*</i>
+                        工具描述
+                      </span>
+                      <textarea
+                        className="form-input api-plugin-textarea"
+                        value={apiPluginDialog.draft.description ?? ''}
+                        maxLength={200}
+                        onChange={(event) => updatePluginDraft({ description: event.target.value })}
+                        placeholder="查询订单号"
+                      />
+                    </label>
+                    <div className="api-plugin-grid">
+                      <label className="api-plugin-field">
+                        <span>请求方法</span>
+                        <select
+                          className="form-select"
+                          value={apiPluginDialog.draft.method ?? 'POST'}
+                          onChange={(event) => updatePluginDraft({
+                            method: event.target.value as GlobalApiPluginConfig['method'],
+                          })}
+                        >
+                          <option value="GET">GET</option>
+                          <option value="POST">POST</option>
+                          <option value="PUT">PUT</option>
+                          <option value="PATCH">PATCH</option>
+                          <option value="DELETE">DELETE</option>
+                        </select>
+                      </label>
+                      <div className="api-plugin-field">
+                        <span>状态</span>
+                        <label className="scenario-switch api-plugin-switch">
+                          <input
+                            type="checkbox"
+                            checked={apiPluginDialog.draft.enabled}
+                            onChange={(event) => updatePluginDraft({ enabled: event.target.checked })}
+                          />
+                          <span>{apiPluginDialog.draft.enabled ? '启用' : '停用'}</span>
+                        </label>
+                      </div>
+                    </div>
+                    <label className="api-plugin-field">
+                      <span>
+                        <i>*</i>
+                        接口 URL
+                      </span>
+                      <input
+                        className="form-input"
+                        value={apiPluginDialog.draft.url ?? ''}
+                        onChange={(event) => updatePluginDraft({ url: event.target.value })}
+                        placeholder="https://api.example.com/queryOrder"
+                      />
+                    </label>
+                  </div>
+                )}
+                <DialogFooter>
+                  <button
+                    type="button"
+                    className="api-dialog-secondary"
+                    onClick={() => setApiPluginDialog(null)}
+                  >
+                    取消
+                  </button>
+                  <button type="button" className="api-dialog-primary" onClick={savePluginDialog}>
+                    确定
+                  </button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
           </div>
         )}
 
         {tab === 'outbound-rules' && (
           <div className="scenario-global-panel">
-            <p className="scenario-muted-line">用于控制全局外呼时间、频控和号码名单。</p>
+            <div className="scenario-tips">
+              <Info size={14} />
+              <span>用于控制全局外呼时间、频控和号码名单。</span>
+            </div>
 
             <div className="global-outbound-rules">
               <div className="global-outbound-rule-panel">
@@ -730,15 +1031,40 @@ function buildAutoSaveDto(
   return dto;
 }
 
-function normalizeGlobalVariables(variables: GlobalVariableConfig[]) {
+function normalizeGlobalVariables(variables: GlobalVariableConfig[]): GlobalVariableConfig[] {
   return variables
     .filter((item) => item.key.trim())
-    .map((item) => ({
-      ...item,
-      key: item.key.trim(),
-      label: (item.label ?? '').trim() || item.key.trim(),
-      description: item.description?.trim(),
-    }));
+    .map((item) => normalizeGlobalVariableEntry(item))
+    .filter((item): item is GlobalVariableConfig => Boolean(item));
+}
+
+function normalizeGlobalVariableEntry(
+  item: GlobalVariableConfig,
+): GlobalVariableConfig | undefined {
+  const key = item.key.trim();
+  if (!key) return undefined;
+  const label = (item.label ?? '').trim() || key;
+  const description = item.description?.trim();
+  const defaultValue = item.defaultValue?.trim();
+  const entry: GlobalVariableConfig = { key, label };
+  if (description) entry.description = description;
+  if (defaultValue) entry.defaultValue = defaultValue;
+  if (item.required !== undefined) entry.required = item.required;
+  return entry;
+}
+
+function createVariableRowKey(item: GlobalVariableConfig, index = 0) {
+  return `variable:${item.key || 'empty'}:${index}`;
+}
+
+function formatVariableToken(key: string) {
+  return key ? `{{${key}}}` : '{{key}}';
+}
+
+function formatVariableDefaultValue(item: GlobalVariableConfig) {
+  const value = item.defaultValue;
+  if (value === undefined || value === '') return '-';
+  return value;
 }
 
 function normalizeApiPlugins(apiPlugins: GlobalApiPluginConfig[]) {
@@ -752,6 +1078,40 @@ function normalizeApiPlugins(apiPlugins: GlobalApiPluginConfig[]) {
       method: item.method ?? 'POST',
       timeoutSeconds: item.timeoutSeconds ?? 10,
     }));
+}
+
+function normalizeApiPluginEntry(
+  item: GlobalApiPluginConfig,
+): GlobalApiPluginConfig | undefined {
+  const name = item.name.trim();
+  const url = item.url?.trim();
+  const description = item.description?.trim();
+  if (!name) {
+    appToast.error('请输入工具名称');
+    return undefined;
+  }
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+    appToast.error('工具名称仅支持英文、数字和下划线，且不能以数字开头');
+    return undefined;
+  }
+  if (!description) {
+    appToast.error('请输入工具描述');
+    return undefined;
+  }
+  if (!url) {
+    appToast.error('请输入接口 URL');
+    return undefined;
+  }
+  return {
+    ...item,
+    id: item.id || createPluginId(name),
+    name,
+    description,
+    url,
+    method: item.method ?? 'POST',
+    enabled: item.enabled,
+    timeoutSeconds: item.timeoutSeconds ?? 10,
+  };
 }
 
 function hasIncompletePlugin(apiPlugins: GlobalApiPluginConfig[]) {

@@ -41,9 +41,10 @@ export default function LoginPage() {
     setIsSubmitting(true);
     try {
       const { user } = await apiClient.login(data);
+      const redirectTo = new URLSearchParams(window.location.search).get('redirect') || '/campaigns';
       // 刷新 SWR auth 缓存，让 AuthProvider 拿到新 user
       await mutate(AUTH_KEY, user, { revalidate: false });
-      router.push('/');
+      router.push(redirectTo);
       router.refresh();
     } catch (err) {
       appToast.error(err instanceof Error ? err : '邮箱或密码错误');

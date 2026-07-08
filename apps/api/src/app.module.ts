@@ -24,6 +24,7 @@ import { MetricsModule } from './metrics/metrics.module.js';
 import { IntegrationsModule } from './integrations/integrations.module.js';
 import { HandoffsModule } from './handoffs/handoffs.module.js';
 import { ScenarioTestsModule } from './scenario-tests/scenario-tests.module.js';
+import { PlatformModule } from './platform/platform.module.js';
 
 @Module({
   imports: [
@@ -60,6 +61,7 @@ import { ScenarioTestsModule } from './scenario-tests/scenario-tests.module.js';
     IntegrationsModule,
     HandoffsModule,
     ScenarioTestsModule,
+    PlatformModule,
   ],
 })
 export class AppModule {}

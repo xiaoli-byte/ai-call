@@ -31,8 +31,10 @@ model OutboundScenario {
   tasks                    OutboundTask[]
   createdAt                DateTime          @default(now()) @map("created_at")
   updatedAt                DateTime          @default(now()) @updatedAt @map("updated_at")
+  tenantId                 String            @default("tenant_demo") @map("tenant_id")
 
   @@index([status, updatedAt])
+  @@index([tenantId])
   @@map("outbound_scenarios")
 }
 
@@ -188,7 +190,9 @@ model TaskFlow {
   tasks               OutboundTask[]
   createdAt           DateTime           @default(now()) @map("created_at")
   updatedAt           DateTime           @updatedAt @map("updated_at")
+  tenantId            String             @default("tenant_demo") @map("tenant_id")
 
+  @@index([tenantId])
   @@map("task_flows")
 }
 
@@ -207,9 +211,11 @@ model TaskFlowVersion {
   tasks            OutboundTask[]
   scenarioTestRuns ScenarioTestRun[]
   createdAt        DateTime          @default(now()) @map("created_at")
+  tenantId         String            @default("tenant_demo") @map("tenant_id")
 
   @@unique([flowId, version])
   @@index([flowId, createdAt])
+  @@index([tenantId])
   @@map("task_flow_versions")
 }
 
@@ -246,12 +252,14 @@ model OutboundTask {
   contactHistory ContactAttemptHistory[]
   createdAt      DateTime                @default(now()) @map("created_at")
   updatedAt      DateTime                @updatedAt @map("updated_at")
+  tenantId       String                  @default("tenant_demo") @map("tenant_id")
 
   @@index([status, scheduledAt])
   @@index([scenarioId])
   @@index([flowVersionId])
   @@index([campaignId, status])
   @@index([campaignLeadId])
+  @@index([tenantId])
   @@map("outbound_tasks")
 }
 
@@ -276,10 +284,12 @@ model CallAttempt {
   contactHistory ContactAttemptHistory[]
   createdAt      DateTime                @default(now()) @map("created_at")
   updatedAt      DateTime                @updatedAt @map("updated_at")
+  tenantId       String                  @default("tenant_demo") @map("tenant_id")
 
   @@unique([taskId, attemptNo])
   @@index([taskId, createdAt])
   @@index([status, startedAt])
+  @@index([tenantId])
   @@map("call_attempts")
 }
 
@@ -303,9 +313,11 @@ model Campaign {
   handoffTickets   HandoffTicket[]
   createdAt        DateTime                @default(now()) @map("created_at")
   updatedAt        DateTime                @updatedAt @map("updated_at")
+  tenantId         String                  @default("tenant_demo") @map("tenant_id")
 
   @@index([status, scheduledAt])
   @@index([scenario, createdAt])
+  @@index([tenantId])
   @@map("campaigns")
 }
 
@@ -320,8 +332,10 @@ model LeadImportBatch {
   errors      Json           @default("[]")
   leads       CampaignLead[]
   createdAt   DateTime       @default(now()) @map("created_at")
+  tenantId    String         @default("tenant_demo") @map("tenant_id")
 
   @@index([campaignId, createdAt])
+  @@index([tenantId])
   @@map("lead_import_batches")
 }
 
@@ -341,10 +355,12 @@ model CampaignLead {
   contactHistory  ContactAttemptHistory[]
   createdAt       DateTime                @default(now()) @map("created_at")
   updatedAt       DateTime                @updatedAt @map("updated_at")
+  tenantId        String                  @default("tenant_demo") @map("tenant_id")
 
   @@unique([campaignId, rowNumber])
   @@index([campaignId, status])
   @@index([batchId])
+  @@index([tenantId])
   @@map("campaign_leads")
 }
 
@@ -367,9 +383,11 @@ model CallAnalysis {
   handoffTicket   HandoffTicket?
   createdAt       DateTime       @default(now()) @map("created_at")
   updatedAt       DateTime       @updatedAt @map("updated_at")
+  tenantId        String         @default("tenant_demo") @map("tenant_id")
 
   @@index([taskId])
   @@index([riskLevel, createdAt])
+  @@index([tenantId])
   @@map("call_analyses")
 }
 
@@ -400,10 +418,12 @@ model TranscriptTurn {
   emotion    String?
   externalId String?      @map("external_id")
   createdAt  DateTime     @default(now()) @map("created_at")
+  tenantId   String       @default("tenant_demo") @map("tenant_id")
 
   @@unique([taskId, externalId])
   @@index([taskId, createdAt])
   @@index([attemptId, createdAt])
+  @@index([tenantId])
   @@map("transcript_turns")
 }
 
@@ -416,9 +436,11 @@ model CallEvent {
   type      String
   payload   Json         @default("{}")
   createdAt DateTime     @default(now()) @map("created_at")
+  tenantId  String       @default("tenant_demo") @map("tenant_id")
 
   @@index([taskId, createdAt])
   @@index([attemptId, createdAt])
+  @@index([tenantId])
   @@map("call_events")
 }
 
@@ -436,9 +458,11 @@ model KnowledgeDocument {
   indexedAt       DateTime? @map("indexed_at")
   createdAt       DateTime  @default(now()) @map("created_at")
   updatedAt       DateTime  @updatedAt @map("updated_at")
+  tenantId        String    @default("tenant_demo") @map("tenant_id")
 
   @@index([knowledgeBaseId, indexStatus])
   @@index([knowledgeBaseId, version])
+  @@index([tenantId])
   @@map("knowledge_documents")
 }
 
@@ -476,9 +500,11 @@ model ScenarioTestRun {
   riskItems       Json             @default("[]") @map("risk_items")
   golden          Boolean          @default(false)
   createdAt       DateTime         @default(now()) @map("created_at")
+  tenantId        String           @default("tenant_demo") @map("tenant_id")
 
   @@index([scenarioKey, createdAt])
   @@index([flowId, golden])
+  @@index([tenantId])
   @@map("scenario_test_runs")
 }
 
@@ -552,10 +578,12 @@ model HandoffTicket {
   createdAt         DateTime      @default(now()) @map("created_at")
   updatedAt         DateTime      @updatedAt @map("updated_at")
   completedAt       DateTime?     @map("completed_at")
+  tenantId          String        @default("tenant_demo") @map("tenant_id")
 
   @@index([status, createdAt])
   @@index([campaignId, createdAt])
   @@index([taskId])
+  @@index([tenantId])
   @@map("handoff_tickets")
 }
 
@@ -575,9 +603,11 @@ model ContactAttemptHistory {
   outcome        String?
   attemptedAt    DateTime      @default(now()) @map("attempted_at")
   createdAt      DateTime      @default(now()) @map("created_at")
+  tenantId       String        @default("tenant_demo") @map("tenant_id")
 
   @@index([phoneHash, attemptedAt])
   @@index([campaignId, attemptedAt])
+  @@index([tenantId])
   @@map("contact_attempt_history")
 }
 

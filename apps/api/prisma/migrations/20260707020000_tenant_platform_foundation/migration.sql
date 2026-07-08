@@ -104,7 +104,7 @@ VALUES (
   'default',
   'Default Tenant',
   'active',
-  '{"migration":"phase3-platform-foundation","strategy":"legacy rows remain unscoped until each domain is migrated"}',
+  '{"migration":"tenant-platform-foundation","strategy":"legacy rows remain unscoped until each domain is migrated"}',
   CURRENT_TIMESTAMP
 )
 ON CONFLICT ("id") DO NOTHING;
@@ -114,7 +114,7 @@ VALUES (
   'billing-default',
   'default',
   'trial',
-  '{"migration":"phase3-platform-foundation"}',
+  '{"migration":"tenant-platform-foundation"}',
   CURRENT_TIMESTAMP
 )
 ON CONFLICT ("tenant_id") DO NOTHING;

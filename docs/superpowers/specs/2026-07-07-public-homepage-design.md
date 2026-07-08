@@ -70,23 +70,24 @@ The first action can scroll to the ecommerce script section. The second links to
 
 ### Voice Demo Panel
 
-The hero includes a large rounded demo panel inspired by the reference page.
+The hero includes a large rounded demo panel inspired by the reference page and the provided screen recording. The middle interaction should feel like a lightweight live voice-call stage, not a chat transcript panel.
 
 Visual elements:
 
 - Soft white-blue panel background.
-- Central colorful voice sphere.
-- Small status label: `电商售后回访 · 试用中`.
+- Central colorful voice sphere with slow breathing, glow, and subtle rotation-like motion.
+- Small status label: `电商售后回访 · 试用中`, kept visually quiet.
 - Call controls using familiar phone/keypad symbols.
-- A short transcript in the lower center of the panel.
+- A single compact subtitle area in the lower center of the panel.
+- Subtitle lines should cycle through ecommerce after-sales call turns. Do not render three large chat cards in the hero panel at the same time.
 
-Transcript copy:
+Subtitle sequence:
 
 - `AI 外呼：张先生您好，我是星选商城售后助理，想和您确认订单 A1024 的签收情况。`
 - `客户：包裹还没收到，短信说已经签收了。`
 - `AI 外呼：我已为您查询物流，可能是驿站代签。我可以帮您预约补发，或为您转接人工专员继续处理。`
 
-This is a static product demonstration for the homepage. It does not need to initiate a real call.
+This is a static visual product demonstration for the homepage. It does not need to initiate a real call. The detailed ecommerce dialogue remains in the `电商话术流程试用` section below the fold.
 
 ### Solution Capabilities
 
@@ -217,4 +218,3 @@ Then start the dashboard and verify in browser:
 - New image generation or video assets.
 - Full marketing site with pricing, docs, or blog pages.
 - Reworking the authenticated dashboard navigation beyond the route changes required for `/`.
-

@@ -19,17 +19,23 @@ function isTokenExpired(token: string): boolean {
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
+  const isPublicHome = pathname === '/';
   const isLoginPage = pathname === '/login';
   const accessToken = request.cookies.get('access_token')?.value;
+  const hasValidToken = !!accessToken && !isTokenExpired(accessToken);
+
+  if (isPublicHome) {
+    return NextResponse.next();
+  }
 
   if (isLoginPage) {
-    if (accessToken && !isTokenExpired(accessToken)) {
-      return NextResponse.redirect(new URL('/', request.url));
+    if (hasValidToken) {
+      return NextResponse.redirect(new URL('/campaigns', request.url));
     }
     return NextResponse.next();
   }
 
-  if (!accessToken || isTokenExpired(accessToken)) {
+  if (!hasValidToken) {
     const url = new URL('/login', request.url);
     url.searchParams.set('redirect', pathname);
     return NextResponse.redirect(url);

@@ -14,6 +14,7 @@
 
 - Modify `apps/dashboard/app/page.tsx`: Replace the current authenticated overview content with a static public landing page.
 - Modify `apps/dashboard/app/page.module.scss`: Replace the old KPI/architecture styles with homepage-specific public landing styles.
+- Create `apps/dashboard/__tests__/homepage-public.test.tsx`: Lock the hero demo panel structure so it stays a compact voice stage with one rotating subtitle area rather than a multi-card chat transcript.
 - Modify `apps/dashboard/components/client-layout.tsx`: Treat `/` as a public shell-free route alongside `/login`.
 - Modify `apps/dashboard/middleware.ts`: Allow unauthenticated access to `/`, redirect logged-in login visits to `/campaigns`, and keep dashboard routes protected.
 - Modify `apps/dashboard/app/login/page.tsx`: Honor an explicit `redirect` query parameter and default successful login to `/campaigns`.
@@ -250,9 +251,42 @@ Expected: command exits with code 0.
 ## Task 3: Public Homepage Styling
 
 **Files:**
+- Create: `apps/dashboard/__tests__/homepage-public.test.tsx`
+- Modify: `apps/dashboard/app/page.tsx`
 - Modify: `apps/dashboard/app/page.module.scss`
 
-- [ ] **Step 1: Replace old overview styles**
+- [ ] **Step 1: Add the failing hero voice-stage test**
+
+Create `apps/dashboard/__tests__/homepage-public.test.tsx`:
+
+```tsx
+import { render, screen, within } from '@testing-library/react';
+import { describe, expect, it } from 'vitest';
+import HomePage from '../app/page';
+
+describe('public homepage hero demo', () => {
+  it('uses a compact rotating voice stage instead of rendering all call turns as chat cards', () => {
+    render(<HomePage />);
+
+    const stage = screen.getByLabelText('电商售后回访语音演示');
+
+    expect(within(stage).getByText('电商售后回访 · 试用中')).toBeTruthy();
+    expect(within(stage).getByLabelText('电商售后话术轮播')).toBeTruthy();
+    expect(within(stage).getByText('正在确认订单与签收状态')).toBeTruthy();
+    expect(within(stage).queryByText('包裹还没收到，短信说已经签收了。')).toBeNull();
+  });
+});
+```
+
+Run:
+
+```powershell
+apps/dashboard/node_modules/.bin/vitest.CMD run __tests__/homepage-public.test.tsx
+```
+
+Expected before implementation: the test fails because the hero still renders every call turn as separate transcript text and has no `电商售后话术轮播` subtitle area.
+
+- [ ] **Step 2: Replace old overview styles**
 
 Remove the old `.statCard`, `.architecture`, and KPI styles. Add scoped public homepage styles for:
 
@@ -265,6 +299,8 @@ Remove the old `.statCard`, `.architecture`, and KPI styles. Add scoped public h
 - `.demoPanel`
 - `.voiceSphere`
 - `.scriptLines`
+- `.subtitleTrack`
+- `.subtitleItem`
 - `.callControls`
 - `.section`
 - `.sectionHeader`
@@ -277,7 +313,7 @@ Remove the old `.statCard`, `.architecture`, and KPI styles. Add scoped public h
 - `.finalCta`
 - responsive `@media` blocks
 
-- [ ] **Step 2: Apply visual constraints**
+- [ ] **Step 3: Apply visual constraints**
 
 Ensure the SCSS uses:
 
@@ -285,9 +321,9 @@ Ensure the SCSS uses:
 letter-spacing: 0;
 ```
 
-for major text and buttons, keeps repeated cards at `border-radius: 8px`, and keeps the hero demo panel as the only large rounded showcase panel.
+for major text and buttons, keeps repeated cards at `border-radius: 8px`, and keeps the hero demo panel as the only large rounded showcase panel. The hero voice sphere should have slow breathing/glow motion and the hero subtitle should cycle quietly in one compact lower-center area.
 
-- [ ] **Step 3: Add responsive constraints**
+- [ ] **Step 4: Add responsive constraints**
 
 Add media queries so:
 
@@ -296,15 +332,16 @@ Add media queries so:
 - mobile stacks sections into 1 column,
 - mobile hero transcript and controls do not overlap.
 
-- [ ] **Step 4: Run dashboard typecheck**
+- [ ] **Step 5: Run focused homepage test and dashboard typecheck**
 
 Run:
 
 ```powershell
+apps/dashboard/node_modules/.bin/vitest.CMD run __tests__/homepage-public.test.tsx
 pnpm --filter @ai-call/dashboard test:typecheck
 ```
 
-Expected: command exits with code 0.
+Expected: both commands exit with code 0.
 
 ## Task 4: Browser Verification
 

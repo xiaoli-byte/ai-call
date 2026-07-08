@@ -18,3 +18,4 @@ export * from './integrations.js';
 export * from './handoffs.js';
 export * from './contact-history.js';
 export * from './tenants.js';
+export * from './platform.js';

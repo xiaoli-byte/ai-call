@@ -1,5 +1,5 @@
 /**
- * Phase 3 tenant foundation contract.
+ * Tenant foundation contract for platform operations.
  *
  * Existing product tables intentionally remain tenant-agnostic for now. New
  * platform code should attach tenant-scoped data to DEFAULT_TENANT_ID until a

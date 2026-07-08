@@ -15,6 +15,7 @@ import { complianceEndpoints } from './compliance';
 import { integrationsEndpoints } from './integrations';
 import { handoffsEndpoints } from './handoffs';
 import { scenarioTestsEndpoints } from './scenario-tests';
+import { platformEndpoints } from './platform';
 
 /**
  * 工厂：根据传入的 HttpAdapter（client 或 server）创建完整 API 对象。
@@ -40,6 +41,7 @@ export function createApi(http: HttpAdapter) {
   const integrations = integrationsEndpoints(http);
   const handoffs = handoffsEndpoints(http);
   const scenarioTests = scenarioTestsEndpoints(http);
+  const platform = platformEndpoints(http);
 
   return {
     // 模块化嵌套（新代码推荐）
@@ -59,6 +61,7 @@ export function createApi(http: HttpAdapter) {
     integrations,
     handoffs,
     scenarioTests,
+    platform,
 
     // 顶层扁平别名（兼容旧 apiClient.xxx 调用）
     // auth
@@ -122,6 +125,14 @@ export function createApi(http: HttpAdapter) {
     // scenario tests
     listScenarioTests: scenarioTests.list,
     runScenarioTest: scenarioTests.run,
+    // platform operations
+    getObservabilityOverview: platform.observability,
+    getCostOverview: platform.costs,
+    listIndustryTemplates: platform.templates,
+    cloneIndustryTemplate: platform.cloneTemplate,
+    getOrganizationsOverview: platform.organizations,
+    getDatasetOverview: platform.datasets,
+    getDemoGuide: platform.demoGuide,
     // system（旧代码用 apiClient.users / apiClient.roles / apiClient.permissions）
     users: system.users,
     roles: system.roles,

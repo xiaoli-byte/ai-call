@@ -17,22 +17,27 @@ const NAV_ITEMS_PRIMARY = [
   { href: '/campaigns', label: '外呼活动', icon: 'campaign' },
   { href: '/tasks', label: '外呼任务', icon: 'phone' },
   { href: '/task-flows', label: '外呼流程', icon: 'flow' },
-  { href: '/analytics', label: '效果分析', icon: 'chart' },
-  { href: '/quality', label: '通话质检', icon: 'shield' },
-  { href: '/handoffs', label: '人工承接', icon: 'handoff' },
+  // { href: '/analytics', label: '效果分析', icon: 'chart' },
+  // { href: '/quality', label: '通话质检', icon: 'shield' },
+  // { href: '/handoffs', label: '人工承接', icon: 'handoff' },
+  // { href: '/templates', label: '模板中心', icon: 'flow' },
+  // { href: '/datasets', label: '数据闭环', icon: 'knowledge' },
+  // { href: '/observability', label: '观测与成本', icon: 'chart' },
 ];
 
 const NAV_ITEMS_SECONDARY = [
-  { href: '/scenarios', label: '场景测试', icon: 'scenario' },
-  { href: '/compliance', label: '合规中心', icon: 'check' },
-  { href: '/integrations', label: '集成中心', icon: 'integration' },
+  { href: '/scenarios', label: '场景配置', icon: 'scenario' },
+  // { href: '/compliance', label: '合规中心', icon: 'check' },
+  // { href: '/integrations', label: '集成中心', icon: 'integration' },
   { href: '/voice-clones', label: '音色克隆', icon: 'mic' },
   { href: '/global-config', label: '全局配置', icon: 'key' },
   { href: '/knowledge', label: '知识库', icon: 'knowledge' },
   { href: '/voice-demo', label: '语音演示', icon: 'mic' },
+  // { href: '/demo-guide', label: '演示交付', icon: 'help' },
 ];
 
 const NAV_ITEMS_SYSTEM = [
+  { href: '/organizations', label: '组织管理', icon: 'users' },
   { href: '/system/users', label: '用户管理', icon: 'users' },
   { href: '/system/roles', label: '角色权限', icon: 'shield' },
 ];
@@ -253,6 +258,11 @@ function getBreadcrumb(pathname: string) {
   if (pathname.startsWith('/analytics')) return { group: '工作台', current: '效果分析' };
   if (pathname.startsWith('/quality')) return { group: '工作台', current: '通话质检' };
   if (pathname.startsWith('/handoffs')) return { group: '工作台', current: '人工承接' };
+  if (pathname.startsWith('/templates')) return { group: '工作台', current: '模板中心' };
+  if (pathname.startsWith('/datasets')) return { group: '工作台', current: '数据闭环' };
+  if (pathname.startsWith('/insights')) return { group: '工作台', current: '数据洞察' };
+  if (pathname.startsWith('/observability')) return { group: '工作台', current: '观测与成本' };
+  if (pathname.startsWith('/costs')) return { group: '工作台', current: '成本中心' };
   if (pathname.startsWith('/scenarios')) return { group: '配置', current: '场景测试' };
   if (pathname.startsWith('/compliance')) return { group: '配置', current: '合规中心' };
   if (pathname.startsWith('/integrations')) return { group: '配置', current: '集成中心' };
@@ -260,6 +270,8 @@ function getBreadcrumb(pathname: string) {
   if (pathname.startsWith('/global-config')) return { group: '配置', current: '全局配置' };
   if (pathname.startsWith('/knowledge')) return { group: '配置', current: '知识库' };
   if (pathname.startsWith('/voice-demo')) return { group: '工具', current: '语音演示' };
+  if (pathname.startsWith('/demo-guide')) return { group: '工具', current: '演示交付' };
+  if (pathname.startsWith('/organizations')) return { group: '系统管理', current: '组织管理' };
   if (pathname.startsWith('/system/users')) return { group: '系统管理', current: '用户管理' };
   if (pathname.startsWith('/system/roles')) return { group: '系统管理', current: '角色权限' };
   return { group: '工作台', current: '概览' };
@@ -313,7 +325,7 @@ export function ClientLayout({
 }) {
   const pathname = usePathname();
   const { user } = useAuthStore();
-  const isLoginPage = pathname === '/login';
+  const isPublicPage = pathname === '/' || pathname === '/login';
 
   const [collapsed, setCollapsed] = useState(false);
   const toggleSidebar = () => setCollapsed((prev) => !prev);
@@ -325,7 +337,7 @@ export function ClientLayout({
         p === 'system:role:read',
     ) ?? false;
 
-  if (isLoginPage) {
+  if (isPublicPage) {
     return (
       <AuthProvider>
         <main className="min-h-screen">{children}</main>
