@@ -1,5 +1,7 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit, Optional } from '@nestjs/common';
+import { ClsService } from 'nestjs-cls';
 import { MetricsService } from '../metrics/metrics.service.js';
+import { runAsSystem } from '../prisma/system-context.js';
 import { TasksService } from './tasks.service.js';
 
 @Injectable()
@@ -11,6 +13,7 @@ export class TaskSchedulerService implements OnModuleInit, OnModuleDestroy {
   constructor(
     private readonly tasks: TasksService,
     @Optional() private readonly metrics?: MetricsService,
+    @Optional() private readonly cls?: ClsService,
   ) {}
 
   onModuleInit(): void {
@@ -29,6 +32,13 @@ export class TaskSchedulerService implements OnModuleInit, OnModuleDestroy {
   }
 
   async processDueTasks(): Promise<void> {
+    // 调度 worker 无用户请求 → 无租户 CLS；在系统上下文里跑，绕过租户强制过滤（CALL-03）。
+    return this.cls
+      ? runAsSystem(this.cls, () => this.runDueTasks())
+      : this.runDueTasks();
+  }
+
+  private async runDueTasks(): Promise<void> {
     if (this.processing) return;
     const startedAt = Date.now();
     this.processing = true;

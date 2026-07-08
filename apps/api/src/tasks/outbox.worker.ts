@@ -1,10 +1,12 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit, Optional } from '@nestjs/common';
 import { TaskStatus } from '@ai-call/shared';
+import { ClsService } from 'nestjs-cls';
 import { hostname } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { FreeSwitchService } from '../freeswitch/freeswitch.service.js';
 import { MetricsService } from '../metrics/metrics.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { runAsSystem } from '../prisma/system-context.js';
 import { ActionDeliveryService } from './action-delivery.service.js';
 import {
   callEventPayload,
@@ -35,6 +37,7 @@ export class OutboxWorker implements OnModuleInit, OnModuleDestroy {
     private readonly freeswitch: FreeSwitchService,
     private readonly actions: ActionDeliveryService,
     @Optional() private readonly metrics?: MetricsService,
+    @Optional() private readonly cls?: ClsService,
   ) {}
 
   onModuleInit(): void {
@@ -50,6 +53,13 @@ export class OutboxWorker implements OnModuleInit, OnModuleDestroy {
   }
 
   async processBatch(): Promise<void> {
+    // worker 无用户请求 → 无租户 CLS；在系统上下文里跑，绕过 Prisma 租户强制过滤（CALL-03）。
+    return this.cls
+      ? runAsSystem(this.cls, () => this.runBatch())
+      : this.runBatch();
+  }
+
+  private async runBatch(): Promise<void> {
     if (this.processing) return;
     const startedAt = Date.now();
     this.processing = true;
