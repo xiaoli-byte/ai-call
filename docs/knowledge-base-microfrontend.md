@@ -81,10 +81,9 @@ ai-knowledge web 用 `NEXT_PUBLIC_API_URL`（构建期公开变量，prod 默认
 2. **API 接受共享 cookie**：`jwt.strategy` 改 `fromExtractors([cookieExtractor, bearer])`，cookie 优先解析 `access_token`（直接读 Cookie 头，不依赖 cookie-parser）；`validate` 兼容 claim（单数 `role` ↔ ai-call 复数 `roles`），归一化 `id/name` 供 `/auth/me`。
 3. **web 带 cookie**：client `fetch` 加 `credentials:'include'`；store 加 `setCookieSession`（内存哨兵 token 令路由守卫通过，不写 localStorage）；`(dashboard)/layout` 无本地令牌时先 `/auth/me` 用 cookie 引导会话，失败才跳登录页。
 
-**⚠️ 无状态联合的语义边界（重要）**：ai-call 与 ai-knowledge 是**独立用户表**。ai-call 用户的 `sub` 在 ai-knowledge **无对应记录**，身份靠 token 的 `tenantId`/`role` claim 联合信任：
-- ✅ 租户隔离生效（两侧 `tenantId=tenant_demo`）、按角色的访问生效。
-- ⚠️ **owner 归属功能降级**：ai-knowledge 里「我的文档」「私有文档（owner_id）」对 ai-call 身份不匹配，只能看到租户级可见（`permission_scope=COMPANY/PUBLIC`）内容。
-- 若需完全打通（ai-call 用户在 ai-knowledge 有真实账号、owner 归属也对），需**用户开通/映射**机制（`authz-architecture.md` §9 P3 身份联合，另立工单）。
+**身份模型：惰性联合开通（JIT provisioning，2026-07-10 已落地）**。ai-call 与 ai-knowledge 是独立用户表，ai-call 用户的 `sub` 原本在 ai-knowledge 无记录——纯无状态联合下**写操作会因 `documents.owner_id → users.id` 外键失败**（上传报 `Foreign key constraint violated`）。解法：`jwt.strategy.validate` 首次见到合法但陌生的 `userId` 时，按 token claim **幂等补建一个 user 行**（id=sub、email/name/role 从 claim、`passwordHash` 占位不可本地登录），内存缓存已知 id 避免每请求打库；已存在则 `update:{}` 不覆盖本地资料。对独立部署无影响。
+- ✅ 租户隔离、按角色访问、**owner 归属**（上传文档归该用户、可见自己的 PRIVATE）、按 USER 的 ResourceGrant 授权——**全部生效**。
+- ⚠️ **仍存的边界**（升级为 CALL-13 剩余范围）：跨系统**用户生命周期同步**（ai-call 改角色/停用/删除不自动反映到 ai-knowledge 的开通行——首次建行后 `update:{}` 不再更新）；**email 冲突**（token email 撞已有本地用户但 id 不同时，JIT 只告警不阻断，该身份的 owner 写仍会失败，需人工对齐）。完全打通（生命周期联动 / 独立 IdP）见 `authz-architecture.md` §9 与 backlog **CALL-13**。
 
 **前提硬约束**：**必须同域**（cookie 才同源共享）+ **两侧 JWT 密钥统一**（否则 cookie 验签不过）。
 

@@ -45,7 +45,7 @@
 | CALL-10 | P2 | call | CALL-06 跨仓真隔离联调实测 ✅真环境通过（14/14，修 retrieve 401 bug） | CALL-06,KB-08 | [高风险] |
 | CALL-11 | P2 | call | CALL-05 迁移真库演练(migrate deploy) ✅演练通过（17迁移+结构/回填+seed幂等） | CALL-05 | [高风险] |
 | CALL-12 | P2 | both | 激活按库过滤：kb id ↔ folder id 对齐/映射 🟢方案定：配置对齐（无需代码，运营激活） | CALL-10 | 中 |
-| CALL-13 | P3 | both | 完整身份联合：ai-call 用户在 ai-knowledge 开通/映射真实账号（owner 归属打通） 🔵未排期 | CALL-12,§9 | [高风险] |
+| CALL-13 | P3 | both | 身份联合：ai-call 用户在 ai-knowledge 开通/映射真实账号 🟡JIT 开通(a)已落地；剩生命周期同步/email 冲突/独立 IdP | CALL-12,§9 | [高风险] |
 
 **关键路径**：AUTHZ-01→02→(03/04/05/06) → KB-01→02→03→04 →(05/08) → CALL-01→02→03→06 →（上线前）CALL-10/11。
 **可并行**：AUTHZ-03/04/05/06 在 02 后可并行；KB-06/07 与 KB-03/04 可并行；CALL-04/07 与 CALL-02/03 可并行；CALL-08/09（范围决策项）与 CALL-10/11（上线阻塞项）互不依赖，可并行。
@@ -239,8 +239,8 @@
 
 - 签发收敛为独立 identity 服务 / 真 OIDC SSO（Logto/Keycloak/SuperTokens）；两系统改 OIDC client；`@xiaoli-byte/authz` 校验接口不变。详见 `authz-architecture.md` §9。
 
-### CALL-13 · 完整身份联合：ai-call 用户在 ai-knowledge 开通/映射真实账号 **[P3·高风险·未排期]**
-- **状态**：🔵 已登记（2026-07-10），未排期。
+### CALL-13 · 身份联合：ai-call 用户在 ai-knowledge 开通/映射真实账号 **[P3·高风险]**
+- **状态**：🟡 **方案 (a) JIT 开通轻量版已落地**（2026-07-10，ai-knowledge commit `0e38ab7`）——`jwt.strategy.validate` 首次见到合法陌生 `userId` 时按 token claim 幂等补建 user 行，修复了上传等写操作的 `owner_id` 外键报错；已实测：ai-call admin 上传文档归其所有、PRIVATE 可见。**剩余范围未排期**：跨系统用户生命周期同步（角色/停用/删除联动）、email 冲突处理、以及是否升级到独立 IdP（§9）。
 - **背景**：知识库微前端（Multi-Zones）+ 无状态联合登录已落地（见 ai-call 仓 `docs/knowledge-base-microfrontend.md`）：ai-call 的 httpOnly cookie 经统一 JWT 密钥被 ai-knowledge 验签放行，一次登录即用。但两系统**用户表独立**，ai-call 用户的 `sub` 在 ai-knowledge 无对应记录——身份仅是 token claim 层面的「外来信任」：
   - ✅ 租户隔离、按角色访问正常（admin 租户内全见）。
   - ⚠️ **owner 归属功能对 ai-call 身份降级**：非 admin 的 ai-call 用户看不到 ai-knowledge 中按 `owner_id` 私有（`permission_scope=PRIVATE`）的文档，也无法「拥有」自己上传的文档；ResourceGrant 按 USER 主体授权时授不到这个外来 id。
