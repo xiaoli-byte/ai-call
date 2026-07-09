@@ -16,10 +16,14 @@ import {
   type CreateCampaignDto,
   type UpdateCampaignStatusDto,
 } from '@ai-call/shared';
+import { ClsService } from 'nestjs-cls';
+import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { TasksService } from '../tasks/tasks.service.js';
 import { toPrismaJson } from '../tasks/task-payloads.js';
 import { GlobalConfigService } from '../global-config/global-config.service.js';
+import { hasViewPerm, isAclBypass, type AclSubject } from '../common/resource-acl.js';
+import { campaignGrantWhere, campaignVisibilityWhere } from './campaign-acl.js';
 
 const DEFAULT_RETRY_POLICY: CampaignRetryPolicy = {
   maxAttempts: 2,
@@ -33,6 +37,7 @@ export class CampaignsService {
     private readonly prisma: PrismaService,
     private readonly tasksService: TasksService,
     private readonly globalConfig?: GlobalConfigService,
+    private readonly cls?: ClsService,
   ) {}
 
   async create(dto: CreateCampaignDto): Promise<CampaignDetail> {
@@ -59,6 +64,9 @@ export class CampaignsService {
         concurrencyLimit: normalizeConcurrency(dto.concurrencyLimit),
         retryPolicy: toPrismaJson(retryPolicy),
         endCondition: toPrismaJson(dto.endCondition ?? {}),
+        // CALL-09：记录创建者。为空时（无用户上下文的系统创建）该活动按 campaign-acl 的
+        // 策略对租户内 campaign:read 持有者公开。
+        ownerId: this.cls?.get<string | undefined>('userId'),
       },
     });
 
@@ -138,10 +146,16 @@ export class CampaignsService {
     limit?: number;
   }): Promise<CampaignListPage> {
     const limit = Math.min(100, Math.max(1, query.limit ?? 25));
+    const visibility = await this.buildCampaignVisibilityWhere();
     const records = await this.prisma.campaign.findMany({
       where: {
-        status: query.status,
-        scenario: query.scenario,
+        AND: [
+          {
+            status: query.status,
+            scenario: query.scenario,
+          },
+          visibility,
+        ],
       },
       include: this.listInclude,
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
@@ -167,6 +181,46 @@ export class CampaignsService {
       leads: (record.leads ?? []).map((lead: any) => this.toLead(lead)),
       importBatches: (record.importBatches ?? []).map((batch: any) => this.toBatch(batch)),
     };
+  }
+
+  /**
+   * CALL-09：详情端点的资源级 ACL 校验（供 controller 在 get() 之后调用）。
+   * 未命中可见性规则时抛 404 而非 403——避免向非授权用户泄露活动是否存在。
+   * 与 tasks 的 assertTaskVisible 同构。内部读取（create/updateStatus 经 get()）不经过本方法。
+   */
+  async assertCampaignVisible(id: string): Promise<void> {
+    const subject = this.aclSubject();
+    if (!subject.userId || isAclBypass(subject.roles)) return;
+    const campaign = await this.prisma.campaign.findUnique({
+      where: { id },
+      select: { ownerId: true },
+    });
+    if (!campaign) return; // 交由调用方的 get() 统一抛 404
+    if (campaign.ownerId == null || campaign.ownerId === subject.userId) return;
+    const grant = await this.prisma.resourceGrant.findFirst({
+      where: { ...campaignGrantWhere(subject), resourceId: id },
+      select: { perms: true },
+    });
+    if (grant && hasViewPerm(grant.perms)) return;
+    throw new NotFoundException(`Campaign ${id} not found`);
+  }
+
+  private aclSubject(): AclSubject {
+    return {
+      userId: this.cls?.get<string | undefined>('userId'),
+      roles: this.cls?.get<string[] | undefined>('roles') ?? [],
+    };
+  }
+
+  private async buildCampaignVisibilityWhere(): Promise<Prisma.CampaignWhereInput> {
+    const subject = this.aclSubject();
+    if (!subject.userId || isAclBypass(subject.roles)) return {};
+    const grants = await this.prisma.resourceGrant.findMany({
+      where: campaignGrantWhere(subject),
+      select: { resourceId: true, perms: true },
+    });
+    const grantedIds = grants.filter((g) => hasViewPerm(g.perms)).map((g) => g.resourceId);
+    return campaignVisibilityWhere(subject, grantedIds);
   }
 
   async updateStatus(id: string, dto: UpdateCampaignStatusDto): Promise<CampaignDetail> {

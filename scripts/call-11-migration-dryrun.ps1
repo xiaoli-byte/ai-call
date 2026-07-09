@@ -96,6 +96,14 @@ BEGIN
                    AND data_type='uuid' AND is_nullable='YES') THEN
     RAISE EXCEPTION 'CALL-05: outbound_tasks.owner_id 缺失或类型/可空性不符';
   END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                 WHERE table_name='campaigns' AND column_name='owner_id'
+                   AND data_type='uuid' AND is_nullable='YES') THEN
+    RAISE EXCEPTION 'CALL-09: campaigns.owner_id 缺失或类型/可空性不符';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE tablename='campaigns' AND indexname='campaigns_owner_id_idx') THEN
+    RAISE EXCEPTION 'CALL-09: campaigns_owner_id_idx 索引缺失';
+  END IF;
   IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='resource_grants') THEN
     RAISE EXCEPTION 'CALL-05: resource_grants 表缺失';
   END IF;

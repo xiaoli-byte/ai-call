@@ -26,6 +26,7 @@ CALL-02（15 张业务表补 `tenant_id`，三步走）与 CALL-05（`outbound_t
 
 - **CALL-02**：`tenant_demo` 租户行存在；15 张业务表每张的 `tenant_id`：非空 + 默认 `tenant_demo` + `<table>_tenant_id_idx` 索引存在 + 无 `tenant_id IS NULL` 残留。
 - **CALL-05**：`outbound_tasks.owner_id` 为可空 `uuid`；`resource_grants` 表存在 + 复合索引 `resource_grants_tenant_id_resource_type_resource_id_idx` 存在。
+- **CALL-09**：`campaigns.owner_id` 为可空 `uuid` + `campaigns_owner_id_idx` 索引存在。
 - **迁移状态**：`_prisma_migrations` 无未完成（`finished_at IS NULL`）或已回滚（`rolled_back_at IS NOT NULL`）的行。
 - **seed 幂等**：连跑两次 `prisma:seed` 均成功，且 `permissions` / `roles` / `outbound_scenarios` 行数两次一致（无重复插入）。
 

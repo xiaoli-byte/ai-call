@@ -147,3 +147,136 @@ describe('CampaignsService', () => {
     assert.equal(result.blockReasons.some((item) => item.reason === 'failure_reason_retry_limit'), true);
   });
 });
+
+/** 最小 ClsService 假实现：只暴露 get(key)，供 CALL-09 ACL 测试注入 userId/roles。 */
+function fakeCls(store: Record<string, unknown>) {
+  return { get: (key: string) => store[key] };
+}
+
+describe('CampaignsService CALL-09 campaign ACL', () => {
+  it('list() applies owner+grant visibility for a non-bypass user', async () => {
+    const calls: Array<[string, any]> = [];
+    const prisma = {
+      campaign: {
+        findMany: async (args: any) => {
+          calls.push(['campaign.findMany', args]);
+          return [];
+        },
+      },
+      resourceGrant: {
+        findMany: async (args: any) => {
+          calls.push(['resourceGrant.findMany', args]);
+          return [{ resourceId: 'granted-campaign', perms: 1 }];
+        },
+      },
+    };
+    const cls = fakeCls({ userId: 'u1', roles: ['operator'] });
+    const service = new CampaignsService(prisma as any, {} as any, undefined, cls as any);
+
+    await service.list({});
+
+    const [, grantArgs] = calls.find(([name]) => name === 'resourceGrant.findMany')!;
+    assert.equal(grantArgs.where.resourceType, 'campaign');
+
+    const [, listArgs] = calls.find(([name]) => name === 'campaign.findMany')!;
+    assert.deepEqual(listArgs.where.AND[1], {
+      OR: [
+        { ownerId: null },
+        { ownerId: 'u1' },
+        { id: { in: ['granted-campaign'] } },
+      ],
+    });
+  });
+
+  it('list() skips the ACL query entirely for admin', async () => {
+    const calls: any[] = [];
+    const prisma = {
+      campaign: {
+        findMany: async (args: any) => {
+          calls.push(args);
+          return [];
+        },
+      },
+      resourceGrant: {
+        findMany: async () => {
+          throw new Error('resourceGrant.findMany should not be called for admin');
+        },
+      },
+    };
+    const cls = fakeCls({ userId: 'u1', roles: ['admin'] });
+    const service = new CampaignsService(prisma as any, {} as any, undefined, cls as any);
+
+    await service.list({});
+
+    assert.deepEqual(calls[0].where.AND[1], {});
+  });
+
+  it('create() stamps ownerId from the CLS user', async () => {
+    let createdData: any;
+    const prisma = {
+      campaign: {
+        create: async ({ data }: any) => {
+          createdData = data;
+          return { id: 'c1', ...data, createdAt: new Date(), updatedAt: new Date() };
+        },
+        findUnique: async () => ({
+          id: 'c1', name: 'x', description: '', scenario: Scenario.PRESALE,
+          scenarioId: null, flowId: null, status: 'scheduled', scheduledAt: new Date(),
+          concurrencyLimit: 3, retryPolicy: {}, endCondition: {},
+          createdAt: new Date(), updatedAt: new Date(), leads: [], tasks: [], importBatches: [],
+        }),
+      },
+      leadImportBatch: { create: async ({ data }: any) => ({ id: 'b1', ...data }) },
+      campaignLead: {
+        create: async ({ data }: any) => ({ id: 'l1', ...data }),
+        update: async ({ where, data }: any) => ({ id: where.id, ...data }),
+      },
+    };
+    const tasks = { create: async () => ({ id: 't1' }) };
+    const cls = fakeCls({ userId: 'creator-1', roles: ['operator'] });
+    const service = new CampaignsService(prisma as any, tasks as any, undefined, cls as any);
+
+    await service.create({
+      name: 'x',
+      scenario: Scenario.PRESALE,
+      leads: [{ phoneNumber: '+8613800138000' }],
+    });
+
+    assert.equal(createdData.ownerId, 'creator-1');
+  });
+
+  it('assertCampaignVisible allows owner/grantee/admin and denies a stranger with 404', async () => {
+    const makePrisma = (grant: any) => ({
+      campaign: { findUnique: async () => ({ ownerId: 'owner-1' }) },
+      resourceGrant: { findFirst: async () => grant },
+    });
+
+    // owner
+    const owner = new CampaignsService(
+      makePrisma(null) as any, {} as any, undefined,
+      fakeCls({ userId: 'owner-1', roles: ['operator'] }) as any,
+    );
+    await owner.assertCampaignVisible('c1');
+
+    // admin 直接放行（不查库）
+    const admin = new CampaignsService(
+      makePrisma(null) as any, {} as any, undefined,
+      fakeCls({ userId: 'x', roles: ['admin'] }) as any,
+    );
+    await admin.assertCampaignVisible('c1');
+
+    // 被显式授权的陌生人
+    const grantee = new CampaignsService(
+      makePrisma({ perms: 1 }) as any, {} as any, undefined,
+      fakeCls({ userId: 'stranger', roles: ['operator'] }) as any,
+    );
+    await grantee.assertCampaignVisible('c1');
+
+    // 无授权的陌生人 → 404
+    const stranger = new CampaignsService(
+      makePrisma(null) as any, {} as any, undefined,
+      fakeCls({ userId: 'stranger', roles: ['operator'] }) as any,
+    );
+    await assert.rejects(() => stranger.assertCampaignVisible('c1'), /not found/i);
+  });
+});

@@ -1,43 +1,35 @@
-import { AclPerm } from '@xiaoli-byte/authz/acl';
 import type { Prisma } from '../generated/prisma/client.js';
+import {
+  ACL_BYPASS_ROLES,
+  hasViewPerm,
+  isAclBypass,
+  resourceGrantWhere,
+  type AclSubject,
+} from '../common/resource-acl.js';
 
 /**
  * CALL-05：OutboundTask 的资源级 ACL（在 CALL-03 租户强制过滤之上再收紧一层）。
  *
  * 范围收窄自 backlog 原始描述「坐席仅见自己或本部门任务」——当前 User 无部门字段，
  * 故只做「创建者 + 显式 ResourceGrant 授权 + admin/super_admin 全见」，不做 DEPARTMENT
- * 主体。见 docs/authz-implementation-backlog.md CALL-05、@xiaoli-byte/authz 的 acl/ 模块。
+ * 主体。通用判定原语见 `common/resource-acl.ts`（与 CALL-09 的 campaign 共用同一套）。
  */
 export const TASK_RESOURCE_TYPE = 'call_task';
 
-/** 绕过任务 ACL、可见租户内全部任务的角色。admin 是 ai-call 当前实际的最高业务角色；
- * super_admin 是 @xiaoli-byte/authz 固定的跨系统超管角色名（ai-call 尚未指派给任何用户，
- * 为与 authz 包语义保持一致而预留）。 */
-export const TASK_ACL_BYPASS_ROLES = ['admin', 'super_admin'];
+/** @deprecated 改用 `common/resource-acl.ts` 的 `ACL_BYPASS_ROLES`；此处为兼容旧引用保留别名。 */
+export const TASK_ACL_BYPASS_ROLES = ACL_BYPASS_ROLES;
 
-export interface TaskAclSubject {
-  userId?: string;
-  roles: string[];
-}
+export type TaskAclSubject = AclSubject;
 
 export function isTaskAclBypass(roles: readonly string[]): boolean {
-  return roles.some((role) => TASK_ACL_BYPASS_ROLES.includes(role));
+  return isAclBypass(roles);
 }
 
-export function hasViewPerm(perms: number): boolean {
-  return (perms & AclPerm.VIEW) === AclPerm.VIEW;
-}
+export { hasViewPerm };
 
 /** 查询当前主体（按 userId / roles）在 call_task 资源类型下持有的显式授权所需 where。 */
 export function taskGrantWhere(subject: TaskAclSubject): Prisma.ResourceGrantWhereInput {
-  const or: Prisma.ResourceGrantWhereInput[] = [];
-  if (subject.userId) or.push({ subjectType: 'USER', subjectId: subject.userId });
-  if (subject.roles.length > 0) or.push({ subjectType: 'ROLE', subjectId: { in: subject.roles } });
-  return {
-    resourceType: TASK_RESOURCE_TYPE,
-    // 无 userId 也无 roles 时不应匹配任何授权行。
-    OR: or.length > 0 ? or : [{ subjectId: '__none__' }],
-  };
+  return resourceGrantWhere(TASK_RESOURCE_TYPE, subject);
 }
 
 /**
@@ -51,7 +43,7 @@ export function taskVisibilityWhere(
   subject: TaskAclSubject,
   grantedTaskIds: readonly string[],
 ): Prisma.OutboundTaskWhereInput {
-  if (!subject.userId || isTaskAclBypass(subject.roles)) return {};
+  if (!subject.userId || isAclBypass(subject.roles)) return {};
   return {
     OR: [
       { ownerId: null },

@@ -2,7 +2,7 @@
 
 > **共同规范**：与 [`authz-architecture.md`](./authz-architecture.md) 配套。两仓库（ai-call / ai-knowledge）各存一份，内容一致，改动需同步。
 >
-> 状态：Draft · 2026-07-08 ｜ **P2(ai-call) 进度更新 2026-07-09**：CALL-01~07 代码工单已完成并进 `main`。对照 `authz-architecture.md` §8 仍有收尾项未闭合，已登记为 **CALL-08~12**（部门 ACL / Campaign ACL / 跨仓真隔离实测 / 迁移真库演练 / 激活按库过滤）。其中 CALL-10/11 为上线阻塞项。详见下方各工单「状态」行。
+> 状态：Draft · 2026-07-08 ｜ **P2(ai-call) 进度更新 2026-07-09**：CALL-01~07 代码工单已完成并进 `main`。对照 `authz-architecture.md` §8 仍有收尾项：CALL-09（Campaign ACL）已完成；CALL-08（部门 ACL）/ CALL-12（激活按库过滤）待确认方案；CALL-10（跨仓真隔离实测）/ CALL-11（迁移真库演练）为上线阻塞、脚本已备待真环境执行。详见下方各工单「状态」行。
 
 ## 如何使用本文件
 
@@ -41,7 +41,7 @@
 | CALL-06 | P2 | call | 接 ai-knowledge 检索带租户身份 ✅已完成 | CALL-03,KB-08 | [高风险] |
 | CALL-07 | P2 | call | 修 Cookie CSRF 债 ✅已完成 | CALL-01 | 低 |
 | CALL-08 | P2 | call | ResourceGrant 扩到部门(DEPT)主体 🟡待办 **需先确认部门模型** | CALL-05 | [高风险] |
-| CALL-09 | P2 | call | Campaign 复用 ResourceGrant ACL 🟡待办 | CALL-05 | 中 |
+| CALL-09 | P2 | call | Campaign 复用 ResourceGrant ACL ✅已完成 | CALL-05 | 中 |
 | CALL-10 | P2 | call | CALL-06 跨仓真隔离联调实测 🔴待办 **上线阻塞** | CALL-06,KB-08 | [高风险] |
 | CALL-11 | P2 | call | CALL-05 迁移真库演练(migrate deploy) 🔴待办 **上线阻塞** | CALL-05 | [高风险] |
 | CALL-12 | P2 | both | 激活按库过滤：kb id ↔ folder id 对齐/映射 🟡待办 | CALL-10 | 中 |
@@ -206,10 +206,10 @@
 - **验收**：构造「同租户不同部门」坐席，A 部门坐席看不到仅授予 B 部门的 `call_task`；owner/admin 特权不受影响；单测覆盖 DEPT 分支。
 
 ### CALL-09 · Campaign 复用 ResourceGrant ACL **[中]**
-- **状态**：🟡 待办。CALL-05 只给 `OutboundTask`(`call_task`) 接了 ACL，架构 §3「后续给 `call_task`/**`campaign`** 复用同一张表」中的 Campaign 部分标注「按需」未做。
+- **状态**：✅ 已完成（ai-call，2026-07-09）。Campaign 加 `ownerId`（迁移 `20260709140000_call09_campaign_owner`，可空 uuid + 索引）；抽出通用 `common/resource-acl.ts`（`task-acl` 一并复用，不另造一套），新增 `campaigns/campaign-acl.ts`（`resourceType='campaign'`）；`campaigns.service` 注入 CLS、create 记 `ownerId`、list 走可见性 where、新增 `assertCampaignVisible`（controller `GET :id` 调用，非授权抛 404）。语义与 CALL-05 同构：owner + 显式授权 + admin/super_admin 全见；`ownerId=null`（历史/系统）对租户内 `campaign:read` 持有者公开。
 - **依赖**：CALL-05
 - **步骤**：Campaign 加 `ownerId`（或复用创建者）+ 迁移；查询/详情走与 `call_task` 同构的 `resourceType="campaign"` 可见性判定；避免另造一套 ACL。
-- **验收**：非 owner / 未授权用户不可见他人 Campaign；admin/super_admin 全通；单测覆盖。
+- **验收**：非 owner / 未授权用户不可见他人 Campaign；admin/super_admin 全通；单测覆盖（`campaign-acl.spec` 6/6、`campaigns.service.spec` 新增 4 条 ACL）。迁移真库演练并入 CALL-11（脚本已加 `campaigns.owner_id` 断言）。
 
 ### CALL-10 · CALL-06 跨仓真隔离联调实测 **[高风险·联调·上线阻塞]**
 - **状态**：🔴 待办（**上线阻塞**）。CALL-06 代码链路通、单测绿，但**从未在真实 ai-knowledge 实例上验证跨租户隔离**——而这正是 `authz-architecture.md` §6.1 列的「最高优先级」安全点。

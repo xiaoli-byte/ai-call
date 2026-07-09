@@ -26,7 +26,8 @@ export class CampaignsController {
 
   @Get(':id')
   @Permissions(PERMISSIONS.CAMPAIGN_READ)
-  get(@Param('id') id: string) {
+  async get(@Param('id') id: string) {
+    await this.campaignsService.assertCampaignVisible(id);
     return this.campaignsService.get(id);
   }
 
