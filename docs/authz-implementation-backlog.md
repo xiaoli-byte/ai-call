@@ -218,10 +218,10 @@
 - **验收**：租户 A 通话检索**不返回** B 文档；`knowledgeBaseId` 生效（只命中指定库）；错误/缺失 service token → 被拒。
 
 ### CALL-11 · CALL-05 迁移真库演练(migrate deploy) **[高风险·迁移·上线阻塞]**
-- **状态**：🔴 待办（**上线阻塞**）。CALL-02/05 的迁移脚本已手写，但本机无 Postgres**从未在真库跑过**。
+- **状态**：🔴 待办（**上线阻塞**）。CALL-02/05 的迁移脚本已手写，但本机无 Postgres**从未在真库跑过**。已备演练脚本 `scripts/call-11-migration-dryrun.ps1` + 手册 `docs/testing/call-11-migration-dryrun.md`（起一个一次性可弃 Postgres 即可跑：`migrate deploy` + 结构/回填/索引断言 + seed 幂等）。**待真库执行**。
 - **依赖**：CALL-05
 - **步骤**：在一次性可弃的库上 `prisma migrate deploy` 演练全部 P2 迁移（tenantId 三步、`ownerId`、`ResourceGrant`），核对回填结果与索引；产出可复现的演练记录（参照 `docs/testing/operations-loop-regression.md`）。
-- **验收**：迁移在干净库上顺序执行无误；现有数据回填正确（tenantId=`tenant_demo`、历史任务 `ownerId=null` 按公开语义）；seed 幂等。
+- **验收**：迁移在干净库上顺序执行无误；现有数据回填正确（tenantId=`tenant_demo`、历史任务 `ownerId=null` 按公开语义）；seed 幂等。脚本断言覆盖结构/默认/索引/无 NULL 残留/迁移状态/seed 幂等；真实旧数据回填见手册「分批 deploy」可选演练。
 
 ### CALL-12 · 激活按库过滤：kb id ↔ folder id 对齐/映射 **[中]**
 - **状态**：🟡 待办。CALL-10 一轮里已在 ai-knowledge 实现 `knowledgeBaseId → folder` 按库过滤（优雅兜底：id 不对应真实 folder 则退回租户级），并在 ai-call 保留发送 `knowledgeBaseId`。但**两系统的 id 尚未对齐**：ai-call 的 kb id（如 `kb-collection`）≠ ai-knowledge 的 folder id（cuid），故默认仍是租户级检索——功能到位但**未激活**。
