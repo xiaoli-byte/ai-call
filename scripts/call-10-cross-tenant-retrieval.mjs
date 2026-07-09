@@ -79,6 +79,11 @@ function section(t) {
   console.log(`\n\x1b[1m${t}\x1b[0m`);
 }
 
+// NestJS POST 默认返回 201；把任何 2xx 视为成功。
+function is2xx(status) {
+  return status >= 200 && status < 300;
+}
+
 // ───────────────────────────── HTTP 帮助函数 ─────────────────────────────
 async function post(url, body, headers) {
   try {
@@ -160,8 +165,8 @@ async function main() {
   const docsA = extractDocs(kA.json);
   const docsB = extractDocs(kB.json);
 
-  ok('1.0 A 检索返回 200', kA.status === 200, `status=${kA.status}`);
-  ok('1.0 B 检索返回 200', kB.status === 200, `status=${kB.status}`);
+  ok('1.0 A 检索成功(2xx)', is2xx(kA.status), `status=${kA.status}`);
+  ok('1.0 B 检索成功(2xx)', is2xx(kB.status), `status=${kB.status}`);
   // fixtures 就绪性：A 的共享词查询必须至少命中 A 的文档，否则隔离测试无意义
   ok('1.1 A 查询命中非空（fixtures/索引就绪）', docsA.length > 0, `hits=${docsA.length}`);
   // 软检查：依赖分块/分词，命中的 chunk 未必是含标记的那段，故 WARN 不阻断
@@ -201,7 +206,7 @@ async function main() {
     const eB = await retrieveViaAiCall({ query: cfg.queryShared, tenantId: cfg.tenantB, userId: cfg.userB, token: cfg.aiCallToken, kbId: cfg.kbId });
     const edA = extractDocs(eA.json);
     const edB = extractDocs(eB.json);
-    ok('3.0 A 经 ai-call 返回 200', eA.status === 200, `status=${eA.status}`);
+    ok('3.0 A 经 ai-call 成功(2xx)', is2xx(eA.status), `status=${eA.status}`);
     ok('3.1 A 端到端命中非空', edA.length > 0, `hits=${edA.length}`);
     ok('3.2 [安全] A 端到端结果不含 MARKER_B', !contains(edA, cfg.markerB));
     ok('3.3 [安全] B 端到端结果不含 MARKER_A', !contains(edB, cfg.markerA));

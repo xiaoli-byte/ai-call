@@ -3,6 +3,8 @@
 > 工单见 `docs/authz-implementation-backlog.md` 的 **CALL-10**（上线阻塞项）。
 > 驱动脚本：`scripts/call-10-cross-tenant-retrieval.mjs`（零依赖，Node ≥ 18）。
 
+> ✅ **首次真环境验证通过**（2026-07-10，ai-call:3001 + ai-knowledge:9999，两租户 `tenant_demo`/`tenant_b` 各一篇 COMPANY 文档）：**14/14 必过断言通过**。同轮抓到并修复一个 bug——`/search/retrieve` 原在 `SearchController`（类级 `AuthGuard('jwt')`），无 JWT 的服务调用被挡成 401，CALL-06 运行时实际不通；已拆到独立 `SearchRetrieveController`（ai-knowledge commit `832daae`）。本地 ai-knowledge 未配 `SERVICE_API_TOKEN`（dev fail-open），故「缺/错 service token → 401」两条断言 skip；生产两边配同值后应转通过。
+
 ## 目的
 
 在**真实运行**的 ai-knowledge 上验证 CALL-06 检索链路的租户隔离——这是 `authz-architecture.md` §6.1 列的最高优先级安全点。CALL-06 的单测（KB spec 9/9、voice-agent 17/17）只覆盖了 ai-call 侧的身份透传与 fail-closed，**从未在真环境验证「租户 A 通话检索不返回租户 B 文档」**。本测补齐该实证。

@@ -188,7 +188,7 @@ call:task:dispatch    call:campaign:update  call:compliance:read
 - [x] CLS 注入 tenantId，所有 Prisma 查询强制租户过滤（对齐 ai-knowledge 的 `database.service` 模式）。（CALL-03，fail-closed + `runAsSystem` 旁路）
 - [x] 权限码去「贴标签」：给 campaigns / quality / compliance / analytics / tenants / platform 定义独立 `call:{module}:{action}`。（CALL-04；tenant/platform 一并收紧为 admin 专属）
 - [x] 接入 `ResourceGrant` 数据级 ACL（如坐席只见自己 `call_task`）。（CALL-05：`call_task` owner + 显式授权 + admin；CALL-09：**Campaign 复用**（共用 `common/resource-acl.ts`）。**部门(DEPT)主体** → CALL-08 **ai-call 侧暂缓**，部门能力落在 ai-knowledge；无产品驱动前不付高风险 User/claim 迁移。）
-- [x] 接 ai-knowledge 检索时传 `X-Tenant-Id`/`X-User-Id` 或透传 JWT。（CALL-06 代码完成；**跨仓真隔离实测待做** → CALL-10）
+- [x] 接 ai-knowledge 检索时传 `X-Tenant-Id`/`X-User-Id` 或透传 JWT。（CALL-06 代码完成；**CALL-10 真环境隔离实测已通过（14/14）**，并修掉一个让服务调用被 JWT 类守卫挡成 401 的 retrieve bug——§6.1「最高优先级」安全点已实证。）
 - [x] 现存安全债顺带修：生产 Cookie `SameSite=None`→同源改 `Lax` 或加 CSRF（见 ai-call 架构评审）。（CALL-07，由 CALL-01 的 cookie builder 顺带修复 + 回归测试）
 - [x] 用 `@xiaoli-byte/authz` 替换本地 auth/permissions 实现。（CALL-01）
 

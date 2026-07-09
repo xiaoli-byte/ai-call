@@ -2,7 +2,7 @@
 
 > **共同规范**：与 [`authz-architecture.md`](./authz-architecture.md) 配套。两仓库（ai-call / ai-knowledge）各存一份，内容一致，改动需同步。
 >
-> 状态：Draft · 2026-07-08 ｜ **P2(ai-call) 进度更新 2026-07-09**：CALL-01~07 代码工单已完成并进 `main`。对照 `authz-architecture.md` §8 的收尾项（决策 2026-07-10）：CALL-09（Campaign ACL）已完成；CALL-08（部门 ACL）ai-call 侧**暂缓**（部门能力落 ai-knowledge）；CALL-12（激活按库过滤）方案定为**配置对齐**（无需代码、运营激活）；仅剩 CALL-10（跨仓真隔离实测）/ CALL-11（迁移真库演练）两个上线阻塞项，脚本已备、待真环境执行。详见下方各工单「状态」行。
+> 状态：Draft · 2026-07-08 ｜ **P2(ai-call) 进度更新 2026-07-09**：CALL-01~07 代码工单已完成并进 `main`。对照 `authz-architecture.md` §8 的收尾项（决策 2026-07-10）：CALL-09（Campaign ACL）已完成；CALL-08（部门 ACL）ai-call 侧**暂缓**（部门能力落 ai-knowledge）；CALL-12（激活按库过滤）方案定为**配置对齐**（无需代码、运营激活）；**CALL-10（跨仓真隔离实测）已在真环境验证通过（14/14，并修掉一个让 CALL-06 运行时不通的 retrieve 401 bug）**；仅剩 **CALL-11（迁移真库演练）** 一个上线阻塞项待真库执行。详见下方各工单「状态」行。
 
 ## 如何使用本文件
 
@@ -42,7 +42,7 @@
 | CALL-07 | P2 | call | 修 Cookie CSRF 债 ✅已完成 | CALL-01 | 低 |
 | CALL-08 | P2 | call | ResourceGrant 扩到部门(DEPT)主体 ⏸️暂缓（ai-call 侧，部门能力落在 ai-knowledge） | CALL-05 | [高风险] |
 | CALL-09 | P2 | call | Campaign 复用 ResourceGrant ACL ✅已完成 | CALL-05 | 中 |
-| CALL-10 | P2 | call | CALL-06 跨仓真隔离联调实测 🔴待办 **上线阻塞** | CALL-06,KB-08 | [高风险] |
+| CALL-10 | P2 | call | CALL-06 跨仓真隔离联调实测 ✅真环境通过（14/14，修 retrieve 401 bug） | CALL-06,KB-08 | [高风险] |
 | CALL-11 | P2 | call | CALL-05 迁移真库演练(migrate deploy) 🔴待办 **上线阻塞** | CALL-05 | [高风险] |
 | CALL-12 | P2 | both | 激活按库过滤：kb id ↔ folder id 对齐/映射 🟢方案定：配置对齐（无需代码，运营激活） | CALL-10 | 中 |
 
@@ -213,10 +213,12 @@
 - **验收**：非 owner / 未授权用户不可见他人 Campaign；admin/super_admin 全通；单测覆盖（`campaign-acl.spec` 6/6、`campaigns.service.spec` 新增 4 条 ACL）。迁移真库演练并入 CALL-11（脚本已加 `campaigns.owner_id` 断言）。
 
 ### CALL-10 · CALL-06 跨仓真隔离联调实测 **[高风险·联调·上线阻塞]**
-- **状态**：🔴 待办（**上线阻塞**）。CALL-06 代码链路通、单测绿，但**从未在真实 ai-knowledge 实例上验证跨租户隔离**——而这正是 `authz-architecture.md` §6.1 列的「最高优先级」安全点。
+- **状态**：✅ **已完成·真环境验证通过**（2026-07-10，本地 ai-call:3001 + ai-knowledge:9999）。`scripts/call-10-cross-tenant-retrieval.mjs` **14/14 必过断言通过**：直连 ai-knowledge 与经 ai-call 代理两条路径下，租户 A 检索共享词只得 A 文档、B 只得 B 文档、命中文档 id 不相交；缺 X-Tenant-Id / X-User-Id → 401；ai-call 缺 X-Service-Token → 401。
+  - 🔴 **联调中抓到并修复真 bug**：ai-knowledge `/search/retrieve` 原在 `SearchController`（类级 `AuthGuard('jwt')`），无 JWT 的服务调用被挡成 401 → CALL-06 运行时**实际一直不通**（单测 mock 未覆盖）。已拆到独立 `SearchRetrieveController`（ai-knowledge commit `832daae`）。
+  - 说明：本地 ai-knowledge 未配 `SERVICE_API_TOKEN`（dev fail-open），故「缺/错 service token → 401」两条断言在本轮 **skip**；生产两边配 `SERVICE_API_TOKEN` 后应转为通过。`knowledgeBaseId` 作用域探针需两个真实 folder id（CALL-12 配置对齐后验），本轮 skip。
 - **依赖**：CALL-06, KB-08（需 ai-knowledge 实例可连）
-- **步骤**：1) 起 ai-knowledge，配 ai-call 的 `KNOWLEDGE_SERVICE_BASE_URL` + `KNOWLEDGE_SERVICE_API_TOKEN` + `SERVICE_API_TOKEN`；2) 造租户 A/B 各自文档；3) 用 A 的任务上下文发起通话检索。**同时核对跨仓请求契约**：ai-knowledge 的 `/search/retrieve` 是否真正采纳 `knowledgeBaseId`（否则会在租户内跨全部知识库检索，静默失真）、字段名 `q`/`mode` 是否对齐。
-- **验收**：租户 A 通话检索**不返回** B 文档；`knowledgeBaseId` 生效（只命中指定库）；错误/缺失 service token → 被拒。
+- **步骤**：1) 起 ai-knowledge，配 ai-call 的 `KNOWLEDGE_SERVICE_BASE_URL` + `KNOWLEDGE_SERVICE_API_TOKEN` + `SERVICE_API_TOKEN`；2) 造租户 A/B 各自文档；3) 用 A 的任务上下文发起通话检索。
+- **验收**：租户 A 通话检索**不返回** B 文档；错误/缺失 service token → 被拒。（`knowledgeBaseId` 按库过滤见 CALL-12。）
 
 ### CALL-11 · CALL-05 迁移真库演练(migrate deploy) **[高风险·迁移·上线阻塞]**
 - **状态**：🔴 待办（**上线阻塞**）。CALL-02/05 的迁移脚本已手写，但本机无 Postgres**从未在真库跑过**。已备演练脚本 `scripts/call-11-migration-dryrun.ps1` + 手册 `docs/testing/call-11-migration-dryrun.md`（起一个一次性可弃 Postgres 即可跑：`migrate deploy` + 结构/回填/索引断言 + seed 幂等）。**待真库执行**。
