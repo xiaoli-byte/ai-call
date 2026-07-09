@@ -183,13 +183,14 @@ call:task:dispatch    call:campaign:update  call:compliance:read
 ## 8. 各系统改造清单
 
 ### ai-call（`@ai-call`）
-- [ ] 核心业务表补 `tenantId`（OutboundTask/OutboundScenario/TaskFlow/TaskFlowVersion/CallAttempt/Campaign/KnowledgeDocument…）+ 数据迁移回填。
-- [ ] CLS 注入 tenantId，所有 Prisma 查询强制租户过滤（对齐 ai-knowledge 的 `database.service` 模式）。
-- [ ] 权限码去「贴标签」：给 campaigns / quality / compliance / analytics / tenants / platform 定义独立 `call:{module}:{action}`。
-- [ ] 接入 `ResourceGrant` 数据级 ACL（如坐席只见自己 `call_task`）。
-- [ ] 接 ai-knowledge 检索时传 `X-Tenant-Id`/`X-User-Id` 或透传 JWT。
-- [ ] 现存安全债顺带修：生产 Cookie `SameSite=None`→同源改 `Lax` 或加 CSRF（见 ai-call 架构评审）。
-- [ ] 用 `@xiaoli-byte/authz` 替换本地 auth/permissions 实现。
+> 进度对照见 `authz-implementation-backlog.md`（CALL-01~11）。以下勾选反映 2026-07-09 `main` 实况。
+- [x] 核心业务表补 `tenantId`（OutboundTask/OutboundScenario/TaskFlow/TaskFlowVersion/CallAttempt/Campaign/KnowledgeDocument…）+ 数据迁移回填。（CALL-02；迁移**真库演练待做**→ CALL-11）
+- [x] CLS 注入 tenantId，所有 Prisma 查询强制租户过滤（对齐 ai-knowledge 的 `database.service` 模式）。（CALL-03，fail-closed + `runAsSystem` 旁路）
+- [x] 权限码去「贴标签」：给 campaigns / quality / compliance / analytics / tenants / platform 定义独立 `call:{module}:{action}`。（CALL-04；tenant/platform 一并收紧为 admin 专属）
+- [~] 接入 `ResourceGrant` 数据级 ACL（如坐席只见自己 `call_task`）。（CALL-05：owner + 显式授权 + admin 已做；**部门(DEPT)主体** → CALL-08，**Campaign 复用** → CALL-09）
+- [x] 接 ai-knowledge 检索时传 `X-Tenant-Id`/`X-User-Id` 或透传 JWT。（CALL-06 代码完成；**跨仓真隔离实测待做** → CALL-10）
+- [x] 现存安全债顺带修：生产 Cookie `SameSite=None`→同源改 `Lax` 或加 CSRF（见 ai-call 架构评审）。（CALL-07，由 CALL-01 的 cookie builder 顺带修复 + 回归测试）
+- [x] 用 `@xiaoli-byte/authz` 替换本地 auth/permissions 实现。（CALL-01）
 
 ### ai-knowledge（`@ai-knowledge` / yixiu-ai-kb）
 - [ ] RBAC 从 `permissions.types.ts` 硬编码 → `Role`/`Permission`/`RolePermission` 落库 + seed。
