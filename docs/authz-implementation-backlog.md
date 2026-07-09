@@ -240,7 +240,10 @@
 - 签发收敛为独立 identity 服务 / 真 OIDC SSO（Logto/Keycloak/SuperTokens）；两系统改 OIDC client；`@xiaoli-byte/authz` 校验接口不变。详见 `authz-architecture.md` §9。
 
 ### CALL-13 · 身份联合：ai-call 用户在 ai-knowledge 开通/映射真实账号 **[P3·高风险]**
-- **状态**：🟡 **方案 (a) JIT 开通轻量版已落地**（2026-07-10，ai-knowledge commit `0e38ab7`）——`jwt.strategy.validate` 首次见到合法陌生 `userId` 时按 token claim 幂等补建 user 行，修复了上传等写操作的 `owner_id` 外键报错；已实测：ai-call admin 上传文档归其所有、PRIVATE 可见。**剩余范围未排期**：跨系统用户生命周期同步（角色/停用/删除联动）、email 冲突处理、以及是否升级到独立 IdP（§9）。
+- **状态**：🟡 **方案 (a) JIT 开通轻量版已落地**（2026-07-10，ai-knowledge commit `0e38ab7`）——`jwt.strategy.validate` 首次见到合法陌生 `userId` 时按 token claim 幂等补建 user 行，修复了上传等写操作的 `owner_id` 外键报错。已实测：ai-call **admin** 与 **非 admin（editor）** 上传文档均正确归其所有（`owner_id` = 上传者、PRIVATE 可见）。**剩余范围未排期**：
+  - **角色词表映射**（实测缺口）：ai-call 角色 `admin/operator/viewer` 与 ai-knowledge `super_admin/admin/editor/viewer` 只有 `admin`、`viewer` 名字对齐；**ai-call `operator` 映射不到 ai-knowledge `editor`（写权限门槛）→ ai-call operator/viewer 在知识库实为只读，仅 admin 可写**。需一层角色映射（ai-call 角色 → ai-knowledge 角色）。
+  - **用户生命周期同步**：JIT 只在首次建行（`update:{}`），之后 ai-call 改角色/停用/删除不联动 ai-knowledge 的开通行（实测：改 ai-call 角色后 ai-knowledge 行 role 仍为旧值；此处不影响鉴权因 RBAC 读 token 角色，但库内数据陈旧）。
+  - **email 冲突处理**；以及是否升级到独立 IdP（§9）。
 - **背景**：知识库微前端（Multi-Zones）+ 无状态联合登录已落地（见 ai-call 仓 `docs/knowledge-base-microfrontend.md`）：ai-call 的 httpOnly cookie 经统一 JWT 密钥被 ai-knowledge 验签放行，一次登录即用。但两系统**用户表独立**，ai-call 用户的 `sub` 在 ai-knowledge 无对应记录——身份仅是 token claim 层面的「外来信任」：
   - ✅ 租户隔离、按角色访问正常（admin 租户内全见）。
   - ⚠️ **owner 归属功能对 ai-call 身份降级**：非 admin 的 ai-call 用户看不到 ai-knowledge 中按 `owner_id` 私有（`permission_scope=PRIVATE`）的文档，也无法「拥有」自己上传的文档；ResourceGrant 按 USER 主体授权时授不到这个外来 id。
