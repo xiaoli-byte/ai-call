@@ -55,6 +55,9 @@ ai-knowledge web 用 `NEXT_PUBLIC_API_URL`（构建期公开变量，prod 默认
 | `KNOWLEDGE_ZONE_URL` | ai-call dashboard | ai-knowledge web 地址（dev: `http://localhost:8888`；prod: 网关内网地址）| ai-call 渲染自带 mock `/knowledge` 页 |
 | `WEB_BASE_PATH` | ai-knowledge web | `/knowledge` | 8888 根路径独立访问 |
 | `NEXT_PUBLIC_API_URL` | ai-knowledge web | `/knowledge/api`（构建期！改后需重新 build）| `/api`（独立部署默认）|
+| `FEDERATED_TENANT_ALLOWLIST` | ai-knowledge API | 逗号分隔的租户 id 白名单，限制哪些租户的联合身份可 JIT 开通（**生产建议设置**）| 不额外限制（租户仍必须已存在于 `tenants` 表且 active）|
+
+> `NEXT_PUBLIC_WEB_BASE_PATH` 由 `next.config.mjs` 从 `WEB_BASE_PATH` 自动内联到客户端（zone 检测用，登录跳转目标依赖它），**无需手工设置**。
 
 ## 鉴权：现状、差距与两条路
 
@@ -78,14 +81,25 @@ ai-knowledge web 用 `NEXT_PUBLIC_API_URL`（构建期公开变量，prod 默认
 
 已落地（ai-knowledge，commit `f5c53ee`；均对独立部署无害，无 cookie 自动回落 Bearer）：
 1. **统一 JWT 签名密钥**（env）：ai-knowledge `JWT_ACCESS_SECRET` = ai-call `JWT_SECRET`（未提交，需两侧配置）。
-2. **API 接受共享 cookie**：`jwt.strategy` 改 `fromExtractors([cookieExtractor, bearer])`，cookie 优先解析 `access_token`（直接读 Cookie 头，不依赖 cookie-parser）；`validate` 兼容 claim（单数 `role` ↔ ai-call 复数 `roles`），归一化 `id/name` 供 `/auth/me`。
+2. **API 接受共享 cookie**：`jwt.strategy` 改 `fromExtractors([bearer, cookieExtractor])`，**Bearer 优先、cookie 回落**（2026-07-10 review 后对调：显式凭证 > 环境凭证，避免本地 Bearer 用户被浏览器残留的 ai-call cookie 静默顶替身份）；cookie 直接读 Cookie 头解析 `access_token`，不依赖 cookie-parser；`validate` 兼容 claim（单数 `role` ↔ ai-call 复数 `roles`），归一化 `id/name` 供 `/auth/me`。
 3. **web 带 cookie**：client `fetch` 加 `credentials:'include'`；store 加 `setCookieSession`（内存哨兵 token 令路由守卫通过，不写 localStorage）；`(dashboard)/layout` 无本地令牌时先 `/auth/me` 用 cookie 引导会话，失败才跳登录页。
 
-**身份模型：惰性联合开通（JIT provisioning，2026-07-10 已落地）**。ai-call 与 ai-knowledge 是独立用户表，ai-call 用户的 `sub` 原本在 ai-knowledge 无记录——纯无状态联合下**写操作会因 `documents.owner_id → users.id` 外键失败**（上传报 `Foreign key constraint violated`）。解法：`jwt.strategy.validate` 首次见到合法但陌生的 `userId` 时，按 token claim **幂等补建一个 user 行**（id=sub、email/name/role 从 claim、`passwordHash` 占位不可本地登录），内存缓存已知 id 避免每请求打库；已存在则 `update:{}` 不覆盖本地资料。对独立部署无影响。
+**会话生命周期（2026-07-10 架构 review 后补齐）**：
+- **登出**：cookie 会话的真正凭证是 ai-call 的 httpOnly cookie，JS 清不掉——ai-knowledge 的「退出」在 cookie 会话下会先 `POST /api/auth/logout`（域名根 = ai-call API，作废 cookie）再整页跳 `/login`；否则回到任意页面都会被 `/auth/me` 重新拉起会话，登出形同虚设。
+- **cookie 过期后的 401**：本地无 refresh token 可刷（refresh cookie 归 ai-call），web client 检测到 cookie 会话 401 时清内存态并整页跳 ai-call 登录页 `/login?redirect=<回跳路径>`（ai-call 登录页支持 `redirect` 参数；跨 zone 回跳走整页导航）。**不能**跳本地 `/knowledge/login`——联合身份是占位密码，本地登录不进。守卫引导失败同理：zone 模式（`NEXT_PUBLIC_WEB_BASE_PATH` 非空）跳 ai-call 登录，独立部署跳本地登录。
+- ai-call middleware 本身会把未登录的 `/knowledge/*` 在边缘重定向到 `/login?redirect=…`（第一道防线）；上述 client 侧处理是第二道（会话中途过期时生效）。
+
+**身份模型：惰性联合开通（JIT provisioning，2026-07-10 已落地）**。ai-call 与 ai-knowledge 是独立用户表，ai-call 用户的 `sub` 原本在 ai-knowledge 无记录——纯无状态联合下**写操作会因 `documents.owner_id → users.id` 外键失败**（上传报 `Foreign key constraint violated`）。解法：`jwt.strategy.validate` 首次见到合法但陌生的 `userId` 时，按 token claim **幂等补建一个 user 行**（id=sub、email/name/role 从 claim、`passwordHash` 占位不可本地登录），内存缓存已知 id 避免每请求打库；已存在则不覆盖本地资料。对独立部署无影响。
+
+JIT 准入与防护（2026-07-10 架构 review 后加固）：
+- **租户准入（fail closed）**：JIT 创建前校验 token 的 `tenantId` **已存在于本库 `tenants` 表且 `active`**，可再叠加 `FEDERATED_TENANT_ALLOWLIST` 白名单；不满足则拒绝开通**并拒绝鉴权（401）**。租户开通永远是显式运维动作，JIT 只到用户级——否则任意 ai-call 租户会被隐式「入驻」并产生悬空 `tenant_id` 数据（该列暂无外键）。本地已有用户不受影响（走不到创建路径）。
+- **失败负缓存**：开通失败（如 email 唯一冲突）后 60s 内同一 id 不再打库、不再刷日志；并发首请求的主键竞态按成功处理。
 - ✅ 租户隔离、按角色访问、**owner 归属**（上传文档归该用户、可见自己的 PRIVATE）、按 USER 的 ResourceGrant 授权——**全部生效**。
 - ⚠️ **仍存的边界**（升级为 CALL-13 剩余范围）：跨系统**用户生命周期同步**（ai-call 改角色/停用/删除不自动反映到 ai-knowledge 的开通行——首次建行后 `update:{}` 不再更新）；**email 冲突**（token email 撞已有本地用户但 id 不同时，JIT 只告警不阻断，该身份的 owner 写仍会失败，需人工对齐）。完全打通（生命周期联动 / 独立 IdP）见 `authz-architecture.md` §9 与 backlog **CALL-13**。
 
 **前提硬约束**：**必须同域**（cookie 才同源共享）+ **两侧 JWT 密钥统一**（否则 cookie 验签不过）。
+
+> ⚠️ **共享对称密钥的信任边界**：`@xiaoli-byte/authz` 当前硬编码 HS256——共享 secret 意味着 ai-knowledge 也**能签发**合法的 ai-call token，任一侧泄露即两侧全失守。生产化应升级为非对称签名（ai-call 持私钥签发、ai-knowledge 只持公钥验签，信任单向化），已登记为 backlog **CALL-13(b)**（需改 `packages/authz` 发新版 + 双端同步切换，属协调式迁移）。过渡期要求：生产 secret 必须是强随机值且两侧同步轮换（见 `authz-go-live-checklist.md`）。
 
 ## 本地联调步骤
 

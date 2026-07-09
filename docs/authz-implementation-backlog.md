@@ -45,7 +45,7 @@
 | CALL-10 | P2 | call | CALL-06 跨仓真隔离联调实测 ✅真环境通过（14/14，修 retrieve 401 bug） | CALL-06,KB-08 | [高风险] |
 | CALL-11 | P2 | call | CALL-05 迁移真库演练(migrate deploy) ✅演练通过（17迁移+结构/回填+seed幂等） | CALL-05 | [高风险] |
 | CALL-12 | P2 | both | 激活按库过滤：kb id ↔ folder id 对齐/映射 🟢方案定：配置对齐（无需代码，运营激活） | CALL-10 | 中 |
-| CALL-13 | P3 | both | 身份联合：ai-call 用户在 ai-knowledge 开通/映射真实账号 🟡JIT 开通(a)已落地；剩生命周期同步/email 冲突/独立 IdP | CALL-12,§9 | [高风险] |
+| CALL-13 | P3 | both | 身份联合：ai-call 用户在 ai-knowledge 开通/映射真实账号 🟡JIT 开通(a)已落地并加固(租户准入/负缓存/会话生命周期,2026-07-10)；剩(b)非对称签名/角色映射/生命周期同步/email 冲突/独立 IdP | CALL-12,§9 | [高风险] |
 
 **关键路径**：AUTHZ-01→02→(03/04/05/06) → KB-01→02→03→04 →(05/08) → CALL-01→02→03→06 →（上线前）CALL-10/11。
 **可并行**：AUTHZ-03/04/05/06 在 02 后可并行；KB-06/07 与 KB-03/04 可并行；CALL-04/07 与 CALL-02/03 可并行；CALL-08/09（范围决策项）与 CALL-10/11（上线阻塞项）互不依赖，可并行。
@@ -240,7 +240,14 @@
 - 签发收敛为独立 identity 服务 / 真 OIDC SSO（Logto/Keycloak/SuperTokens）；两系统改 OIDC client；`@xiaoli-byte/authz` 校验接口不变。详见 `authz-architecture.md` §9。
 
 ### CALL-13 · 身份联合：ai-call 用户在 ai-knowledge 开通/映射真实账号 **[P3·高风险]**
-- **状态**：🟡 **方案 (a) JIT 开通轻量版已落地**（2026-07-10，ai-knowledge commit `0e38ab7`）——`jwt.strategy.validate` 首次见到合法陌生 `userId` 时按 token claim 幂等补建 user 行，修复了上传等写操作的 `owner_id` 外键报错。已实测：ai-call **admin** 与 **非 admin（editor）** 上传文档均正确归其所有（`owner_id` = 上传者、PRIVATE 可见）。**剩余范围未排期**：
+- **状态**：🟡 **方案 (a) JIT 开通轻量版已落地**（2026-07-10，ai-knowledge commit `0e38ab7`）——`jwt.strategy.validate` 首次见到合法陌生 `userId` 时按 token claim 幂等补建 user 行，修复了上传等写操作的 `owner_id` 外键报错。已实测：ai-call **admin** 与 **非 admin（editor）** 上传文档均正确归其所有（`owner_id` = 上传者、PRIVATE 可见）。
+- **2026-07-10 架构 review 加固**（同日落地，ai-knowledge + ai-call）：
+  - **JIT 租户准入（fail closed）**：创建前校验 token `tenantId` 已存在于 `tenants` 表且 active + 可选 `FEDERATED_TENANT_ALLOWLIST` 白名单，不满足则拒绝开通并 401——堵住「任意 ai-call 租户被隐式入驻 + 悬空 tenant_id 数据」。
+  - **JIT 失败负缓存**：失败（如 email 冲突）后 60s 内同 id 不重试不刷日志；并发首请求主键竞态按成功处理；畸形 cookie 值不再可能把提取器炸成 500。
+  - **token 提取顺序**：Bearer 优先、cookie 回落（显式凭证 > 环境凭证，防同域下本地 Bearer 用户被残留 ai-call cookie 顶替身份）。
+  - **zone 会话生命周期**：ai-knowledge「退出」在 cookie 会话下先调 ai-call `POST /api/auth/logout` 作废 cookie；cookie 过期 401 时清态并整页跳 ai-call `/login?redirect=…`（原为死路/跳错到本地登录页）；ai-call 登录页 `redirect` 参数防开放重定向 + `/knowledge` 前缀整页导航（跨 zone 软导航本就不通）。
+  **剩余范围未排期**：
+  - **(b) 非对称签名（信任单向化）**：`packages/authz`（源码在 ai-knowledge 仓 `packages/authz`，经 GitHub Packages 发布）当前硬编码 HS256 共享 secret——ai-knowledge 持同一把钥匙也能**签发**合法 ai-call token，任一侧泄露即两侧全失守。升级步骤：① `packages/authz` 的 `signAccessToken/verifyAccessToken` 增加算法与公私钥参数（向后兼容，缺省仍 HS256）；② 发新版并让 ai-call 升级依赖；③ ai-call 换 RS256/EdDSA 私钥签发、ai-knowledge `jwt.strategy` 改公钥验签；④ 切换窗口内旧 token 全体失效，需选低峰期并同步分发密钥。属协调式迁移（改包+发版+双端同步+token 作废），不适合单仓顺手做，须单独排期。
   - **角色词表映射**（实测缺口）：ai-call 角色 `admin/operator/viewer` 与 ai-knowledge `super_admin/admin/editor/viewer` 只有 `admin`、`viewer` 名字对齐；**ai-call `operator` 映射不到 ai-knowledge `editor`（写权限门槛）→ ai-call operator/viewer 在知识库实为只读，仅 admin 可写**。需一层角色映射（ai-call 角色 → ai-knowledge 角色）。
   - **用户生命周期同步**：JIT 只在首次建行（`update:{}`），之后 ai-call 改角色/停用/删除不联动 ai-knowledge 的开通行（实测：改 ai-call 角色后 ai-knowledge 行 role 仍为旧值；此处不影响鉴权因 RBAC 读 token 角色，但库内数据陈旧）。
   - **email 冲突处理**；以及是否升级到独立 IdP（§9）。

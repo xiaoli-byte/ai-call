@@ -41,9 +41,20 @@ export default function LoginPage() {
     setIsSubmitting(true);
     try {
       const { user } = await apiClient.login(data);
-      const redirectTo = new URLSearchParams(window.location.search).get('redirect') || '/campaigns';
+      const rawRedirect = new URLSearchParams(window.location.search).get('redirect');
+      // 只接受站内路径，防开放重定向；"//host" 会被浏览器当协议相对 URL，一并拒绝。
+      const redirectTo =
+        rawRedirect && rawRedirect.startsWith('/') && !rawRedirect.startsWith('//')
+          ? rawRedirect
+          : '/campaigns';
       // 刷新 SWR auth 缓存，让 AuthProvider 拿到新 user
       await mutate(AUTH_KEY, user, { revalidate: false });
+      if (redirectTo.startsWith('/knowledge')) {
+        // 知识库是独立的 Next 应用（Multi-Zones zone）：跨 zone 必须整页导航，
+        // router.push 软导航拿不到对方 zone 的 RSC payload。
+        window.location.assign(redirectTo);
+        return;
+      }
       router.push(redirectTo);
       router.refresh();
     } catch (err) {
