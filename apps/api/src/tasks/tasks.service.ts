@@ -944,6 +944,8 @@ export class TasksService {
     }));
     return {
       id: record.id,
+      tenantId: record.tenantId ?? undefined,
+      ownerId: record.ownerId ?? undefined,
       to: record.to,
       from: record.from,
       scenario: record.scenario,

@@ -71,6 +71,8 @@ class ScenarioConfigContract(ContractModel):
 
 class TaskContextContract(ContractModel):
     id: str
+    tenant_id: Optional[str] = Field(default=None, alias="tenantId")
+    owner_id: Optional[str] = Field(default=None, alias="ownerId")
     scenario: str
     variables: dict[str, str] = Field(default_factory=dict)
     scenario_config: Optional[ScenarioConfigContract] = Field(default=None, alias="scenarioConfig")

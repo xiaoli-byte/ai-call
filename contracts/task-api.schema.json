@@ -6,6 +6,8 @@
   "required": ["id", "scenario", "variables"],
   "properties": {
     "id": { "type": "string", "format": "uuid" },
+    "tenantId": { "type": "string" },
+    "ownerId": { "type": "string" },
     "scenario": { "type": "string" },
     "scenarioConfig": { "$ref": "#/$defs/scenarioConfig" },
     "variables": { "type": "object", "additionalProperties": { "type": "string" } },

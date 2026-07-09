@@ -1,7 +1,9 @@
 import {
   BadGatewayException,
   Injectable,
+  Logger,
   NotFoundException,
+  type OnModuleInit,
 } from '@nestjs/common';
 import type {
   KnowledgeDocument,
@@ -11,6 +13,7 @@ import type {
 } from '@ai-call/shared';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { toPrismaJson } from '../common/prisma-json.js';
+import { ClsService } from 'nestjs-cls';
 
 /**
  * 知识库 Service - RAG 检索增强生成。
@@ -18,14 +21,47 @@ import { toPrismaJson } from '../common/prisma-json.js';
  * ai-call 保留原有 API 契约，真实知识库能力由独立 ai-knowledge 服务提供。
  * 配置 KNOWLEDGE_SERVICE_BASE_URL 后，本服务会代理到外部服务；未配置时保留
  * 内置 mock 数据，方便本地开发和测试不依赖知识库项目。
+ *
+ * CALL-06: 服务间调用 ai-knowledge 时传递租户身份（X-Service-Token + X-Tenant-Id + X-User-Id），
+ * 确保租户 A 的通话检索不会拿到租户 B 的文档。
  */
 @Injectable()
-export class KnowledgeBaseService {
-  constructor(private readonly prisma?: PrismaService) {}
+export class KnowledgeBaseService implements OnModuleInit {
+  constructor(
+    private readonly prisma?: PrismaService,
+    private readonly cls?: ClsService,
+  ) {}
 
+  private readonly logger = new Logger(KnowledgeBaseService.name);
   private readonly externalBaseUrl = process.env.KNOWLEDGE_SERVICE_BASE_URL?.replace(/\/+$/, '');
-  private readonly externalToken = process.env.KNOWLEDGE_SERVICE_API_TOKEN;
+  private readonly serviceToken = process.env.KNOWLEDGE_SERVICE_API_TOKEN;
   private readonly timeoutMs = Number(process.env.KNOWLEDGE_SERVICE_TIMEOUT_MS ?? 5000);
+
+  /**
+   * CALL-06 fail-closed 自检：外部知识库模式（externalBaseUrl 已配置）会把真实的跨租户
+   * 文档数据经 /knowledge-base/:id/retrieve 代理出去，而该端点仅由 ServiceAuthGuard 把关。
+   * ServiceAuthGuard 在非生产环境且 SERVICE_API_TOKEN 缺失时会「放行」（见 service-auth.guard.ts），
+   * 于是「外部模式 + 缺 SERVICE_API_TOKEN」= 未鉴权即可携带任意 X-Tenant-Id 读任意租户文档。
+   * 这里在启动时 fail-closed：外部模式必须配 SERVICE_API_TOKEN，否则拒绝启动。
+   */
+  onModuleInit(): void {
+    if (!this.externalBaseUrl) return;
+
+    if (!process.env.SERVICE_API_TOKEN) {
+      throw new Error(
+        'KNOWLEDGE_SERVICE_BASE_URL is set (external knowledge mode proxies real tenant data), ' +
+          'but SERVICE_API_TOKEN is not configured — the inbound /knowledge-base/:id/retrieve endpoint ' +
+          'would accept unauthenticated cross-tenant requests. Set SERVICE_API_TOKEN to arm ServiceAuthGuard.',
+      );
+    }
+
+    if (!this.serviceToken) {
+      this.logger.warn(
+        'KNOWLEDGE_SERVICE_BASE_URL is set but KNOWLEDGE_SERVICE_API_TOKEN is empty — ' +
+          'outbound calls to ai-knowledge will omit X-Service-Token and may be rejected by its ServiceAuthGuard.',
+      );
+    }
+  }
 
   private knowledgeBases: Record<string, KnowledgeBaseDetail> = {
     'kb-collection': {
@@ -165,17 +201,38 @@ export class KnowledgeBaseService {
    * 注意：无匹配时返回空数组（而非 fallback 返回所有文档）。
    * RAG 反幻觉原则：宁可让 LLM 看到"无相关文档"也不要塞入无关上下文，
    * 由 LLM 通过 tool_call 升级到人工。
+   *
+   * CALL-06: 调用 ai-knowledge 的 /search/retrieve 端点（而非 /knowledge-base/:id/retrieve），
+   * 带服务令牌和租户身份，确保租户隔离。
    */
-  async retrieve(knowledgeBaseId: string, query: string, topK = 3) {
+  async retrieve(
+    knowledgeBaseId: string,
+    query: string,
+    topK = 3,
+    identity?: KnowledgeRequestIdentity,
+  ) {
     if (this.externalBaseUrl) {
-      const data = await this.requestExternal<KnowledgeDoc[] | { results?: KnowledgeDoc[] }>(
-        `/knowledge-base/${encodeURIComponent(knowledgeBaseId)}/retrieve`,
+      const resolvedIdentity = this.resolveIdentity(identity);
+      if (!resolvedIdentity.tenantId) {
+        throw new BadGatewayException(
+          'Knowledge retrieve requires tenant context before proxying to ai-knowledge',
+        );
+      }
+
+      const data = await this.requestExternal<ExternalRetrieveResponse>(
+        `/search/retrieve`,
         {
           method: 'POST',
-          body: JSON.stringify({ query, topK }),
+          body: JSON.stringify({
+            q: query,
+            mode: 'hybrid',
+            topK,
+            knowledgeBaseId,
+          }),
         },
+        resolvedIdentity,
       );
-      return Array.isArray(data) ? data : data.results ?? [];
+      return this.normalizeExternalHits(data);
     }
 
     const kb = this.knowledgeBases[knowledgeBaseId];
@@ -343,6 +400,7 @@ export class KnowledgeBaseService {
   private async requestExternal<T = unknown>(
     path: string,
     init: RequestInit = {},
+    identity?: KnowledgeResolvedIdentity,
   ): Promise<T> {
     if (!this.externalBaseUrl) {
       throw new BadGatewayException('Knowledge service is not configured');
@@ -354,8 +412,26 @@ export class KnowledgeBaseService {
     if (init.body && !(init.body instanceof FormData) && !headers.has('content-type')) {
       headers.set('content-type', 'application/json');
     }
-    if (this.externalToken && !headers.has('authorization')) {
-      headers.set('authorization', `Bearer ${this.externalToken}`);
+
+    // CALL-06: 服务间调用传递服务令牌（X-Service-Token）和租户身份
+    if (this.serviceToken && !headers.has('x-service-token')) {
+      headers.set('x-service-token', this.serviceToken);
+    }
+
+    // retrieve() 已把身份解析好并传入；list/get/upload 未传则此处从 CLS 解析（不重复解析）。
+    const { tenantId, userId, roles } = identity ?? this.resolveIdentity();
+
+    if (tenantId && !headers.has('x-tenant-id')) {
+      headers.set('x-tenant-id', tenantId);
+    }
+    if (userId && !headers.has('x-user-id')) {
+      headers.set('x-user-id', userId);
+    }
+    if (roles.length > 0 && !headers.has('x-user-roles')) {
+      headers.set('x-user-roles', roles.join(','));
+    }
+    if (roles.length > 0 && !headers.has('x-user-role')) {
+      headers.set('x-user-role', roles[0]);
     }
 
     try {
@@ -386,6 +462,47 @@ export class KnowledgeBaseService {
       clearTimeout(timer);
     }
   }
+
+  private resolveIdentity(
+    identity?: KnowledgeRequestIdentity | KnowledgeResolvedIdentity,
+  ): KnowledgeResolvedIdentity {
+    const tenantId = identity?.tenantId ?? this.cls?.get<string>('tenantId');
+    const userId = identity?.userId ?? this.cls?.get<string>('userId');
+    // 角色优先级：显式传入 > CLS。@xiaoli-byte/authz 的 JwtAuthGuard 只写入 CLS 的
+    // 复数 'roles'（cls.set('roles', claims.roles)），故不存在单数 'role' 回退。
+    const explicitRoles = identity?.roles?.filter(Boolean);
+    const clsRoles = this.cls?.get<string[]>('roles')?.filter(Boolean);
+    const roles = explicitRoles && explicitRoles.length > 0
+      ? explicitRoles
+      : clsRoles && clsRoles.length > 0
+        ? clsRoles
+        : [];
+
+    return { tenantId, userId, roles };
+  }
+
+  private normalizeExternalHits(data: ExternalRetrieveResponse): KnowledgeDoc[] {
+    const hits = Array.isArray(data)
+      ? data
+      : data.hits ?? data.results ?? data.items ?? data.data?.hits ?? data.data?.results ?? [];
+
+    return hits.map((hit, index) => ({
+      id: toNonEmptyString(hit.chunkId)
+        ?? toNonEmptyString(hit.id)
+        ?? toNonEmptyString(hit.documentId)
+        ?? `external-hit-${index + 1}`,
+      content: toNonEmptyString(hit.text)
+        ?? toNonEmptyString(hit.content)
+        ?? toNonEmptyString(hit.chunkText)
+        ?? '',
+      source: toNonEmptyString(hit.documentTitle)
+        ?? toNonEmptyString(hit.title)
+        ?? toNonEmptyString(hit.source)
+        ?? toNonEmptyString(hit.filename)
+        ?? 'unknown',
+      score: toNumber(hit.score),
+    }));
+  }
 }
 
 interface KnowledgeDoc {
@@ -394,6 +511,44 @@ interface KnowledgeDoc {
   source: string;
   score?: number;
 }
+
+interface KnowledgeRequestIdentity {
+  tenantId?: string;
+  userId?: string;
+  roles?: string[];
+}
+
+interface KnowledgeResolvedIdentity {
+  tenantId?: string;
+  userId?: string;
+  roles: string[];
+}
+
+interface ExternalSearchHit {
+  id?: unknown;
+  chunkId?: unknown;
+  documentId?: unknown;
+  text?: unknown;
+  content?: unknown;
+  chunkText?: unknown;
+  source?: unknown;
+  documentTitle?: unknown;
+  title?: unknown;
+  filename?: unknown;
+  score?: unknown;
+}
+
+type ExternalRetrieveEnvelope = {
+  hits?: ExternalSearchHit[];
+  results?: ExternalSearchHit[];
+  items?: ExternalSearchHit[];
+  data?: {
+    hits?: ExternalSearchHit[];
+    results?: ExternalSearchHit[];
+  };
+};
+
+type ExternalRetrieveResponse = ExternalSearchHit[] | ExternalRetrieveEnvelope;
 
 interface KnowledgeBaseSummary {
   id: string;
@@ -454,4 +609,16 @@ function guessMimeType(filename: string): string {
   if (lower.endsWith('.txt')) return 'text/plain';
   if (lower.endsWith('.pdf')) return 'application/pdf';
   return 'application/octet-stream';
+}
+
+function toNonEmptyString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+function toNumber(value: unknown): number {
+  return typeof value === 'number'
+    ? value
+    : typeof value === 'string' && value.trim()
+      ? Number(value) || 0
+      : 0;
 }

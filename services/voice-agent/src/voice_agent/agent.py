@@ -133,6 +133,8 @@ class VoiceAgent:
         callbacks: AgentCallbacks,
         flow_version: Optional[dict[str, Any]] = None,
         dry_run: bool = False,
+        tenant_id: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> None:
         """启动新通话会话。"""
         # 初始化 session
@@ -145,6 +147,8 @@ class VoiceAgent:
             scenario=scenario.scenario.value if hasattr(scenario.scenario, "value") else str(scenario.scenario),
             variables=variables,
             messages=[system_msg],
+            tenant_id=tenant_id,
+            user_id=user_id,
             tools=self._tools.get_tool_definitions(scenario),
         )
         self._sessions[call_id] = session
@@ -218,7 +222,12 @@ class VoiceAgent:
             scenario = self._scenario_configs.get(call_id)
             if not scenario:
                 break
-            rag_ctx = await self._rag.retrieve(scenario, user_text)
+            rag_ctx = await self._rag.retrieve(
+                scenario,
+                user_text,
+                tenant_id=session.tenant_id,
+                user_id=session.user_id,
+            )
 
             # 3) 生成回复（含工具调用循环）
             messages = self._append_rag_context(session.messages, rag_ctx)

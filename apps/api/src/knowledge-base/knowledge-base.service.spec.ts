@@ -6,6 +6,7 @@ const ENV_KEYS = [
   'KNOWLEDGE_SERVICE_BASE_URL',
   'KNOWLEDGE_SERVICE_API_TOKEN',
   'KNOWLEDGE_SERVICE_TIMEOUT_MS',
+  'SERVICE_API_TOKEN',
 ] as const;
 const savedEnv = Object.fromEntries(
   ENV_KEYS.map((key) => [key, process.env[key]]),
@@ -90,19 +91,33 @@ describe('KnowledgeBaseService', () => {
       });
     };
 
-    const service = new KnowledgeBaseService();
+    const cls = fakeCls({
+      tenantId: 'tenant-a',
+      userId: 'user-a',
+      roles: ['operator', 'viewer'],
+    });
+    const service = new KnowledgeBaseService(undefined, cls as any);
     const results = await service.retrieve('kb-collection', '怎么延期', 5);
 
     assert.equal(results.length, 1);
     assert.equal(results[0].source, 'external.md');
-    assert.equal(calls[0].url, 'http://127.0.0.1:3010/api/knowledge-base/kb-collection/retrieve');
+    assert.equal(calls[0].url, 'http://127.0.0.1:3010/api/search/retrieve');
     assert.equal(calls[0].init?.method, 'POST');
-    assert.equal(calls[0].init?.body, JSON.stringify({ query: '怎么延期', topK: 5 }));
-    assert.equal(new Headers(calls[0].init?.headers).get('authorization'), 'Bearer service-token');
+    assert.equal(
+      calls[0].init?.body,
+      JSON.stringify({ q: '怎么延期', mode: 'hybrid', topK: 5, knowledgeBaseId: 'kb-collection' }),
+    );
+    const headers = new Headers(calls[0].init?.headers);
+    assert.equal(headers.get('x-service-token'), 'service-token');
+    assert.equal(headers.get('x-tenant-id'), 'tenant-a');
+    assert.equal(headers.get('x-user-id'), 'user-a');
+    assert.equal(headers.get('x-user-roles'), 'operator,viewer');
+    assert.equal(headers.get('x-user-role'), 'operator');
   });
 
   it('accepts array responses from external retrieve endpoints', async () => {
     process.env.KNOWLEDGE_SERVICE_BASE_URL = 'http://127.0.0.1:3010/api';
+    const cls = fakeCls({ tenantId: 'tenant-a' });
     globalThis.fetch = async () =>
       Response.json([
         {
@@ -113,10 +128,82 @@ describe('KnowledgeBaseService', () => {
         },
       ]);
 
-    const service = new KnowledgeBaseService();
+    const service = new KnowledgeBaseService(undefined, cls as any);
     const results = await service.retrieve('kb-collection', '问题', 3);
 
     assert.equal(results.length, 1);
     assert.equal(results[0].content, '数组格式响应');
   });
+
+  it('fails closed when external retrieve is attempted without tenant context', async () => {
+    process.env.KNOWLEDGE_SERVICE_BASE_URL = 'http://127.0.0.1:3010/api';
+
+    const service = new KnowledgeBaseService();
+
+    await assert.rejects(
+      () => service.retrieve('kb-collection', '问题', 3),
+      /tenant context/i,
+    );
+  });
+
+  it('prefers explicit identity over CLS when proxying retrieve requests', async () => {
+    process.env.KNOWLEDGE_SERVICE_BASE_URL = 'http://127.0.0.1:3010/api';
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    globalThis.fetch = async (url, init) => {
+      calls.push({ url: String(url), init });
+      return Response.json({ hits: [] });
+    };
+
+    const cls = fakeCls({
+      tenantId: 'tenant-from-cls',
+      userId: 'user-from-cls',
+      roles: ['viewer'],
+    });
+    const service = new KnowledgeBaseService(undefined, cls as any);
+    await service.retrieve('kb-collection', '问题', 3, {
+      tenantId: 'tenant-from-header',
+      userId: 'user-from-header',
+      roles: ['operator'],
+    });
+
+    const headers = new Headers(calls[0].init?.headers);
+    assert.equal(headers.get('x-tenant-id'), 'tenant-from-header');
+    assert.equal(headers.get('x-user-id'), 'user-from-header');
+    assert.equal(headers.get('x-user-roles'), 'operator');
+  });
+
+  it('refuses to start in external mode without SERVICE_API_TOKEN (inbound guard would fail open)', () => {
+    process.env.KNOWLEDGE_SERVICE_BASE_URL = 'http://127.0.0.1:3010/api';
+    delete process.env.SERVICE_API_TOKEN;
+
+    const service = new KnowledgeBaseService();
+
+    assert.throws(() => service.onModuleInit(), /SERVICE_API_TOKEN/);
+  });
+
+  it('starts in external mode when SERVICE_API_TOKEN is configured', () => {
+    process.env.KNOWLEDGE_SERVICE_BASE_URL = 'http://127.0.0.1:3010/api';
+    process.env.SERVICE_API_TOKEN = 'inbound-token';
+
+    const service = new KnowledgeBaseService();
+
+    assert.doesNotThrow(() => service.onModuleInit());
+  });
+
+  it('starts without any token when external mode is disabled (mock mode)', () => {
+    delete process.env.KNOWLEDGE_SERVICE_BASE_URL;
+    delete process.env.SERVICE_API_TOKEN;
+
+    const service = new KnowledgeBaseService();
+
+    assert.doesNotThrow(() => service.onModuleInit());
+  });
 });
+
+function fakeCls(values: Record<string, unknown>) {
+  return {
+    get<T>(key: string): T | undefined {
+      return values[key] as T | undefined;
+    },
+  };
+}

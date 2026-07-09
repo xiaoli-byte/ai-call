@@ -10,6 +10,8 @@ def test_task_context_accepts_published_flow_version() -> None:
     contract = TaskContextContract.model_validate(
         {
             "id": "task-1",
+            "tenantId": "tenant-1",
+            "ownerId": "user-1",
             "scenario": "ecommerce",
             "variables": {"customerName": "张三"},
             "flowId": "flow-1",
@@ -27,6 +29,8 @@ def test_task_context_accepts_published_flow_version() -> None:
         }
     )
     assert contract.flow_version is not None
+    assert contract.tenant_id == "tenant-1"
+    assert contract.owner_id == "user-1"
     assert contract.flow_version.version == 1
 
 

@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 import httpx
@@ -29,16 +30,21 @@ class RagService:
         self,
         api_base_url: str = "http://localhost:3001/api",
         timeout: float = 3.0,
+        service_token: str | None = None,
     ) -> None:
         self._api_base_url = api_base_url.rstrip("/")
         self._timeout = timeout
-        self._client = httpx.AsyncClient(timeout=timeout)
+        token = service_token if service_token is not None else os.getenv("SERVICE_API_TOKEN", "")
+        headers = {"X-Service-Token": token} if token else {}
+        self._client = httpx.AsyncClient(timeout=timeout, headers=headers)
 
     async def retrieve(
         self,
         scenario: ScenarioConfig,
         query: str,
         top_k: int = 3,
+        tenant_id: str | None = None,
+        user_id: str | None = None,
     ) -> str:
         """检索知识库 - 取回与用户问题相关的文档片段。
 
@@ -47,7 +53,16 @@ class RagService:
         """
         url = f"{self._api_base_url}/knowledge-base/{scenario.knowledge_base_id}/retrieve"
         try:
-            response = await self._client.post(url, json={"query": query, "topK": top_k})
+            headers: dict[str, str] = {}
+            if tenant_id:
+                headers["X-Tenant-Id"] = tenant_id
+            if user_id:
+                headers["X-User-Id"] = user_id
+            response = await self._client.post(
+                url,
+                json={"query": query, "topK": top_k},
+                headers=headers or None,
+            )
             if response.status_code != 200:
                 raise RuntimeError(f"RAG retrieve failed: HTTP {response.status_code}")
 

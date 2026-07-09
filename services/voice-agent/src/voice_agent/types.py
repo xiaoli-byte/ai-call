@@ -122,6 +122,8 @@ class CallSession:
     scenario: str
     variables: dict[str, str]
     messages: list[ChatMessage]
+    tenant_id: Optional[str] = None
+    user_id: Optional[str] = None
     tools: list[ToolDefinition] = field(default_factory=list)
 
 

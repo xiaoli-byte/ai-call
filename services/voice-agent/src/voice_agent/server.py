@@ -350,6 +350,8 @@ class VoiceAgentServer:
         variables: dict[str, str] = {}
         flow_version: Optional[dict[str, Any]] = None
         scenario_contract: Optional[dict[str, Any]] = None
+        tenant_id = str(metadata.get("tenantId", "") or "") or None
+        user_id = str(metadata.get("userId", "") or "") or None
 
         task = await self._tasks.get_task(call_id)
         if task:
@@ -359,6 +361,8 @@ class VoiceAgentServer:
             scenario_contract = task.get("scenarioConfig") or (
                 flow_version or {}
             ).get("scenarioConfig")
+            tenant_id = task.get("tenantId") or tenant_id
+            user_id = task.get("ownerId") or user_id
             logger.info(
                 "[VoiceAgentServer] callId=%s loaded task context: scenario=%s",
                 call_id,
@@ -401,6 +405,8 @@ class VoiceAgentServer:
                 variables,
                 callbacks,
                 flow_version=flow_version,
+                tenant_id=tenant_id,
+                user_id=user_id,
             )
         except asyncio.CancelledError:
             logger.info(

@@ -162,7 +162,14 @@ def mock_rag():
     """Mock RAG 服务（返回空上下文）。"""
 
     class MockRag:
-        async def retrieve(self, scenario, query, top_k=3) -> str:
+        async def retrieve(
+            self,
+            scenario,
+            query,
+            top_k=3,
+            tenant_id=None,
+            user_id=None,
+        ) -> str:
             return ""
 
         async def close(self) -> None:

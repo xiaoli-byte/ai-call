@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Headers,
   Param,
   Post,
   Query,
@@ -46,11 +47,19 @@ export class KnowledgeBaseController {
   @UseGuards(ServiceAuthGuard)
   async retrieve(
     @Param('id') id: string,
+    @Headers('x-tenant-id') tenantId: string | undefined,
+    @Headers('x-user-id') userId: string | undefined,
+    @Headers('x-user-roles') userRolesHeader: string | undefined,
+    @Headers('x-user-role') userRoleHeader: string | undefined,
     @Body() body: { query: string; topK?: number },
   ) {
     return {
       query: body.query,
-      results: await this.kbService.retrieve(id, body.query, body.topK ?? 3),
+      results: await this.kbService.retrieve(id, body.query, body.topK ?? 3, {
+        tenantId,
+        userId,
+        roles: parseRoleHeaders(userRolesHeader, userRoleHeader),
+      }),
     };
   }
 
@@ -75,4 +84,17 @@ export class KnowledgeBaseController {
     if (!file) return { error: 'No file uploaded' };
     return this.kbService.upload(id, file.originalname, file.buffer);
   }
+}
+
+function parseRoleHeaders(
+  rolesHeader: string | undefined,
+  roleHeader: string | undefined,
+): string[] | undefined {
+  const roles = rolesHeader
+    ?.split(',')
+    .map((role) => role.trim())
+    .filter(Boolean);
+  if (roles && roles.length > 0) return roles;
+  if (roleHeader?.trim()) return [roleHeader.trim()];
+  return undefined;
 }

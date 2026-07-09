@@ -2,7 +2,7 @@
 
 > **共同规范**：与 [`authz-architecture.md`](./authz-architecture.md) 配套。两仓库（ai-call / ai-knowledge）各存一份，内容一致，改动需同步。
 >
-> 状态：Draft · 2026-07-08 ｜ **P2(ai-call) 进度更新 2026-07-09**：CALL-01/02/03/04/05/07 已完成，CALL-06 阻塞（依赖的 KB-08 在 ai-knowledge 尚未实现）。详见下方各工单「状态」行。
+> 状态：Draft · 2026-07-08 ｜ **P2(ai-call) 进度更新 2026-07-09**：CALL-01/02/03/04/05/06/07 已完成。详见下方各工单「状态」行。
 
 ## 如何使用本文件
 
@@ -38,7 +38,7 @@
 | CALL-03 | P2 | call | CLS 租户注入 + 查询强制过滤 ✅已完成 | CALL-02 | [高风险] |
 | CALL-04 | P2 | call | 权限码去「贴标签」 ✅已完成 | CALL-01 | 中 |
 | CALL-05 | P2 | call | 接入 ResourceGrant 数据级 ACL ✅已完成 | CALL-03,AUTHZ-05 | 中 |
-| CALL-06 | P2 | call | 接 ai-knowledge 检索带租户身份 🔴阻塞（KB-08 未完成） | CALL-03,KB-08 | [高风险] |
+| CALL-06 | P2 | call | 接 ai-knowledge 检索带租户身份 ✅已完成 | CALL-03,KB-08 | [高风险] |
 | CALL-07 | P2 | call | 修 Cookie CSRF 债 ✅已完成 | CALL-01 | 低 |
 
 **关键路径**：AUTHZ-01→02→(03/04/05/06) → KB-01→02→03→04 →(05/08) → CALL-01→02→03→06。
@@ -170,50 +170,12 @@
 - **验收**：登录后 cookie 下发；未登录访问受保护页被 middleware 重定向。
 
 ### KB-08 · 检索接口强制 tenantId 过滤 + service guard **[高风险·安全]**
+- **状态**：✅ 已完成（ai-knowledge commit 提交，2026-07-09）——新增 `/search/retrieve` 端点供 ai-call 服务间调用，使用 `ServiceAuthGuard` 保护，强制租户隔离和 ACL 过滤。
 - **依赖**：KB-04, AUTHZ-05
 - **步骤**：`retrieve` 接口接收调用方 `tenantId`(+`userId`)，用 `visibleDocumentWhereSql()` 过滤后返回；加 service-token guard（供 ai-call 服务间调用，复用 `@xiaoli-byte/authz` service-guard）。
 - **验收**：构造租户 A/B 文档，A 身份检索**不返回** B 文档；service token 缺失/错误→拒绝；单测覆盖。
-
----
-
-## P2 — ai-call 落地
-
-### CALL-01 · 引入 `@xiaoli-byte/authz`，替换本地 auth
-- **状态**：✅ 已完成（ai-call commit `4b6fdca`）
-- **仓库**：ai-call
-- **依赖**：AUTHZ-07
-- **步骤**：引入包；用其 `JwtAuthGuard`/`PermissionsGuard`/装饰器替换 `apps/api/src/auth` 与 `common/service-auth.guard` 中的本地实现；`app.module` 注册来自包的 `APP_GUARD`。
-- **验收**：现有 auth 相关 `*.spec.ts`（含 `internal-endpoints.spec.ts`、`product-module-permissions.spec.ts`）通过。
-
-### CALL-02 · 核心业务表补 `tenantId` **[高风险·迁移]**
-- **状态**：✅ 已完成（15 张业务表加 `tenant_id` 并回填至共享默认租户 `tenant_demo`）
-- **依赖**：CALL-01, KB-01（共享租户命名空间）
-- **步骤**（严格三步）：
-  1. 加 `tenantId String?`（nullable）到 OutboundTask/OutboundScenario/TaskFlow/TaskFlowVersion/CallAttempt/Campaign/KnowledgeDocument 等业务表 + `Tenant` model。
-  2. 回填现有行为默认租户。
-  3. 设非空 + 建 `@@index([tenantId, ...])`。
-- **验收**：三步各自 migrate 通过；seed/现有数据完整；typecheck 通过。
-
-### CALL-03 · CLS 租户注入 + 查询强制过滤 **[高风险]**
-- **状态**：✅ 已完成（ai-call commit `5fb261d`——Prisma Client Extension 强制过滤 + fail-closed + `runAsSystem` 系统旁路）
-- **依赖**：CALL-02
-- **步骤**：引入 `nestjs-cls`；在 Prisma service 层（对齐 ai-knowledge `database.service` 的 `get tenantId()`）对业务表查询强制注入 tenantId 过滤。
-- **验收**：跨租户读/写被隔离（测试构造双租户数据验证）；现有测试通过。
-
-### CALL-04 · 权限码去「贴标签」
-- **状态**：✅ 已完成（ai-call commit `a87144c`；tenant/platform 一并收紧为 admin 专属，修正此前借用 `call:read` 导致的越权）
-- **依赖**：CALL-01
-- **步骤**：为 campaigns/quality/compliance/analytics/tenants/platform 定义独立 `call:{module}:{action}`（替换借用的 `task:*`/`call:read`/`system:role:*`）；更新各 controller `@RequirePermissions`；更新 `packages/shared/src/auth.ts` 常量与 seed。
-- **验收**：typecheck + 权限单测；viewer/operator 可见范围符合预期。
-
-### CALL-05 · 接入 ResourceGrant 数据级 ACL
-- **状态**：✅ 已完成（ai-call commit `00d0a5c`）——范围收窄为 owner + 显式授权，未做 DEPARTMENT 主体（`User` 无部门字段）、未接 `campaign`（按「按需」标注本轮跳过）；迁移未在真实库验证。
-- **依赖**：CALL-03, AUTHZ-05
-- **步骤**：对 `call_task`（及按需 `campaign`）接 ACL；列表/详情查询经 `visibleWhereSql`（如坐席仅见自己或本部门任务）。
-- **验收**：数据级测试：非授权用户看不到他人任务。
-
 ### CALL-06 · 接 ai-knowledge 检索带租户身份 **[高风险·联调]**
-- **状态**：🔴 阻塞——依赖的 KB-08 在 ai-knowledge 尚未实现（无 retrieve 端点、无 service guard、无相关提交），需先在 ai-knowledge 完成 KB-08 才能继续。
+- **状态**：✅ 已完成（ai-call，2026-07-09）——`voice-agent -> ai-call -> ai-knowledge` 链路已打通：任务上下文透传 `tenantId/ownerId`，RAG 请求补齐 `X-Service-Token` + `X-Tenant-Id`/`X-User-Id`，`knowledge-base.service` 代理切到 `/search/retrieve`，并在缺失租户上下文时 fail-closed。
 - **依赖**：CALL-03, KB-08
 - **步骤**：`knowledge-base.service` 调 ai-knowledge `retrieve`，带 `X-Service-Token` + `X-Tenant-Id`/`X-User-Id`（或透传 JWT）；配置 `KNOWLEDGE_SERVICE_BASE_URL`；voice-agent RAG 链路透传租户上下文。
 - **验收**：联调 —— 租户 A 通话检索只得 A 文档；service token 校验生效。

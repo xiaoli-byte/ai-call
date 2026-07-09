@@ -47,6 +47,8 @@ export enum CallOutcome {
 /** 外呼任务 */
 export interface OutboundTask {
   id: string;
+  tenantId?: string;
+  ownerId?: string;
   /** 被叫号码（E.164，如 +8613800138000）或本机联调 SIP 分机（如 1001） */
   to: string;
   /** 主叫号码 */
