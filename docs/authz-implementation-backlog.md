@@ -2,7 +2,7 @@
 
 > **共同规范**：与 [`authz-architecture.md`](./authz-architecture.md) 配套。两仓库（ai-call / ai-knowledge）各存一份，内容一致，改动需同步。
 >
-> 状态：Draft · 2026-07-08 ｜ **P2(ai-call) 进度更新 2026-07-09**：CALL-01~07 代码工单已完成并进 `main`。对照 `authz-architecture.md` §8 的收尾项（决策 2026-07-10）：CALL-09（Campaign ACL）已完成；CALL-08（部门 ACL）ai-call 侧**暂缓**（部门能力落 ai-knowledge）；CALL-12（激活按库过滤）方案定为**配置对齐**（无需代码、运营激活）；**CALL-10（跨仓真隔离实测）已在真环境验证通过（14/14，并修掉一个让 CALL-06 运行时不通的 retrieve 401 bug）**；仅剩 **CALL-11（迁移真库演练）** 一个上线阻塞项待真库执行。详见下方各工单「状态」行。
+> 状态：Draft · 2026-07-08 ｜ **P2(ai-call) 进度更新 2026-07-09**：CALL-01~07 代码工单已完成并进 `main`。对照 `authz-architecture.md` §8 的收尾项（决策 2026-07-10）：CALL-09（Campaign ACL）已完成；CALL-08（部门 ACL）ai-call 侧**暂缓**（部门能力落 ai-knowledge）；CALL-12（激活按库过滤）方案定为**配置对齐**（无需代码、运营激活）；**CALL-10（跨仓真隔离实测）已在真环境验证通过（14/14，并修掉一个让 CALL-06 运行时不通的 retrieve 401 bug）**；**CALL-11（迁移真库演练）已在一次性可弃库上演练通过（17 迁移 + 结构/回填校验 + seed 幂等）**。**两个上线阻塞项均已清除，P2(ai-call) 全部收尾完成。** 详见下方各工单「状态」行。
 
 ## 如何使用本文件
 
@@ -43,7 +43,7 @@
 | CALL-08 | P2 | call | ResourceGrant 扩到部门(DEPT)主体 ⏸️暂缓（ai-call 侧，部门能力落在 ai-knowledge） | CALL-05 | [高风险] |
 | CALL-09 | P2 | call | Campaign 复用 ResourceGrant ACL ✅已完成 | CALL-05 | 中 |
 | CALL-10 | P2 | call | CALL-06 跨仓真隔离联调实测 ✅真环境通过（14/14，修 retrieve 401 bug） | CALL-06,KB-08 | [高风险] |
-| CALL-11 | P2 | call | CALL-05 迁移真库演练(migrate deploy) 🔴待办 **上线阻塞** | CALL-05 | [高风险] |
+| CALL-11 | P2 | call | CALL-05 迁移真库演练(migrate deploy) ✅演练通过（17迁移+结构/回填+seed幂等） | CALL-05 | [高风险] |
 | CALL-12 | P2 | both | 激活按库过滤：kb id ↔ folder id 对齐/映射 🟢方案定：配置对齐（无需代码，运营激活） | CALL-10 | 中 |
 
 **关键路径**：AUTHZ-01→02→(03/04/05/06) → KB-01→02→03→04 →(05/08) → CALL-01→02→03→06 →（上线前）CALL-10/11。
@@ -221,7 +221,7 @@
 - **验收**：租户 A 通话检索**不返回** B 文档；错误/缺失 service token → 被拒。（`knowledgeBaseId` 按库过滤见 CALL-12。）
 
 ### CALL-11 · CALL-05 迁移真库演练(migrate deploy) **[高风险·迁移·上线阻塞]**
-- **状态**：🔴 待办（**上线阻塞**）。CALL-02/05 的迁移脚本已手写，但本机无 Postgres**从未在真库跑过**。已备演练脚本 `scripts/call-11-migration-dryrun.ps1` + 手册 `docs/testing/call-11-migration-dryrun.md`（起一个一次性可弃 Postgres 即可跑：`migrate deploy` + 结构/回填/索引断言 + seed 幂等）。**待真库执行**。
+- **状态**：✅ **真库演练通过**（2026-07-10）。在一次性可弃库 `ai_call_migration_dryrun`（与开发库同服务器、独立空库，跑完即 DROP）上执行全部 17 条迁移：`prisma migrate deploy` 顺序应用无误 → 结构/回填/索引校验全绿（tenant_demo 由迁移自建、15 张表 `tenant_id` NOT NULL+默认+索引、`outbound_tasks`/`campaigns` 的 `owner_id`、`resource_grants` 表与复合索引、无未完成/回滚迁移）→ seed 幂等（连跑两次 permissions 38→38、roles 3→3、outbound_scenarios 3→3，第二次全 `[跳过]`）。演练脚本 `scripts/call-11-migration-dryrun.ps1` + 手册 `docs/testing/call-11-migration-dryrun.md`。**上线阻塞项已清除。**
 - **依赖**：CALL-05
 - **步骤**：在一次性可弃的库上 `prisma migrate deploy` 演练全部 P2 迁移（tenantId 三步、`ownerId`、`ResourceGrant`），核对回填结果与索引；产出可复现的演练记录（参照 `docs/testing/operations-loop-regression.md`）。
 - **验收**：迁移在干净库上顺序执行无误；现有数据回填正确（tenantId=`tenant_demo`、历史任务 `ownerId=null` 按公开语义）；seed 幂等。脚本断言覆盖结构/默认/索引/无 NULL 残留/迁移状态/seed 幂等；真实旧数据回填见手册「分批 deploy」可选演练。

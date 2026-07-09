@@ -4,6 +4,9 @@
 > 驱动脚本：`scripts/call-11-migration-dryrun.ps1`（PowerShell + psql + pnpm/prisma）。
 > 数据库运维总纲见 `docs/testing/operations-loop-regression.md`。
 
+> ✅ **首次演练通过**（2026-07-10）。目标：一次性可弃库 `ai_call_migration_dryrun`（建在 `ai-call-postgres` 服务器内、独立空库，跑完 `DROP DATABASE`；开发库 `ai_call` 未受影响）。结果：`prisma migrate deploy` 顺序应用 **17 条迁移**（含 CALL-02/05/09）无误 → 结构/回填/索引校验 DO 块全绿（`tenant_demo` 由迁移自建，15 张表 `tenant_id` NOT NULL+默认+索引、无 NULL 残留；`outbound_tasks`/`campaigns` 的 `owner_id`；`resource_grants` 表 + 复合索引；无未完成/回滚迁移）→ seed 幂等（两次 `permissions` 38、`roles` 3、`outbound_scenarios` 3 不变，第二次全 `[跳过]`）。
+> 本机因主机无 `psql`/`pwsh`，是把脚本的三步（重置空库→`migrate deploy`→verify SQL→seed×2）用 `docker exec … psql` + `pnpm --filter @ai-call/api …` 等价手工执行；生产/有 psql 环境按下方「运行」章节直接跑 `.ps1` 即可。
+
 ## 目的
 
 CALL-02（15 张业务表补 `tenant_id`，三步走）与 CALL-05（`outbound_tasks.owner_id` + `resource_grants`）的迁移脚本已手写，但**从未在真实 Postgres 上跑过 `migrate deploy`**（本机开发期无常驻 Postgres）。上线前必须在一次性可弃库上演练生产部署路径，确认迁移可顺序应用、结构与回填正确、seed 幂等。
