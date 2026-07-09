@@ -45,6 +45,7 @@
 | CALL-10 | P2 | call | CALL-06 跨仓真隔离联调实测 ✅真环境通过（14/14，修 retrieve 401 bug） | CALL-06,KB-08 | [高风险] |
 | CALL-11 | P2 | call | CALL-05 迁移真库演练(migrate deploy) ✅演练通过（17迁移+结构/回填+seed幂等） | CALL-05 | [高风险] |
 | CALL-12 | P2 | both | 激活按库过滤：kb id ↔ folder id 对齐/映射 🟢方案定：配置对齐（无需代码，运营激活） | CALL-10 | 中 |
+| CALL-13 | P3 | both | 完整身份联合：ai-call 用户在 ai-knowledge 开通/映射真实账号（owner 归属打通） 🔵未排期 | CALL-12,§9 | [高风险] |
 
 **关键路径**：AUTHZ-01→02→(03/04/05/06) → KB-01→02→03→04 →(05/08) → CALL-01→02→03→06 →（上线前）CALL-10/11。
 **可并行**：AUTHZ-03/04/05/06 在 02 后可并行；KB-06/07 与 KB-03/04 可并行；CALL-04/07 与 CALL-02/03 可并行；CALL-08/09（范围决策项）与 CALL-10/11（上线阻塞项）互不依赖，可并行。
@@ -237,6 +238,20 @@
 ## P3 — 可选（未来，非当下）
 
 - 签发收敛为独立 identity 服务 / 真 OIDC SSO（Logto/Keycloak/SuperTokens）；两系统改 OIDC client；`@xiaoli-byte/authz` 校验接口不变。详见 `authz-architecture.md` §9。
+
+### CALL-13 · 完整身份联合：ai-call 用户在 ai-knowledge 开通/映射真实账号 **[P3·高风险·未排期]**
+- **状态**：🔵 已登记（2026-07-10），未排期。
+- **背景**：知识库微前端（Multi-Zones）+ 无状态联合登录已落地（见 ai-call 仓 `docs/knowledge-base-microfrontend.md`）：ai-call 的 httpOnly cookie 经统一 JWT 密钥被 ai-knowledge 验签放行，一次登录即用。但两系统**用户表独立**，ai-call 用户的 `sub` 在 ai-knowledge 无对应记录——身份仅是 token claim 层面的「外来信任」：
+  - ✅ 租户隔离、按角色访问正常（admin 租户内全见）。
+  - ⚠️ **owner 归属功能对 ai-call 身份降级**：非 admin 的 ai-call 用户看不到 ai-knowledge 中按 `owner_id` 私有（`permission_scope=PRIVATE`）的文档，也无法「拥有」自己上传的文档；ResourceGrant 按 USER 主体授权时授不到这个外来 id。
+- **目标**：ai-call 用户在 ai-knowledge 拥有真实账号（自动开通 JIT provisioning 或映射表），owner 归属、个人级 ACL、审计主体全部打通。
+- **方案候选**（届时决策）：
+  - (a) **JIT 开通**：ai-knowledge 首次见到合法 token 的陌生 `sub` 时按 claim 自动建 user 行（email/name/tenantId/role），后续即为真实主体。实现最轻，但需处理 email 冲突/角色同步/停用同步。
+  - (b) **映射表**：`external_identities(provider, external_sub, user_id)`，ai-call 身份显式绑定 ai-knowledge 账号；语义最清晰，多一张表和绑定流程。
+  - (c) **独立 IdP（§9 全量方案）**：两系统同一 identity 源，`sub` 天然一致；最彻底也最重，与本工单二选一或先 (a)/(b) 过渡。
+- **依赖**：CALL-12（微前端+联合登录基线）；与 §9 IdP 演进方向需对齐后再动工。
+- **风险**：用户生命周期同步（改角色/停用/删除的跨系统一致性）、email 唯一性冲突、审计主体追溯口径变化——属账号体系改造，须单独评审。
+- **验收**：非 admin 的 ai-call 用户经 `/knowledge` 上传文档后成为其 owner；PRIVATE 文档对其可见性与 ai-knowledge 本地账号一致；ResourceGrant 可按该用户授权。
 
 ---
 
