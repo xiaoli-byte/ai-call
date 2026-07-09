@@ -2,7 +2,7 @@
 
 > **共同规范**：与 [`authz-architecture.md`](./authz-architecture.md) 配套。两仓库（ai-call / ai-knowledge）各存一份，内容一致，改动需同步。
 >
-> 状态：Draft · 2026-07-08 ｜ **P2(ai-call) 进度更新 2026-07-09**：CALL-01~07 代码工单已完成并进 `main`。对照 `authz-architecture.md` §8 仍有收尾项：CALL-09（Campaign ACL）已完成；CALL-08（部门 ACL）/ CALL-12（激活按库过滤）待确认方案；CALL-10（跨仓真隔离实测）/ CALL-11（迁移真库演练）为上线阻塞、脚本已备待真环境执行。详见下方各工单「状态」行。
+> 状态：Draft · 2026-07-08 ｜ **P2(ai-call) 进度更新 2026-07-09**：CALL-01~07 代码工单已完成并进 `main`。对照 `authz-architecture.md` §8 的收尾项（决策 2026-07-10）：CALL-09（Campaign ACL）已完成；CALL-08（部门 ACL）ai-call 侧**暂缓**（部门能力落 ai-knowledge）；CALL-12（激活按库过滤）方案定为**配置对齐**（无需代码、运营激活）；仅剩 CALL-10（跨仓真隔离实测）/ CALL-11（迁移真库演练）两个上线阻塞项，脚本已备、待真环境执行。详见下方各工单「状态」行。
 
 ## 如何使用本文件
 
@@ -40,11 +40,11 @@
 | CALL-05 | P2 | call | 接入 ResourceGrant 数据级 ACL ✅已完成 | CALL-03,AUTHZ-05 | 中 |
 | CALL-06 | P2 | call | 接 ai-knowledge 检索带租户身份 ✅已完成 | CALL-03,KB-08 | [高风险] |
 | CALL-07 | P2 | call | 修 Cookie CSRF 债 ✅已完成 | CALL-01 | 低 |
-| CALL-08 | P2 | call | ResourceGrant 扩到部门(DEPT)主体 🟡待办 **需先确认部门模型** | CALL-05 | [高风险] |
+| CALL-08 | P2 | call | ResourceGrant 扩到部门(DEPT)主体 ⏸️暂缓（ai-call 侧，部门能力落在 ai-knowledge） | CALL-05 | [高风险] |
 | CALL-09 | P2 | call | Campaign 复用 ResourceGrant ACL ✅已完成 | CALL-05 | 中 |
 | CALL-10 | P2 | call | CALL-06 跨仓真隔离联调实测 🔴待办 **上线阻塞** | CALL-06,KB-08 | [高风险] |
 | CALL-11 | P2 | call | CALL-05 迁移真库演练(migrate deploy) 🔴待办 **上线阻塞** | CALL-05 | [高风险] |
-| CALL-12 | P2 | both | 激活按库过滤：kb id ↔ folder id 对齐/映射 🟡待办 | CALL-10 | 中 |
+| CALL-12 | P2 | both | 激活按库过滤：kb id ↔ folder id 对齐/映射 🟢方案定：配置对齐（无需代码，运营激活） | CALL-10 | 中 |
 
 **关键路径**：AUTHZ-01→02→(03/04/05/06) → KB-01→02→03→04 →(05/08) → CALL-01→02→03→06 →（上线前）CALL-10/11。
 **可并行**：AUTHZ-03/04/05/06 在 02 后可并行；KB-06/07 与 KB-03/04 可并行；CALL-04/07 与 CALL-02/03 可并行；CALL-08/09（范围决策项）与 CALL-10/11（上线阻塞项）互不依赖，可并行。
@@ -199,7 +199,8 @@
 > CALL-01~07 是代码工单；以下 4 项是架构验收目标里尚未达成的部分。**CALL-08/09 是范围决策项**（做不做取决于产品是否需要部门粒度 / Campaign 粒度的数据权限），**CALL-10/11 是上线阻塞项**（安全实测与数据迁移，未过不可上生产）。
 
 ### CALL-08 · ResourceGrant 扩到部门(DEPT)主体 **[高风险·需先确认部门模型]**
-- **状态**：🟡 待办（范围决策）。CALL-05 因 `User` 无部门字段**主动收窄**为「owner + 显式授权 + admin」，未做 `subjectType=DEPT`。架构 `authz-architecture.md` §3（`ResourceGrant.subjectType` 含 `DEPT`）与 §7 P2（「坐席只看自己任务/**本部门通话**」）要求部门粒度。
+- **状态**：⏸️ **暂缓（ai-call 侧）**（决策 2026-07-10）。部门能力落在 **ai-knowledge**（已有 `departments` 模块 + `Department` 表 + `User.departmentId`）即可；ai-call 当前**无明确产品驱动**，且任一建模都要动 `User`/JWT claim（高风险迁移）。现阶段「本部门可见」用**显式 grant 给 role/user 模拟**，等有真实客户需求再启动。届时需先定语义（同部门自动互见 vs 显式授权给部门主体）与建模（ai-call 自建 Department vs 把 departmentId 加进 `@xiaoli-byte/authz` claim 复用 kb 部门）。
+- ~~**状态（原）**：范围决策，未做 `subjectType=DEPT`。~~ CALL-05 因 `User` 无部门字段**主动收窄**为「owner + 显式授权 + admin」。架构 `authz-architecture.md` §3（`ResourceGrant.subjectType` 含 `DEPT`）与 §7 P2（「坐席只看自己任务/**本部门通话**」）要求部门粒度——该目标由 ai-knowledge 侧承载。
 - **依赖**：CALL-05
 - **前置确认（不可自行发明）**：是否引入部门模型？建模方式（`Department` 表 + `User.departmentId`，还是复用 org/team 既有结构）？跨租户部门命名空间？——按架构规范，拿不准先问，不擅自造 DEPT 语义。
 - **步骤**（确认后）：1) 加部门模型 + 迁移回填；2) `task-acl.ts` 的可见性判定加入 `subjectType=DEPT` 分支（用户所属部门被 grant 即可见）；3) grant 写入/管理入口支持 DEPT 主体。
@@ -224,11 +225,10 @@
 - **验收**：迁移在干净库上顺序执行无误；现有数据回填正确（tenantId=`tenant_demo`、历史任务 `ownerId=null` 按公开语义）；seed 幂等。脚本断言覆盖结构/默认/索引/无 NULL 残留/迁移状态/seed 幂等；真实旧数据回填见手册「分批 deploy」可选演练。
 
 ### CALL-12 · 激活按库过滤：kb id ↔ folder id 对齐/映射 **[中]**
-- **状态**：🟡 待办。CALL-10 一轮里已在 ai-knowledge 实现 `knowledgeBaseId → folder` 按库过滤（优雅兜底：id 不对应真实 folder 则退回租户级），并在 ai-call 保留发送 `knowledgeBaseId`。但**两系统的 id 尚未对齐**：ai-call 的 kb id（如 `kb-collection`）≠ ai-knowledge 的 folder id（cuid），故默认仍是租户级检索——功能到位但**未激活**。
+- **状态**：🟢 **方案已定：配置对齐（无需代码，运营激活）**（决策 2026-07-10）。CALL-10 一轮里已在 ai-knowledge 实现 `knowledgeBaseId → folder` 按库过滤（优雅兜底：id 不对应真实 folder 则退回租户级）。**决策取方案 (a) 配置对齐**：把 ai-call scenario 的 `knowledgeBaseId`（voice-agent 的 `scenario.knowledge_base_id` / ai-call OutboundScenario 配置）直接填成 ai-knowledge 中目标 folder 的真实 id。零代码，纯配置即激活。
 - **依赖**：CALL-10（隔离实测先通过，确认基线安全）
-- **前置确认（不可自行发明）**：一个 ai-call「知识库」应对应 ai-knowledge 的什么？三选一——(a) 直接令 ai-call kb id = ai-knowledge folder id（运营约定，最简）；(b) 建 kb↔folder 映射表/配置，ai-call 发送前翻译；(c) ai-knowledge 引入独立 KnowledgeBase 实体（改动最大、语义最正）。
-- **步骤**（确认后）：按选定方案对齐 id 或加映射层；若「知识库=folder 子树」，把 ai-knowledge 的精确 `folder_id =` 改为子树匹配（见 `docs/testing/call-10-cross-tenant-retrieval.md` 的「已知限制」）。
-- **验收**：`scripts/call-10-cross-tenant-retrieval.mjs` 的场景 4（设两个真实且文档不同的库 id）断言 `4.1` 由 WARN 变为通过——不同 kb id 返回不同结果集，按库过滤真正生效。
+- **激活步骤**：1) 在 ai-knowledge 确认/建立目标知识库对应的 folder，取其 id；2) 把该 folder id 配到 ai-call 对应 scenario 的 `knowledgeBaseId`；3) 用 `scripts/call-10-cross-tenant-retrieval.mjs` 设两个真实 folder id 验证。（若将来出现「一个 KB 跨多 folder / 一个 folder 属多 KB」的需求，再升级到方案 (c) 独立 `KnowledgeBase` 实体。）
+- **验收**：`scripts/call-10-cross-tenant-retrieval.mjs` 的场景 4（`KB_ID`/`KB_ID_OTHER` 设为两个真实且文档不同的 folder id）断言 `4.1` 由 WARN 变为通过——不同 kb id 返回不同结果集，按库过滤真正生效。
 
 ---
 
