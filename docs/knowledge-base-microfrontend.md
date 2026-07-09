@@ -72,15 +72,21 @@ ai-knowledge web 用 `NEXT_PUBLIC_API_URL`（构建期公开变量，prod 默认
 ### 路线 A（interim，今日可用，零代码）
 用户分别登录 ai-call（cookie）与 ai-knowledge zone（其 `/knowledge/login`，写 localStorage）。同源下两套登录态并存，功能可用，但**登两次**。网关配置即可上生产。
 
-### 路线 B（真 SSO，改动在 ai-knowledge 侧）
-落地 ai-knowledge 的鉴权对齐（即 `authz-architecture.md` §8 ai-knowledge 清单里未打勾项的一部分）：
-1. **统一 JWT 签名密钥**：ai-knowledge `JWT_ACCESS_SECRET` = ai-call `JWT_SECRET`（并对齐 claim：`sub`/`tenantId` 已有，`role`↔`roles` 需兼容）。
-2. **ai-knowledge API 接受共享 cookie**：`jwtFromRequest` 改为 `fromExtractors([cookieExtractor, fromAuthHeaderAsBearerToken()])`（保留 header 兼容独立部署）。
-3. **ai-knowledge web 带 cookie**：API 客户端加 `credentials:'include'`，鉴权判断从 localStorage 迁到 cookie（middleware 才能服务端拦截）。
+### 路线 B ✅ 已实现（无状态联合登录，2026-07-10）
 
-完成后：ai-call 登录 → 同域 cookie 自动带给 `/knowledge/api/*` → ai-knowledge 用共享密钥验签 → 真单点登录，租户隔离/RBAC/ACL 全复用。
+> 决策：取**无状态联合**（两系统独立用户表，不做用户开通/映射）。ai-call 登录 → 同域 cookie 带给 `/knowledge/api/*` → ai-knowledge 用**统一密钥**验签 → 一次登录即可。
 
-**前提硬约束（两条路都需要）**：**必须同域**（cookie/localStorage 才同源共享）。
+已落地（ai-knowledge，commit `f5c53ee`；均对独立部署无害，无 cookie 自动回落 Bearer）：
+1. **统一 JWT 签名密钥**（env）：ai-knowledge `JWT_ACCESS_SECRET` = ai-call `JWT_SECRET`（未提交，需两侧配置）。
+2. **API 接受共享 cookie**：`jwt.strategy` 改 `fromExtractors([cookieExtractor, bearer])`，cookie 优先解析 `access_token`（直接读 Cookie 头，不依赖 cookie-parser）；`validate` 兼容 claim（单数 `role` ↔ ai-call 复数 `roles`），归一化 `id/name` 供 `/auth/me`。
+3. **web 带 cookie**：client `fetch` 加 `credentials:'include'`；store 加 `setCookieSession`（内存哨兵 token 令路由守卫通过，不写 localStorage）；`(dashboard)/layout` 无本地令牌时先 `/auth/me` 用 cookie 引导会话，失败才跳登录页。
+
+**⚠️ 无状态联合的语义边界（重要）**：ai-call 与 ai-knowledge 是**独立用户表**。ai-call 用户的 `sub` 在 ai-knowledge **无对应记录**，身份靠 token 的 `tenantId`/`role` claim 联合信任：
+- ✅ 租户隔离生效（两侧 `tenantId=tenant_demo`）、按角色的访问生效。
+- ⚠️ **owner 归属功能降级**：ai-knowledge 里「我的文档」「私有文档（owner_id）」对 ai-call 身份不匹配，只能看到租户级可见（`permission_scope=COMPANY/PUBLIC`）内容。
+- 若需完全打通（ai-call 用户在 ai-knowledge 有真实账号、owner 归属也对），需**用户开通/映射**机制（`authz-architecture.md` §9 P3 身份联合，另立工单）。
+
+**前提硬约束**：**必须同域**（cookie 才同源共享）+ **两侧 JWT 密钥统一**（否则 cookie 验签不过）。
 
 ## 本地联调步骤
 
