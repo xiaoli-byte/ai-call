@@ -1,4 +1,10 @@
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { FlowStatus, validateFlowDefinition } from '@ai-call/shared';
 import type {
   ChatMessage,
@@ -8,6 +14,7 @@ import type {
   TaskFlow,
   TaskFlowVersion,
 } from '@ai-call/shared';
+import { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { LlmService } from '../llm/llm.service.js';
 import { toPrismaJson } from '../common/prisma-json.js';
@@ -100,7 +107,19 @@ export class TaskFlowsService {
 
   async remove(id: string): Promise<void> {
     await this.get(id);
-    await this.prisma.taskFlow.delete({ where: { id } });
+    try {
+      await this.prisma.taskFlow.delete({ where: { id } });
+    } catch (err) {
+      // task_flow_versions/outbound_tasks 对 flow 都是 onDelete: Restrict——发布过的流程
+      // 留有不可变版本快照（可能仍被历史任务锁定执行），数据库会拒绝删除。这是设计使然
+      // （见 CLAUDE.md「Immutable flow execution」），把裸 FK 500 转成可读的 409。
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2003') {
+        throw new ConflictException(
+          `流程 ${id} 已发布过版本或仍被任务引用，无法删除。请先归档而非删除。`,
+        );
+      }
+      throw err;
+    }
     this.logger.log(`deleted task-flow id=${id}`);
   }
 
