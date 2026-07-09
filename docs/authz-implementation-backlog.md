@@ -2,7 +2,7 @@
 
 > **共同规范**：与 [`authz-architecture.md`](./authz-architecture.md) 配套。两仓库（ai-call / ai-knowledge）各存一份，内容一致，改动需同步。
 >
-> 状态：Draft · 2026-07-08 ｜ **P2(ai-call) 进度更新 2026-07-09**：CALL-01~07 代码工单已完成并进 `main`。对照 `authz-architecture.md` §8 仍有 4 项收尾未闭合，已登记为 **CALL-08~11**（部门 ACL / Campaign ACL / 跨仓真隔离实测 / 迁移真库演练）。其中 CALL-10/11 为上线阻塞项。详见下方各工单「状态」行。
+> 状态：Draft · 2026-07-08 ｜ **P2(ai-call) 进度更新 2026-07-09**：CALL-01~07 代码工单已完成并进 `main`。对照 `authz-architecture.md` §8 仍有收尾项未闭合，已登记为 **CALL-08~12**（部门 ACL / Campaign ACL / 跨仓真隔离实测 / 迁移真库演练 / 激活按库过滤）。其中 CALL-10/11 为上线阻塞项。详见下方各工单「状态」行。
 
 ## 如何使用本文件
 
@@ -44,6 +44,7 @@
 | CALL-09 | P2 | call | Campaign 复用 ResourceGrant ACL 🟡待办 | CALL-05 | 中 |
 | CALL-10 | P2 | call | CALL-06 跨仓真隔离联调实测 🔴待办 **上线阻塞** | CALL-06,KB-08 | [高风险] |
 | CALL-11 | P2 | call | CALL-05 迁移真库演练(migrate deploy) 🔴待办 **上线阻塞** | CALL-05 | [高风险] |
+| CALL-12 | P2 | both | 激活按库过滤：kb id ↔ folder id 对齐/映射 🟡待办 | CALL-10 | 中 |
 
 **关键路径**：AUTHZ-01→02→(03/04/05/06) → KB-01→02→03→04 →(05/08) → CALL-01→02→03→06 →（上线前）CALL-10/11。
 **可并行**：AUTHZ-03/04/05/06 在 02 后可并行；KB-06/07 与 KB-03/04 可并行；CALL-04/07 与 CALL-02/03 可并行；CALL-08/09（范围决策项）与 CALL-10/11（上线阻塞项）互不依赖，可并行。
@@ -221,6 +222,13 @@
 - **依赖**：CALL-05
 - **步骤**：在一次性可弃的库上 `prisma migrate deploy` 演练全部 P2 迁移（tenantId 三步、`ownerId`、`ResourceGrant`），核对回填结果与索引；产出可复现的演练记录（参照 `docs/testing/operations-loop-regression.md`）。
 - **验收**：迁移在干净库上顺序执行无误；现有数据回填正确（tenantId=`tenant_demo`、历史任务 `ownerId=null` 按公开语义）；seed 幂等。
+
+### CALL-12 · 激活按库过滤：kb id ↔ folder id 对齐/映射 **[中]**
+- **状态**：🟡 待办。CALL-10 一轮里已在 ai-knowledge 实现 `knowledgeBaseId → folder` 按库过滤（优雅兜底：id 不对应真实 folder 则退回租户级），并在 ai-call 保留发送 `knowledgeBaseId`。但**两系统的 id 尚未对齐**：ai-call 的 kb id（如 `kb-collection`）≠ ai-knowledge 的 folder id（cuid），故默认仍是租户级检索——功能到位但**未激活**。
+- **依赖**：CALL-10（隔离实测先通过，确认基线安全）
+- **前置确认（不可自行发明）**：一个 ai-call「知识库」应对应 ai-knowledge 的什么？三选一——(a) 直接令 ai-call kb id = ai-knowledge folder id（运营约定，最简）；(b) 建 kb↔folder 映射表/配置，ai-call 发送前翻译；(c) ai-knowledge 引入独立 KnowledgeBase 实体（改动最大、语义最正）。
+- **步骤**（确认后）：按选定方案对齐 id 或加映射层；若「知识库=folder 子树」，把 ai-knowledge 的精确 `folder_id =` 改为子树匹配（见 `docs/testing/call-10-cross-tenant-retrieval.md` 的「已知限制」）。
+- **验收**：`scripts/call-10-cross-tenant-retrieval.mjs` 的场景 4（设两个真实且文档不同的库 id）断言 `4.1` 由 WARN 变为通过——不同 kb id 返回不同结果集，按库过滤真正生效。
 
 ---
 
