@@ -36,6 +36,12 @@ export class KnowledgeBaseService implements OnModuleInit {
   private readonly externalBaseUrl = process.env.KNOWLEDGE_SERVICE_BASE_URL?.replace(/\/+$/, '');
   private readonly serviceToken = process.env.KNOWLEDGE_SERVICE_API_TOKEN;
   private readonly timeoutMs = Number(process.env.KNOWLEDGE_SERVICE_TIMEOUT_MS ?? 5000);
+  // CALL-10 缺口#2：ai-knowledge 的 ServiceAuthGuard 强制要求 X-User-Id。历史/系统创建的任务
+  // ownerId 为 null（CALL-05 保留），若不兜底会被 ai-knowledge 401，导致这类通话做不了 RAG。
+  // 无用户上下文时回退到服务账号（默认 'system'）——它不 own/被授予任何文档，只能检索到租户
+  // 公开文档（permission_scope=COMPANY/PUBLIC），语义上等价「系统任务按租户公开语料检索」。
+  private readonly fallbackUserId =
+    process.env.KNOWLEDGE_SERVICE_FALLBACK_USER_ID?.trim() || 'system';
 
   /**
    * CALL-06 fail-closed 自检：外部知识库模式（externalBaseUrl 已配置）会把真实的跨租户
@@ -467,7 +473,11 @@ export class KnowledgeBaseService implements OnModuleInit {
     identity?: KnowledgeRequestIdentity | KnowledgeResolvedIdentity,
   ): KnowledgeResolvedIdentity {
     const tenantId = identity?.tenantId ?? this.cls?.get<string>('tenantId');
-    const userId = identity?.userId ?? this.cls?.get<string>('userId');
+    // 显式 > CLS > 服务账号兜底（缺口#2）。用 || 而非 ??：空串 X-User-Id 也应兜底到服务账号
+    // （否则 requestExternal 会跳过 X-User-Id → ai-knowledge 401）。兜底仅在无用户上下文时生效
+    // （voice 路径 ownerId=null）；dashboard 认证调用总有 CLS userId，不会走兜底。
+    const userId =
+      identity?.userId || this.cls?.get<string>('userId') || this.fallbackUserId;
     // 角色优先级：显式传入 > CLS。@xiaoli-byte/authz 的 JwtAuthGuard 只写入 CLS 的
     // 复数 'roles'（cls.set('roles', claims.roles)），故不存在单数 'role' 回退。
     const explicitRoles = identity?.roles?.filter(Boolean);

@@ -7,6 +7,7 @@ const ENV_KEYS = [
   'KNOWLEDGE_SERVICE_API_TOKEN',
   'KNOWLEDGE_SERVICE_TIMEOUT_MS',
   'SERVICE_API_TOKEN',
+  'KNOWLEDGE_SERVICE_FALLBACK_USER_ID',
 ] as const;
 const savedEnv = Object.fromEntries(
   ENV_KEYS.map((key) => [key, process.env[key]]),
@@ -170,6 +171,55 @@ describe('KnowledgeBaseService', () => {
     assert.equal(headers.get('x-tenant-id'), 'tenant-from-header');
     assert.equal(headers.get('x-user-id'), 'user-from-header');
     assert.equal(headers.get('x-user-roles'), 'operator');
+  });
+
+  it('falls back to a service-account userId when the task has no owner (CALL-10 #2)', async () => {
+    process.env.KNOWLEDGE_SERVICE_BASE_URL = 'http://127.0.0.1:3010/api';
+    delete process.env.KNOWLEDGE_SERVICE_FALLBACK_USER_ID;
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    globalThis.fetch = async (url, init) => {
+      calls.push({ url: String(url), init });
+      return Response.json({ hits: [] });
+    };
+
+    // 只有租户上下文、无 userId（ownerId=null 的历史/系统任务）
+    const service = new KnowledgeBaseService(undefined, undefined);
+    await service.retrieve('kb-collection', '问题', 3, { tenantId: 'tenant-a' });
+
+    const headers = new Headers(calls[0].init?.headers);
+    assert.equal(headers.get('x-tenant-id'), 'tenant-a');
+    assert.equal(headers.get('x-user-id'), 'system');
+  });
+
+  it('falls back to service-account userId when X-User-Id is an empty string (CALL-10 #2)', async () => {
+    process.env.KNOWLEDGE_SERVICE_BASE_URL = 'http://127.0.0.1:3010/api';
+    delete process.env.KNOWLEDGE_SERVICE_FALLBACK_USER_ID;
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    globalThis.fetch = async (url, init) => {
+      calls.push({ url: String(url), init });
+      return Response.json({ hits: [] });
+    };
+
+    const service = new KnowledgeBaseService(undefined, undefined);
+    // 显式传入空串 userId（模拟 X-User-Id: 空 header）
+    await service.retrieve('kb-collection', '问题', 3, { tenantId: 'tenant-a', userId: '' });
+
+    assert.equal(new Headers(calls[0].init?.headers).get('x-user-id'), 'system');
+  });
+
+  it('honors KNOWLEDGE_SERVICE_FALLBACK_USER_ID override for ownerless tasks', async () => {
+    process.env.KNOWLEDGE_SERVICE_BASE_URL = 'http://127.0.0.1:3010/api';
+    process.env.KNOWLEDGE_SERVICE_FALLBACK_USER_ID = 'svc-rag';
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    globalThis.fetch = async (url, init) => {
+      calls.push({ url: String(url), init });
+      return Response.json({ hits: [] });
+    };
+
+    const service = new KnowledgeBaseService(undefined, undefined);
+    await service.retrieve('kb-collection', '问题', 3, { tenantId: 'tenant-a' });
+
+    assert.equal(new Headers(calls[0].init?.headers).get('x-user-id'), 'svc-rag');
   });
 
   it('refuses to start in external mode without SERVICE_API_TOKEN (inbound guard would fail open)', () => {
