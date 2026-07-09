@@ -183,8 +183,8 @@ call:task:dispatch    call:campaign:update  call:compliance:read
 ## 8. 各系统改造清单
 
 ### ai-call（`@ai-call`）
-> 进度对照见 `authz-implementation-backlog.md`（CALL-01~11）。以下勾选反映 2026-07-09 `main` 实况。
-- [x] 核心业务表补 `tenantId`（OutboundTask/OutboundScenario/TaskFlow/TaskFlowVersion/CallAttempt/Campaign/KnowledgeDocument…）+ 数据迁移回填。（CALL-02；迁移**真库演练待做**→ CALL-11）
+> 进度对照见 `authz-implementation-backlog.md`（CALL-01~12）。以下勾选反映 2026-07-10 `main` 实况：**P2(ai-call) 全部收尾完成，两个上线阻塞项(CALL-10/11)均已清除。**
+- [x] 核心业务表补 `tenantId`（OutboundTask/OutboundScenario/TaskFlow/TaskFlowVersion/CallAttempt/Campaign/KnowledgeDocument…）+ 数据迁移回填。（CALL-02；**迁移真库演练已通过**——一次性可弃库 17 迁移顺序应用 + 结构/回填/索引校验 + seed 幂等，见 CALL-11）
 - [x] CLS 注入 tenantId，所有 Prisma 查询强制租户过滤（对齐 ai-knowledge 的 `database.service` 模式）。（CALL-03，fail-closed + `runAsSystem` 旁路）
 - [x] 权限码去「贴标签」：给 campaigns / quality / compliance / analytics / tenants / platform 定义独立 `call:{module}:{action}`。（CALL-04；tenant/platform 一并收紧为 admin 专属）
 - [x] 接入 `ResourceGrant` 数据级 ACL（如坐席只见自己 `call_task`）。（CALL-05：`call_task` owner + 显式授权 + admin；CALL-09：**Campaign 复用**（共用 `common/resource-acl.ts`）。**部门(DEPT)主体** → CALL-08 **ai-call 侧暂缓**，部门能力落在 ai-knowledge；无产品驱动前不付高风险 User/claim 迁移。）
