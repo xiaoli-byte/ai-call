@@ -27,7 +27,7 @@ function blankTemplate(): { nodes: FlowNode[]; edges: FlowEdge[] } {
   const start: FlowNode = {
     id: nid('start', 1),
     type: 'start',
-    position: { x: 250, y: 0 },
+    position: { x: 260, y: 20 },
     data: {},
   };
   return { nodes: [start], edges: [] };
@@ -38,13 +38,13 @@ function collectionTemplate(): { nodes: FlowNode[]; edges: FlowEdge[] } {
   const start: FlowNode = {
     id: nid('start', 1),
     type: 'start',
-    position: { x: 250, y: 0 },
+    position: { x: 260, y: 20 },
     data: {},
   };
   const greet: FlowNode = {
     id: nid('dialog', 2),
     type: 'dialog',
-    position: { x: 250, y: 140 },
+    position: { x: 260, y: 200 },
     data: {
       mode: 'script',
       text: '您好，我是智能客服助手，关于您尾号 {last4} 的账单，目前已逾期 {days} 天，欠款金额 {amount} 元，请问您近期方便安排还款吗？',
@@ -56,7 +56,7 @@ function collectionTemplate(): { nodes: FlowNode[]; edges: FlowEdge[] } {
   const decide: FlowNode = {
     id: nid('decision', 3),
     type: 'decision',
-    position: { x: 250, y: 280 },
+    position: { x: 260, y: 380 },
     data: {
       mode: 'intent',
       intents: ['同意还款', '拒绝还款', '经济困难', '非本人'],
@@ -65,7 +65,7 @@ function collectionTemplate(): { nodes: FlowNode[]; edges: FlowEdge[] } {
   const transfer: FlowNode = {
     id: nid('action', 4),
     type: 'action',
-    position: { x: 100, y: 420 },
+    position: { x: 260, y: 560 },
     data: {
       actionType: 'transfer',
       config: { extension: '9000', reason: '客户要求人工服务' },
@@ -74,7 +74,7 @@ function collectionTemplate(): { nodes: FlowNode[]; edges: FlowEdge[] } {
   const end: FlowNode = {
     id: nid('end', 5),
     type: 'end',
-    position: { x: 400, y: 420 },
+    position: { x: 260, y: 740 },
     data: {
       mode: 'hangup',
       reason: '催收流程结束',
@@ -98,13 +98,13 @@ function ecommerceTemplate(): { nodes: FlowNode[]; edges: FlowEdge[] } {
   const start: FlowNode = {
     id: nid('start', 1),
     type: 'start',
-    position: { x: 250, y: 0 },
+    position: { x: 260, y: 20 },
     data: {},
   };
   const greet: FlowNode = {
     id: nid('dialog', 2),
     type: 'dialog',
-    position: { x: 250, y: 140 },
+    position: { x: 260, y: 200 },
     data: {
       mode: 'script',
       text: '您好，我是{shop}的客服，您在{date}购买的{product}收到了吗？想了解一下您的使用体验。',
@@ -116,7 +116,7 @@ function ecommerceTemplate(): { nodes: FlowNode[]; edges: FlowEdge[] } {
   const decide: FlowNode = {
     id: nid('decision', 3),
     type: 'decision',
-    position: { x: 250, y: 280 },
+    position: { x: 260, y: 380 },
     data: {
       mode: 'intent',
       intents: ['满意', '不满意', '未收到'],
@@ -125,7 +125,7 @@ function ecommerceTemplate(): { nodes: FlowNode[]; edges: FlowEdge[] } {
   const afterSale: FlowNode = {
     id: nid('action', 4),
     type: 'action',
-    position: { x: 100, y: 420 },
+    position: { x: 260, y: 560 },
     data: {
       actionType: 'crm',
       config: {
@@ -138,7 +138,7 @@ function ecommerceTemplate(): { nodes: FlowNode[]; edges: FlowEdge[] } {
   const end: FlowNode = {
     id: nid('end', 5),
     type: 'end',
-    position: { x: 400, y: 420 },
+    position: { x: 260, y: 740 },
     data: {
       mode: 'complete',
       reason: '电商回访结束',
@@ -162,13 +162,13 @@ function presaleTemplate(): { nodes: FlowNode[]; edges: FlowEdge[] } {
   const start: FlowNode = {
     id: nid('start', 1),
     type: 'start',
-    position: { x: 250, y: 0 },
+    position: { x: 260, y: 20 },
     data: {},
   };
   const greet: FlowNode = {
     id: nid('dialog', 2),
     type: 'dialog',
-    position: { x: 250, y: 140 },
+    position: { x: 260, y: 200 },
     data: {
       mode: 'ai',
       prompt: '了解客户对{product}的咨询需求',
@@ -183,7 +183,7 @@ function presaleTemplate(): { nodes: FlowNode[]; edges: FlowEdge[] } {
   const decide: FlowNode = {
     id: nid('decision', 3),
     type: 'decision',
-    position: { x: 250, y: 280 },
+    position: { x: 260, y: 380 },
     data: {
       mode: 'intent',
       intents: ['有意向试驾', '需要考虑', '无意向'],
@@ -192,7 +192,7 @@ function presaleTemplate(): { nodes: FlowNode[]; edges: FlowEdge[] } {
   const book: FlowNode = {
     id: nid('action', 4),
     type: 'action',
-    position: { x: 100, y: 420 },
+    position: { x: 260, y: 560 },
     data: {
       actionType: 'crm',
       config: {
@@ -204,7 +204,7 @@ function presaleTemplate(): { nodes: FlowNode[]; edges: FlowEdge[] } {
   const end: FlowNode = {
     id: nid('end', 5),
     type: 'end',
-    position: { x: 400, y: 420 },
+    position: { x: 260, y: 740 },
     data: {
       mode: 'complete',
       reason: '售前咨询结束',

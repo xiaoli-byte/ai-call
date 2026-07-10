@@ -320,12 +320,22 @@ class VoiceAgentServer:
         except Exception as err:
             logger.exception("[VoiceAgentServer] connection error: %s", err)
         finally:
-            if session_task and not session_task.done():
-                session_task.cancel()
-                try:
-                    await session_task
-                except (asyncio.CancelledError, Exception):
-                    pass
+            # session_finalized=True 表示 _start_agent_session 正常跑完
+            # （agent.start_session 内部已 set_outcome，任务已到终态）。
+            session_finalized = False
+            if session_task:
+                if session_task.done():
+                    session_finalized = (
+                        not session_task.cancelled()
+                        and session_task.exception() is None
+                        and bool(session_task.result())
+                    )
+                else:
+                    session_task.cancel()
+                    try:
+                        await session_task
+                    except (asyncio.CancelledError, Exception):
+                        pass
             if call_id:
                 logger.info(
                     "[MediaIn] callId=%s complete chunks=%d bytes=%d",
@@ -334,16 +344,34 @@ class VoiceAgentServer:
                     inbound_bytes,
                 )
                 await self._agent.end_session(call_id)
+                if (
+                    metadata is not None
+                    and metadata.get("channel") == "web"
+                    and not session_finalized
+                ):
+                    # web 通道终态兜底：浏览器中途断线（挂断/关页面）时会话被
+                    # cancel，agent.start_session 尾部的 set_outcome 不会执行，
+                    # 任务会卡在 IN_CALL。调用既有 hangup 端点推到终态；
+                    # 任务已是终态时 API 报错由 quiet 模式吞掉（debug 日志）。
+                    logger.info(
+                        "[VoiceAgentServer] callId=%s web channel closed before "
+                        "session end, hangup fallback",
+                        call_id,
+                    )
+                    await self._tasks.hangup(call_id, quiet=True)
                 logger.info("[VoiceAgentServer] callId=%s disconnected", call_id)
 
     async def _start_agent_session(
         self, ws: Any, call_id: str, metadata: dict[str, Any]
-    ) -> None:
+    ) -> bool:
         """启动 Agent 会话。
 
         1) GET /api/tasks/{call_id} 拉真实 scenario + variables（失败 fallback 到 metadata）
         2) 构造 WebSocketCallbacks（ws.send 音频 + 上报 transcript）
         3) await agent.start_session(...)（阻塞式，内部跑完整个对话循环）
+
+        返回 True 表示会话正常收尾（agent 内部已 set_outcome）；返回 False
+        表示会话异常终止，任务可能未到终态（web 通道据此触发 hangup 兜底）。
         """
         # 1) 拉任务上下文
         scenario_str = metadata.get("scenario", "ecommerce")
@@ -390,6 +418,7 @@ class VoiceAgentServer:
                 variables[var] = metadata.get(var, DEFAULT_VARIABLES.get(var, ""))
 
         # 3) 构造 callbacks 并启动会话
+        channel = str(metadata.get("channel", "freeswitch") or "freeswitch")
         callbacks = WebSocketCallbacks(
             ws,
             call_id,
@@ -397,6 +426,7 @@ class VoiceAgentServer:
             audio_response_format=str(
                 metadata.get("audio_response_format", "raw-pcm")
             ),
+            channel=channel,
         )
         try:
             await self._agent.start_session(
@@ -418,13 +448,18 @@ class VoiceAgentServer:
             logger.exception(
                 "[VoiceAgentServer] callId=%s session failed: %s", call_id, err
             )
+            if channel == "web":
+                await self._send_json(ws, {"type": "error", "message": str(err)})
+            return False
+        return True
 
 
 class WebSocketCallbacks:
     """WebSocket 传输层 callbacks 实现。
 
     - on_audio_output: ws.send(bytes) 推回 FreeSWITCH 播放
-    - on_agent_speech / on_caller_speech: ws.send(json 字幕) + fire-and-forget 上报 transcript
+    - on_agent_speech / on_caller_speech: fire-and-forget 上报 transcript；
+      channel=="web" 时额外向同一 WS 发文本帧字幕（浏览器按 text/binary 区分）
     - on_escalate: fire-and-forget POST /api/tasks/{id}/transfer
     """
 
@@ -434,10 +469,13 @@ class WebSocketCallbacks:
         call_id: str,
         tasks: TaskClient,
         audio_response_format: str = "raw-pcm",
+        channel: str = "freeswitch",
     ) -> None:
         self._ws = ws
         self._call_id = call_id
         self._tasks = tasks
+        # web 通道 = 浏览器直连：文本帧当字幕/事件用；FreeSWITCH 通道禁止发文本帧
+        self._web_channel = channel == "web"
         if audio_response_format not in {"raw-pcm", "base64-json", "esl-file"}:
             raise ValueError(
                 f"Unsupported audio response format: {audio_response_format}"
@@ -454,14 +492,20 @@ class WebSocketCallbacks:
 
     async def on_agent_speech(self, text: str) -> None:
         logger.info("[Agent] 🤖 %s", text)
-        # 不通过 WS 发送 JSON 字幕：STREAM_PLAYBACK=true 时 JSON 会被当作音频播放产生噪声
-        # 仅通过 NestJS API 上报 transcript
+        if self._web_channel:
+            # web 通道：浏览器需要实时字幕，文本帧与二进制音频帧互不干扰
+            await self._send_json({"type": "agent_speech", "text": text})
+        # FreeSWITCH 通道不通过 WS 发送 JSON 字幕：STREAM_PLAYBACK=true 时
+        # JSON 会被当作音频播放产生噪声，仅通过 NestJS API 上报 transcript
         await self._tasks.append_transcript(self._call_id, "agent", text)
 
     async def on_caller_speech(self, text: str) -> None:
         logger.info("[Caller] 👤 %s", text)
-        # 不通过 WS 发送 JSON 字幕：STREAM_PLAYBACK=true 时 JSON 会被当作音频播放产生噪声
-        # 仅通过 NestJS API 上报 transcript
+        if self._web_channel:
+            # web 通道：浏览器需要实时字幕，文本帧与二进制音频帧互不干扰
+            await self._send_json({"type": "caller_speech", "text": text})
+        # FreeSWITCH 通道不通过 WS 发送 JSON 字幕：STREAM_PLAYBACK=true 时
+        # JSON 会被当作音频播放产生噪声，仅通过 NestJS API 上报 transcript
         await self._tasks.append_transcript(self._call_id, "caller", text)
 
     async def on_tool_call(self, call: ToolCall, result: ToolResult) -> None:
@@ -573,6 +617,9 @@ class WebSocketCallbacks:
             self._output_chunks,
             self._output_bytes,
         )
+        if self._web_channel:
+            # web 通道：通知浏览器会话结束（FreeSWITCH 通道不发文本帧）
+            await self._send_json({"type": "end", "reason": reason})
 
     async def _send_json(self, obj: dict[str, Any]) -> None:
         try:

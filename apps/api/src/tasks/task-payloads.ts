@@ -34,7 +34,8 @@ export type CallEventPayloadFor<T extends CallEventType> =
   T extends 'call.outcome_set' ? { outcome: string; tags?: string[] } :
   T extends 'call.hung_up' ? { outcome?: string; duration?: number; channelId?: string; hangupError?: string } :
   T extends 'call.provider_event' ? ProviderCallEventPayload :
-  T extends 'call.dispatch_requested' | 'call.dispatch_accepted' | `action.${FlowActionType}.delivered` ? Record<string, never> :
+  T extends 'call.dispatch_requested' | `action.${FlowActionType}.delivered` ? Record<string, never> :
+  T extends 'call.dispatch_accepted' ? { channel?: 'web' } :
   T extends 'call.policy_blocked' ? { code: string; message: string; details?: Record<string, unknown> } :
   T extends 'call.transferred' ? { extension: string; channelId: string } :
   T extends `action.${FlowActionType}.requested` ? { outboxEventId: string } :

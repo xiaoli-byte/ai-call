@@ -65,13 +65,13 @@ describe('global config variables table', () => {
     expect(screen.getByRole('columnheader', { name: '显示名称' })).toBeTruthy();
     expect(screen.getByRole('columnheader', { name: '描述' })).toBeTruthy();
     expect(screen.queryByRole('columnheader', { name: '类型' })).toBeNull();
-    expect(await screen.findByText('{{customer_name}}')).toBeTruthy();
+    expect(await screen.findByText('${customer_name}')).toBeTruthy();
     expect(screen.getByText('客户姓名')).toBeTruthy();
     expect(screen.getByText('用于开场白称呼客户')).toBeTruthy();
     expect(screen.getByText('0')).toBeTruthy();
     expect(screen.queryByDisplayValue('customer_name')).toBeNull();
 
-    const customerRow = screen.getByText('{{customer_name}}').closest('tr');
+    const customerRow = screen.getByText('${customer_name}').closest('tr');
     expect(customerRow).toBeTruthy();
 
     fireEvent.click(within(customerRow as HTMLTableRowElement).getByRole('button', { name: '编辑' }));

@@ -28,6 +28,7 @@ import {
 } from './dto/task-events.dto.js';
 import { ListTasksDto } from './dto/list-tasks.dto.js';
 import { ProviderCallEventDto } from './dto/provider-call-event.dto.js';
+import { DispatchTaskDto } from './dto/dispatch-task.dto.js';
 
 /**
  * 外呼任务 Controller
@@ -93,12 +94,13 @@ export class TasksController {
     return task;
   }
 
-  /** 派发外呼任务 - 通过 FreeSWITCH ESL originate 发起呼叫 */
+  /** 派发外呼任务 - 通过 FreeSWITCH ESL originate 发起呼叫；channel='web' 时改为浏览器模拟通话，不经 outbox */
   @Post(':id/dispatch')
   @HttpCode(202)
   @Permissions(PERMISSIONS.TASK_DISPATCH)
-  async dispatch(@Param('id') id: string) {
-    return this.tasksService.dispatch(id);
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  async dispatch(@Param('id') id: string, @Body() body: DispatchTaskDto) {
+    return this.tasksService.dispatch(id, body.channel);
   }
 
   /** 更新任务状态 */

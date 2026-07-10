@@ -66,6 +66,11 @@
 
 :where([data-dashboard-shell]) .btn:hover:not(:disabled) {
   background: var(--primary-700);
+  /* 显式声明 color：全局 `a:hover`（第 462 行附近）在 <Link> 渲染成 <a> 时特异性
+     意外更高（元素+伪类 vs 单个 class），会把文字染成 var(--primary-700)——
+     正好和这里的 hover 背景色撞车，字就"隐形"了。加 :not(:disabled) 让这条
+     规则的特异性稳赢 a:hover。原生 <button> 不受影响，但保持行为一致。 */
+  color: white;
   box-shadow: var(--shadow-primary);
 }
 
@@ -99,6 +104,7 @@
 :where([data-dashboard-shell]) .btn-secondary:hover:not(:disabled) {
   border-color: var(--border-strong);
   background: var(--gray-50);
+  color: var(--text);
   box-shadow: var(--shadow-sm);
 }
 
@@ -120,6 +126,7 @@
 
 :where([data-dashboard-shell]) .btn-danger:hover:not(:disabled) {
   background: #dc2626;
+  color: white;
   box-shadow: 0 4px 12px -2px rgba(239, 68, 68, 0.3);
 }
 

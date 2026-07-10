@@ -12,7 +12,15 @@
         "caller_id": { "type": "string" },
         "callee_id": { "type": "string" },
         "scenario": { "enum": ["collection", "ecommerce", "presale"] },
-        "token": { "type": "string" }
+        "token": { "type": "string" },
+        "channel": {
+          "enum": ["freeswitch", "web"],
+          "description": "会话通道，缺省 freeswitch。web = 浏览器直连，服务端会额外通过文本帧下发字幕与会话事件"
+        },
+        "audio_response_format": {
+          "enum": ["raw-pcm", "base64-json", "esl-file"],
+          "description": "TTS 音频回程格式，缺省 raw-pcm（直接以二进制帧发回同一 WS）"
+        }
       },
       "additionalProperties": { "type": ["string", "number", "boolean", "null"] }
     },
@@ -23,6 +31,17 @@
       "properties": {
         "type": { "enum": ["agent_speech", "caller_speech"] },
         "text": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    {
+      "title": "SessionEvent",
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "enum": ["end", "error"] },
+        "reason": { "type": "string" },
+        "message": { "type": "string" }
       },
       "additionalProperties": false
     }

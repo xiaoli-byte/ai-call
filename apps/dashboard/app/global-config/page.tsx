@@ -616,7 +616,7 @@ export default function GlobalConfigPage() {
           <div className="scenario-global-panel">
             <div className="global-variable-tip">
               <Info size={14} />
-              定义后可在话术模板和流程节点中通过 <code>{'{{key}}'}</code> 语法引用，修改保存后对新会话立即生效。
+              定义后可在话术模板和流程节点中通过 <code>{'${key}'}</code> 语法引用，修改保存后对新会话立即生效。
             </div>
             <div className="scenario-config-scroll global-variable-scroll">
               <table className="scenario-config-table global-variable-table">
@@ -761,7 +761,7 @@ export default function GlobalConfigPage() {
                         </span>
                       </td>
                       <td>
-                        <span className="api-plugin-name">{item.name || '-'}</span>
+                        <span className={styles.apiPluginName}>{item.name || '-'}</span>
                       </td>
                       <td>
                         <div className="api-url-cell">{item.url || '-'}</div>
@@ -810,7 +810,7 @@ export default function GlobalConfigPage() {
             <Dialog open={Boolean(apiPluginDialog)} onOpenChange={(open) => {
               if (!open) setApiPluginDialog(null);
             }}>
-              <DialogContent className="api-plugin-dialog">
+              <DialogContent className={styles.apiPluginDialog}>
                 <DialogHeader>
                   <DialogTitle>{apiPluginDialog?.mode === 'create' ? '新增 API 插件' : '编辑 API 插件'}</DialogTitle>
                   <DialogDescription>
@@ -818,8 +818,8 @@ export default function GlobalConfigPage() {
                   </DialogDescription>
                 </DialogHeader>
                 {apiPluginDialog && (
-                  <div className="api-plugin-form">
-                    <label className="api-plugin-field">
+                  <div className={styles.apiPluginForm}>
+                    <label className={styles.apiPluginField}>
                       <span>
                         <i>*</i>
                         工具名称
@@ -833,21 +833,21 @@ export default function GlobalConfigPage() {
                       />
                       <small>仅支持英文、数字和下划线，且不能以数字开头。</small>
                     </label>
-                    <label className="api-plugin-field">
+                    <label className={styles.apiPluginField}>
                       <span>
                         <i>*</i>
                         工具描述
                       </span>
                       <textarea
-                        className="form-input api-plugin-textarea"
+                        className={cn('form-input', styles.apiPluginTextarea)}
                         value={apiPluginDialog.draft.description ?? ''}
                         maxLength={200}
                         onChange={(event) => updatePluginDraft({ description: event.target.value })}
                         placeholder="查询订单号"
                       />
                     </label>
-                    <div className="api-plugin-grid">
-                      <label className="api-plugin-field">
+                    <div className={styles.apiPluginGrid}>
+                      <label className={styles.apiPluginField}>
                         <span>请求方法</span>
                         <select
                           className="form-select"
@@ -863,9 +863,9 @@ export default function GlobalConfigPage() {
                           <option value="DELETE">DELETE</option>
                         </select>
                       </label>
-                      <div className="api-plugin-field">
+                      <div className={styles.apiPluginField}>
                         <span>状态</span>
-                        <label className="scenario-switch api-plugin-switch">
+                        <label className={cn('scenario-switch', styles.apiPluginSwitch)}>
                           <input
                             type="checkbox"
                             checked={apiPluginDialog.draft.enabled}
@@ -875,7 +875,7 @@ export default function GlobalConfigPage() {
                         </label>
                       </div>
                     </div>
-                    <label className="api-plugin-field">
+                    <label className={styles.apiPluginField}>
                       <span>
                         <i>*</i>
                         接口 URL
@@ -892,12 +892,12 @@ export default function GlobalConfigPage() {
                 <DialogFooter>
                   <button
                     type="button"
-                    className="api-dialog-secondary"
+                    className={styles.apiDialogSecondary}
                     onClick={() => setApiPluginDialog(null)}
                   >
                     取消
                   </button>
-                  <button type="button" className="api-dialog-primary" onClick={savePluginDialog}>
+                  <button type="button" className={styles.apiDialogPrimary} onClick={savePluginDialog}>
                     确定
                   </button>
                 </DialogFooter>
@@ -1058,7 +1058,7 @@ function createVariableRowKey(item: GlobalVariableConfig, index = 0) {
 }
 
 function formatVariableToken(key: string) {
-  return key ? `{{${key}}}` : '{{key}}';
+  return key ? `\${${key}}` : '${key}';
 }
 
 function formatVariableDefaultValue(item: GlobalVariableConfig) {

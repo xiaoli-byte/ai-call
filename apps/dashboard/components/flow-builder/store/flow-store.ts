@@ -32,6 +32,7 @@ interface FlowState {
   connectEdge: (source: string, target: string) => void;
   deleteEdge: (edgeId: string) => void;
   updateEdgeLabel: (edgeId: string, label: string) => void;
+  organizeLayout: () => void;
 
   undo: () => void;
   redo: () => void;
@@ -42,6 +43,10 @@ interface FlowState {
 }
 
 const NODE_SPACING = 140;
+const LAYOUT_X_SPACING = 320;
+const LAYOUT_Y_SPACING = 180;
+const LAYOUT_START_X = 260;
+const LAYOUT_START_Y = 20;
 
 function genId(): string {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) {
@@ -216,6 +221,17 @@ export const useFlowStore = create<FlowState>((set, get) => ({
     });
   },
 
+  organizeLayout: () => {
+    const state = get();
+    if (state.nodes.length === 0) return;
+
+    const nodes = organizeFlowNodes(state.nodes, state.edges);
+    set({
+      nodes,
+      ...pushHistory(state, { nodes, edges: state.edges }),
+    });
+  },
+
   undo: () => {
     const state = get();
     if (state.historyIndex <= 0) return;
@@ -252,3 +268,86 @@ export const useFlowStore = create<FlowState>((set, get) => ({
     });
   },
 }));
+
+function organizeFlowNodes(nodes: FlowNode[], edges: FlowEdge[]): FlowNode[] {
+  const nodeIds = new Set(nodes.map((node) => node.id));
+  const incomingCount = new Map(nodes.map((node) => [node.id, 0]));
+  const outgoing = new Map<string, string[]>();
+
+  for (const edge of edges) {
+    if (!nodeIds.has(edge.source) || !nodeIds.has(edge.target)) continue;
+    incomingCount.set(edge.target, (incomingCount.get(edge.target) ?? 0) + 1);
+    outgoing.set(edge.source, [...(outgoing.get(edge.source) ?? []), edge.target]);
+  }
+
+  const nodeOrder = new Map(nodes.map((node, index) => [node.id, index]));
+  const roots = nodes
+    .filter((node) => node.type === 'start' || (incomingCount.get(node.id) ?? 0) === 0)
+    .sort((a, b) => {
+      if (a.type === 'start' && b.type !== 'start') return -1;
+      if (a.type !== 'start' && b.type === 'start') return 1;
+      return (nodeOrder.get(a.id) ?? 0) - (nodeOrder.get(b.id) ?? 0);
+    });
+  const traversalRoots = roots.length ? roots : nodes.slice(0, 1);
+
+  const depth = new Map<string, number>();
+  const visitOrder = new Map<string, number>();
+  const queue = traversalRoots.map((node) => {
+    depth.set(node.id, 0);
+    return { id: node.id, path: new Set([node.id]) };
+  });
+  let visitIndex = 0;
+
+  for (let i = 0; i < queue.length; i += 1) {
+    const { id, path } = queue[i];
+    if (!visitOrder.has(id)) {
+      visitOrder.set(id, visitIndex);
+      visitIndex += 1;
+    }
+    const nextDepth = (depth.get(id) ?? 0) + 1;
+    const targets = outgoing.get(id) ?? [];
+    for (const target of targets) {
+      if (path.has(target)) continue;
+      const currentDepth = depth.get(target);
+      if (currentDepth === undefined || nextDepth > currentDepth) {
+        depth.set(target, nextDepth);
+        queue.push({ id: target, path: new Set([...path, target]) });
+      }
+    }
+  }
+
+  const deepest = Math.max(0, ...Array.from(depth.values()));
+  for (const node of nodes) {
+    if (!depth.has(node.id)) {
+      depth.set(node.id, deepest + 1);
+      visitOrder.set(node.id, visitIndex);
+      visitIndex += 1;
+    }
+  }
+
+  const layers = new Map<number, FlowNode[]>();
+  for (const node of nodes) {
+    const layer = depth.get(node.id) ?? 0;
+    layers.set(layer, [...(layers.get(layer) ?? []), node]);
+  }
+
+  const nextPositionById = new Map<string, { x: number; y: number }>();
+  for (const [layer, layerNodes] of layers) {
+    const sorted = [...layerNodes].sort((a, b) => (
+      (visitOrder.get(a.id) ?? nodeOrder.get(a.id) ?? 0)
+      - (visitOrder.get(b.id) ?? nodeOrder.get(b.id) ?? 0)
+    ));
+    const rowWidth = (sorted.length - 1) * LAYOUT_X_SPACING;
+    sorted.forEach((node, index) => {
+      nextPositionById.set(node.id, {
+        x: LAYOUT_START_X + index * LAYOUT_X_SPACING - rowWidth / 2,
+        y: LAYOUT_START_Y + layer * LAYOUT_Y_SPACING,
+      });
+    });
+  }
+
+  return nodes.map((node) => ({
+    ...node,
+    position: nextPositionById.get(node.id) ?? node.position,
+  }));
+}

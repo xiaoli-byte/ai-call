@@ -2,7 +2,9 @@
 
 import { useEffect, useState } from 'react';
 import type { DialogMode, DialogNodeData, FlowNode } from '@ai-call/shared';
-import { Checkbox, Field, SectionTitle, Select, TextArea, TextInput } from './ui';
+import { useGlobalConfig } from '@/hooks/use-global-config';
+import { Checkbox, Field, SectionTitle, Select, TextInput } from './ui';
+import { VariableTextArea } from './variable-textarea';
 import styles from '../flow-builder.module.scss';
 
 interface DialogFormProps {
@@ -17,7 +19,9 @@ const MODE_OPTIONS: { value: DialogMode; label: string }[] = [
 ];
 
 export function DialogForm({ node, onUpdate }: DialogFormProps) {
+  const { data: globalConfig } = useGlobalConfig();
   const data = node.data as DialogNodeData;
+  const variables = globalConfig?.globalVariables ?? [];
   const [mode, setMode] = useState<DialogMode>(data.mode);
   const [text, setText] = useState(data.text ?? '');
   const [prompt, setPrompt] = useState(data.prompt ?? '');
@@ -71,11 +75,12 @@ export function DialogForm({ node, onUpdate }: DialogFormProps) {
 
       {mode === 'script' && (
         <Field label="话术文本">
-          <TextArea
+          <VariableTextArea
             value={text}
-            onChange={(e) => {
-              setText(e.target.value);
-              emit({ text: e.target.value });
+            variables={variables}
+            onValueChange={(value) => {
+              setText(value);
+              emit({ text: value });
             }}
             placeholder="您好，这里是智能客服..."
           />
@@ -85,11 +90,12 @@ export function DialogForm({ node, onUpdate }: DialogFormProps) {
       {mode === 'question' && (
         <>
           <Field label="提问">
-            <TextArea
+            <VariableTextArea
               value={prompt}
-              onChange={(e) => {
-                setPrompt(e.target.value);
-                emit({ prompt: e.target.value });
+              variables={variables}
+              onValueChange={(value) => {
+                setPrompt(value);
+                emit({ prompt: value });
               }}
               placeholder="请问您收到货了吗？"
             />
@@ -126,22 +132,24 @@ export function DialogForm({ node, onUpdate }: DialogFormProps) {
       {mode === 'ai' && (
         <>
           <Field label="系统提示词">
-            <TextArea
+            <VariableTextArea
               value={systemPrompt}
-              onChange={(e) => {
-                setSystemPrompt(e.target.value);
-                emit({ systemPrompt: e.target.value });
+              variables={variables}
+              onValueChange={(value) => {
+                setSystemPrompt(value);
+                emit({ systemPrompt: value });
               }}
               rows={4}
               placeholder="你是客服专员，专业且礼貌..."
             />
           </Field>
           <Field label="提示语">
-            <TextArea
+            <VariableTextArea
               value={prompt}
-              onChange={(e) => {
-                setPrompt(e.target.value);
-                emit({ prompt: e.target.value });
+              variables={variables}
+              onValueChange={(value) => {
+                setPrompt(value);
+                emit({ prompt: value });
               }}
               placeholder="您好，这里是..."
             />

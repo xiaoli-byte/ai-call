@@ -1,0 +1,44 @@
+# dependencies
+node_modules/
+.pnpm-store/
+__pycache__/
+.pytest_cache/
+*.py[cod]
+*.egg-info/
+.venv/
+
+# build outputs
+dist/
+.next/
+.turbo/
+*.tsbuildinfo
+
+# prisma generated client
+apps/api/src/generated/
+
+# logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+*.pcm
+
+# os
+.DS_Store
+Thumbs.db
+
+# ide
+.vscode/
+.idea/
+.cursor/
+.trae/
+.codex-runtime
+.runtime
+
+# freeswitch runtime
+freeswitch/recordings/
+freeswitch/logs/
+freeswitch/db/
+freeswitch/runtime/
+
+# docker
+freeswitch/data/

@@ -59,10 +59,13 @@ class FlowExecutorCallbacks(Protocol):
 
 
 def render_template(text: str, variables: dict[str, str]) -> str:
-    """Replace {var} placeholders and leave unknown placeholders unchanged."""
-    for key, value in variables.items():
-        text = text.replace(f"{{{key}}}", value)
-    return text
+    """Replace ${var} placeholders and leave unknown placeholders unchanged."""
+
+    def replace(match: re.Match[str]) -> str:
+        key = match.group(1) or match.group(2) or match.group(3)
+        return variables.get(key, match.group(0))
+
+    return re.sub(r"\$\{(\w+)\}|\{\{(\w+)\}\}|\{(\w+)\}", replace, text)
 
 
 class FlowExecutor:

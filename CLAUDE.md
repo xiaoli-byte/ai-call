@@ -2,6 +2,13 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Orchestration workflow  
+You (Fable) are the orchestrator. Plan, decompose, synthesize.  
+Reasoning-heavy phases → deep-reasoner  
+Mechanical work → fast-worker  
+Codex (/codex:rescue --background) is a cracked engineer on par with deep-reasoner, from a different perspective. Treat as a peer, not a reviewer.  
+High-stakes decisions: task Opus + Codex on the same problem in parallel, synthesize the best of both, without showing either the other's answer. Keep your own context lean.   
+
 ## What this is
 
 AI outbound-call agent (外呼机器人). A pnpm + turbo monorepo mixing **TypeScript** (NestJS control plane + Next.js dashboard) and **Python** (real-time voice agent + FunASR STT server), wired to FreeSWITCH for telephony.

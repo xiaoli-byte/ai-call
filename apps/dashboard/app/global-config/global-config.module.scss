@@ -246,7 +246,7 @@
   color: #dc2626;
 }
 
-:global(.api-plugin-name) {
+.apiPluginName {
   display: block;
   min-width: 0;
   overflow: hidden;
@@ -355,7 +355,7 @@
   font-size: 11.5px;
 }
 
-:global(.api-plugin-dialog) {
+.apiPluginDialog {
   width: min(96vw, 760px);
   max-width: 760px;
   gap: 18px;
@@ -365,25 +365,25 @@
   box-shadow: 0 24px 70px rgba(15, 23, 42, 0.18);
 }
 
-:global(.api-plugin-dialog h2) {
+.apiPluginDialog h2 {
   color: var(--gray-800);
   font-size: 16px;
   font-weight: 650;
   letter-spacing: 0;
 }
 
-:global(.api-plugin-form) {
+.apiPluginForm {
   display: grid;
   gap: 14px;
 }
 
-:global(.api-plugin-grid) {
+.apiPluginGrid {
   display: grid;
   grid-template-columns: minmax(0, 180px) minmax(0, 1fr);
   gap: 14px;
 }
 
-:global(.api-plugin-field) {
+.apiPluginField {
   min-width: 0;
   display: flex;
   flex-direction: column;
@@ -392,42 +392,42 @@
   font-size: 12px;
 }
 
-:global(.api-plugin-field > span) {
+.apiPluginField > span {
   color: var(--gray-700);
   font-size: 12.5px;
   font-weight: 650;
 }
 
-:global(.api-plugin-field i) {
+.apiPluginField i {
   margin-right: 3px;
   color: var(--danger);
   font-style: normal;
 }
 
-:global(.api-plugin-field small) {
+.apiPluginField small {
   color: #1d4ed8;
   font-size: 12px;
   line-height: 1.45;
 }
 
-:global(.api-plugin-field .form-input),
-:global(.api-plugin-field .form-select) {
+.apiPluginField :global(.form-input),
+.apiPluginField :global(.form-select) {
   width: 100%;
   min-width: 0;
 }
 
-:global(.api-plugin-textarea) {
+.apiPluginTextarea {
   min-height: 70px;
   padding-top: 9px;
   resize: vertical;
 }
 
-:global(.api-plugin-switch) {
+.apiPluginSwitch {
   height: 36px;
 }
 
-:global(.api-dialog-primary),
-:global(.api-dialog-secondary) {
+.apiDialogPrimary,
+.apiDialogSecondary {
   min-width: 64px;
   height: 32px;
   display: inline-flex;
@@ -440,24 +440,24 @@
   cursor: pointer;
 }
 
-:global(.api-dialog-primary) {
+.apiDialogPrimary {
   border: 1px solid var(--primary-600);
   background: var(--primary-600);
   color: #fff;
 }
 
-:global(.api-dialog-primary:hover) {
+.apiDialogPrimary:hover {
   border-color: var(--primary-700);
   background: var(--primary-700);
 }
 
-:global(.api-dialog-secondary) {
+.apiDialogSecondary {
   border: 1px solid #d7e0ec;
   background: #fff;
   color: var(--gray-700);
 }
 
-:global(.api-dialog-secondary:hover) {
+.apiDialogSecondary:hover {
   background: var(--gray-50);
 }
 

@@ -197,19 +197,24 @@ class TaskClient:
             logger.warning("[TaskClient] get_task_flow %s error: %s", flow_id, err)
             return None
 
-    async def hangup(self, task_id: str) -> None:
-        """挂机（POST /api/tasks/{task_id}/hangup，API 同步返回 200 或异步返回 202）。"""
+    async def hangup(self, task_id: str, *, quiet: bool = False) -> None:
+        """挂机（POST /api/tasks/{task_id}/hangup，API 同步返回 200 或异步返回 202）。
+
+        quiet=True 用于兜底型调用（如 web 通道断线清理）：任务可能已在终态，
+        API 报错属预期，降级为 debug 日志。
+        """
         url = f"{self._api_base_url}/tasks/{task_id}/hangup"
+        log = logger.debug if quiet else logger.warning
         try:
             response = await self._request("POST", url, retry=False)
             if response.status_code not in {200, 202}:
-                logger.warning(
+                log(
                     "[TaskClient] hangup HTTP %s for task %s",
                     response.status_code,
                     task_id,
                 )
         except Exception as err:
-            logger.warning("[TaskClient] hangup %s error: %s", task_id, err)
+            log("[TaskClient] hangup %s error: %s", task_id, err)
 
     async def execute_action(
         self,

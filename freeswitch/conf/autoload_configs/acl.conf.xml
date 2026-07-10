@@ -3,8 +3,11 @@
 <configuration name="acl.conf" description="Network Lists">
   <network-lists>
     <list name="domains" default="allow"/>
+    <!-- Docker Desktop 端口映射(127.0.0.1:18021→8021)进容器后的源 IP 不固定
+         (bridge 网关或 192.168.65.x),故对 socket 放通全部来源;
+         安全边界靠「仅发布到宿主机回环 + ESL 密码」保证,勿直接暴露 8021 到外网。 -->
     <list name="socket_acl" default="deny">
-      <node type="allow" cidr="172.16.0.0/12"/>
+      <node type="allow" cidr="0.0.0.0/0"/>
     </list>
-  <list name="socket_acl" default="deny"><node type="allow" cidr="0.0.0.0/0"/></list><list name="socket_acl" default="deny"><node type="allow" cidr="0.0.0.0/0"/></list><list name="socket_acl" default="deny"><node type="allow" cidr="0.0.0.0/0"/></list><list name="socket_acl" default="deny"><node type="allow" cidr="0.0.0.0/0"/></list><list name="socket_acl" default="deny"><node type="allow" cidr="0.0.0.0/0"/></list><list name="socket_acl" default="deny"><node type="allow" cidr="0.0.0.0/0"/></list><list name="socket_acl" default="deny"><node type="allow" cidr="0.0.0.0/0"/></list><list name="socket_acl" default="deny"><node type="allow" cidr="0.0.0.0/0"/></list><list name="socket_acl" default="deny"><node type="allow" cidr="0.0.0.0/0"/></list><list name="socket_acl" default="deny"><node type="allow" cidr="0.0.0.0/0"/></list></network-lists>
+  </network-lists>
 </configuration>

@@ -51,10 +51,19 @@ function IconBtn({
 export function Toolbar({ flowName, flowVersion, flowStatus, onSave, saveStatus, onPublish, onTest }: ToolbarProps) {
   const undo = useFlowStore((s) => s.undo);
   const redo = useFlowStore((s) => s.redo);
+  const organizeLayout = useFlowStore((s) => s.organizeLayout);
+  const nodeCount = useFlowStore((s) => s.nodes.length);
   const canUndo = useFlowStore((s) => s.canUndo());
   const canRedo = useFlowStore((s) => s.canRedo());
   const { zoomIn, zoomOut, fitView } = useReactFlow();
   const published = flowStatus === 'published';
+
+  function handleOrganizeLayout() {
+    organizeLayout();
+    requestAnimationFrame(() => {
+      fitView({ duration: 240, padding: 0.18 });
+    });
+  }
 
   return (
     <div className={styles.flowEditorHeader}>
@@ -123,6 +132,14 @@ export function Toolbar({ flowName, flowVersion, flowStatus, onSave, saveStatus,
             <path d="M17 3h2a2 2 0 0 1 2 2v2" />
             <path d="M21 17v2a2 2 0 0 1-2 2h-2" />
             <path d="M7 21H5a2 2 0 0 1-2-2v-2" />
+          </svg>
+        </IconBtn>
+        <IconBtn onClick={handleOrganizeLayout} disabled={nodeCount === 0} title="整理流程">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 3v18" />
+            <rect x="6" y="4" width="12" height="4" rx="1" />
+            <rect x="6" y="10" width="12" height="4" rx="1" />
+            <rect x="6" y="16" width="12" height="4" rx="1" />
           </svg>
         </IconBtn>
 

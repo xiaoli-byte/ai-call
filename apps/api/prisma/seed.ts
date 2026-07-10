@@ -120,25 +120,25 @@ function edge(source: string, target: string, label?: string): FlowEdge {
 
 function buildCollectionFlow(): { nodes: FlowNode[]; edges: FlowEdge[] } {
   nodeCounter = 0;
-  const start = startNode(100, 200);
-  const greet = dialogNode(320, 200, {
+  const start = startNode(260, 20);
+  const greet = dialogNode(260, 200, {
     mode: 'script',
     text: '您好，我是智能客服助手，关于您尾号 {last4} 的账单，目前已逾期 {days} 天，欠款金额 {amount} 元，请问您近期方便安排还款吗？',
     interruptible: true,
     waitForResponse: true,
     timeoutSeconds: 10,
   });
-  const decide = decisionNode(540, 200, {
+  const decide = decisionNode(260, 380, {
     mode: 'intent',
     intents: ['同意还款', '拒绝还款', '经济困难', '非本人'],
   });
-  const remind = dialogNode(760, 100, {
+  const remind = dialogNode(-60, 560, {
     mode: 'script',
     text: '好的，已为您记录还款意愿。请于 3 个工作日内完成还款，否则将影响您的信用记录。',
     interruptible: false,
     waitForResponse: false,
   });
-  const negotiate = dialogNode(760, 200, {
+  const negotiate = dialogNode(260, 560, {
     mode: 'ai',
     prompt: '了解客户困难，协商分期或延期方案',
     systemPrompt: '你是催收协商专员，态度专业但有原则，最多同意分 3 期。',
@@ -147,11 +147,11 @@ function buildCollectionFlow(): { nodes: FlowNode[]; edges: FlowEdge[] } {
     waitForResponse: true,
     timeoutSeconds: 120,
   });
-  const transfer = actionNode(760, 300, {
+  const transfer = actionNode(580, 560, {
     actionType: 'transfer',
     config: { extension: '9000', reason: '客户要求人工服务' },
   });
-  const end = endNode(980, 200, {
+  const end = endNode(260, 740, {
     mode: 'complete',
     reason: '催收流程结束',
     farewell: '感谢您的配合，再见。',
@@ -177,25 +177,25 @@ function buildCollectionFlow(): { nodes: FlowNode[]; edges: FlowEdge[] } {
 
 function buildEcommerceFlow(): { nodes: FlowNode[]; edges: FlowEdge[] } {
   nodeCounter = 0;
-  const start = startNode(100, 200);
-  const greet = dialogNode(320, 200, {
+  const start = startNode(260, 20);
+  const greet = dialogNode(260, 200, {
     mode: 'script',
     text: '您好，我是{shop}的客服，您在{date}购买的{product}收到了吗？想了解一下您的使用体验。',
     interruptible: true,
     waitForResponse: true,
     timeoutSeconds: 10,
   });
-  const decide = decisionNode(540, 200, {
+  const decide = decisionNode(260, 380, {
     mode: 'intent',
     intents: ['满意', '不满意', '未收到'],
   });
-  const thanks = dialogNode(760, 100, {
+  const thanks = dialogNode(-60, 560, {
     mode: 'script',
     text: '非常感谢您的反馈！期待您再次光临，祝您生活愉快。',
     interruptible: false,
     waitForResponse: false,
   });
-  const afterSale = actionNode(760, 200, {
+  const afterSale = actionNode(260, 560, {
     actionType: 'crm',
     config: {
       action: 'create_after_sale_ticket',
@@ -203,14 +203,14 @@ function buildEcommerceFlow(): { nodes: FlowNode[]; edges: FlowEdge[] } {
       priority: 'high',
     },
   });
-  const logistics = actionNode(760, 300, {
+  const logistics = actionNode(580, 560, {
     actionType: 'api',
     config: {
       action: 'query_logistics',
       orderNo: '{orderNo}',
     },
   });
-  const end = endNode(980, 200, {
+  const end = endNode(260, 740, {
     mode: 'complete',
     reason: '电商回访结束',
     farewell: '感谢您的时间，再见。',
@@ -236,8 +236,8 @@ function buildEcommerceFlow(): { nodes: FlowNode[]; edges: FlowEdge[] } {
 
 function buildPresaleFlow(): { nodes: FlowNode[]; edges: FlowEdge[] } {
   nodeCounter = 0;
-  const start = startNode(100, 200);
-  const greet = dialogNode(320, 200, {
+  const start = startNode(260, 20);
+  const greet = dialogNode(260, 200, {
     mode: 'ai',
     prompt: '了解客户对{product}的咨询需求',
     systemPrompt:
@@ -247,31 +247,31 @@ function buildPresaleFlow(): { nodes: FlowNode[]; edges: FlowEdge[] } {
     waitForResponse: true,
     timeoutSeconds: 180,
   });
-  const decide = decisionNode(540, 200, {
+  const decide = decisionNode(260, 380, {
     mode: 'intent',
     intents: ['有意向试驾', '需要考虑', '无意向'],
   });
-  const book = actionNode(760, 100, {
+  const book = actionNode(-60, 560, {
     actionType: 'crm',
     config: {
       action: 'create_test_drive_appointment',
       model: '{product}',
     },
   });
-  const followUp = dialogNode(760, 200, {
+  const followUp = dialogNode(260, 560, {
     mode: 'script',
     text: '好的，我先加您微信，稍后发送详细资料给您，有任何问题随时联系。',
     interruptible: false,
     waitForResponse: false,
   });
-  const sms = actionNode(760, 300, {
+  const sms = actionNode(580, 560, {
     actionType: 'sms',
     config: {
       template: 'presale_followup',
       product: '{product}',
     },
   });
-  const end = endNode(980, 200, {
+  const end = endNode(260, 740, {
     mode: 'complete',
     reason: '售前咨询结束',
     farewell: '感谢您的咨询，期待为您服务，再见。',

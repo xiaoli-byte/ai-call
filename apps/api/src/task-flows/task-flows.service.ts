@@ -106,16 +106,26 @@ export class TaskFlowsService {
   }
 
   async remove(id: string): Promise<void> {
-    await this.get(id);
+    const flow = await this.get(id);
     try {
       await this.prisma.taskFlow.delete({ where: { id } });
     } catch (err) {
       // task_flow_versions/outbound_tasks 对 flow 都是 onDelete: Restrict——发布过的流程
       // 留有不可变版本快照（可能仍被历史任务锁定执行），数据库会拒绝删除。这是设计使然
       // （见 CLAUDE.md「Immutable flow execution」），把裸 FK 500 转成可读的 409。
+      // status 会因编辑已发布流程回落成 draft，光看列表的「草稿」标签判断不出这段历史，
+      // 报错里把具体数量列出来，避免用户误以为“草稿=从未发布=可以删”。
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2003') {
+        const [versionCount, taskCount] = await Promise.all([
+          this.prisma.taskFlowVersion.count({ where: { flowId: id } }),
+          this.prisma.outboundTask.count({ where: { flowId: id } }),
+        ]);
+        const reasons = [
+          versionCount > 0 ? `${versionCount} 个已发布版本` : null,
+          taskCount > 0 ? `${taskCount} 个任务仍在引用` : null,
+        ].filter((r): r is string => r !== null);
         throw new ConflictException(
-          `流程 ${id} 已发布过版本或仍被任务引用，无法删除。请先归档而非删除。`,
+          `流程「${flow.name}」无法删除：存在${reasons.join('、') || '未知的关联数据'}。请先归档而非删除。`,
         );
       }
       throw err;

@@ -49,6 +49,13 @@ type ResolvedContext = {
   providerCallId?: string;
 };
 
+export type DispatchChannel = 'freeswitch' | 'web';
+
+export type DispatchTaskResult = OutboundTask & {
+  taskId: string;
+  attemptId: string;
+};
+
 type ContactAttemptHistoryData = {
   phoneNumber: string;
   phoneHash: string;
@@ -569,13 +576,14 @@ export class TasksService {
   }
 
   /** 创建独立 CallAttempt，并以 attemptId 作为 FreeSWITCH UUID。 */
-  async dispatch(id: string): Promise<OutboundTask> {
+  async dispatch(id: string, channel: DispatchChannel = 'freeswitch'): Promise<DispatchTaskResult> {
     const task = await this.get(id);
     if (!STATUS_TRANSITIONS[task.status].has(TaskStatus.CALLING)) {
       throw new ConflictException(`Task ${id} cannot be dispatched from ${task.status}`);
     }
     await this.assertOutboundPolicyAllowed(task.to, new Date(), id, id);
     const attemptId = randomUUID();
+    const now = new Date();
     await this.prisma.$transaction(async (tx) => {
       const claimed = await tx.outboundTask.updateMany({
         where: { id, status: task.status },
@@ -595,27 +603,41 @@ export class TasksService {
           attemptNo: updated.attemptCount,
           providerCallId: attemptId,
           status: TaskStatus.CALLING,
+          ...(channel === 'web' ? { ringingAt: now } : {}),
         },
       });
-      await tx.callEvent.create({
-        data: {
-          taskId: id,
-          attemptId,
-          type: 'call.dispatch_requested',
-          payload: callEventPayload('call.dispatch_requested', {}),
-        },
-      });
-      await tx.outboxEvent.create({
-        data: {
-          aggregateType: 'CallAttempt',
-          aggregateId: attemptId,
-          type: 'call.dispatch_requested',
-          deduplicationKey: `call.dispatch:${attemptId}`,
-          payload: outboxPayload('call.dispatch_requested', { taskId: id, attemptId, to: task.to, from: task.from }),
-        },
-      });
+      if (channel === 'web') {
+        // web 通道：跳过 FreeSWITCH originate outbox，直接确认接受。
+        await tx.callEvent.create({
+          data: {
+            taskId: id,
+            attemptId,
+            type: 'call.dispatch_accepted',
+            payload: callEventPayload('call.dispatch_accepted', { channel: 'web' }),
+          },
+        });
+      } else {
+        await tx.callEvent.create({
+          data: {
+            taskId: id,
+            attemptId,
+            type: 'call.dispatch_requested',
+            payload: callEventPayload('call.dispatch_requested', {}),
+          },
+        });
+        await tx.outboxEvent.create({
+          data: {
+            aggregateType: 'CallAttempt',
+            aggregateId: attemptId,
+            type: 'call.dispatch_requested',
+            deduplicationKey: `call.dispatch:${attemptId}`,
+            payload: outboxPayload('call.dispatch_requested', { taskId: id, attemptId, to: task.to, from: task.from }),
+          },
+        });
+      }
     });
-    return this.get(id);
+    const dispatched = await this.get(id);
+    return { ...dispatched, taskId: dispatched.id, attemptId };
   }
 
   async dispatchDuePending(

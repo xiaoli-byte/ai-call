@@ -11,6 +11,7 @@ import pytest
 
 from voice_agent.agent import VoiceAgent
 from voice_agent.callbacks import NoopCallbacks
+from voice_agent.flow_executor import render_template
 from voice_agent.scenarios import SCENARIO_CONFIGS, DEFAULT_VARIABLES
 from voice_agent.types import (
     CallOutcome,
@@ -226,6 +227,15 @@ def agent(mock_llm, mock_tts, mock_tools, mock_rag, mock_tasks):
         max_turns=3,
         turn_timeout_s=2,
     )
+
+
+def test_flow_template_render_supports_new_and_legacy_variables() -> None:
+    text = "您好，${company}，订单{{orderNo}}，金额{amount}，未知${missing}"
+
+    assert render_template(
+        text,
+        {"company": "测试公司", "orderNo": "A001", "amount": "100"},
+    ) == "您好，测试公司，订单A001，金额100，未知${missing}"
 
 
 @pytest.mark.asyncio
@@ -580,7 +590,7 @@ async def test_executes_immutable_flow_snapshot(
             {
                 "id": "welcome",
                 "type": "dialog",
-                "data": {"mode": "script", "text": "您好，{company}"},
+                "data": {"mode": "script", "text": "您好，${company}"},
             },
             {
                 "id": "end",
