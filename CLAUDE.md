@@ -3,7 +3,7 @@
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Orchestration workflow  
-You (Fable) are the orchestrator. Plan, decompose, synthesize.  
+You (Fable/Opus) are the orchestrator. Plan, decompose, synthesize.  
 Reasoning-heavy phases → deep-reasoner  
 Mechanical work → fast-worker  
 Codex (/codex:rescue --background) is a cracked engineer on par with deep-reasoner, from a different perspective. Treat as a peer, not a reviewer.  

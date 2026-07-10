@@ -53,3 +53,5 @@ freeswitch/runtime/
 
 # docker
 freeswitch/data/
+
+test_temp
