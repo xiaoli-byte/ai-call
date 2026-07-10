@@ -45,12 +45,14 @@ function taskRecord(overrides: Record<string, unknown> = {}) {
 
 function buildDispatchMocks(): { prisma: any; calls: Call[] } {
   const calls: Call[] = [];
+  let status: TaskStatus = TaskStatus.PENDING;
   const prisma: any = {
     outboundTask: {
-      findUnique: async () => taskRecord(),
+      findUnique: async () => taskRecord({ status }),
       findUniqueOrThrow: async () => ({ attemptCount: 1 }),
       updateMany: async (args: unknown) => {
         calls.push(['outboundTask.updateMany', args]);
+        status = TaskStatus.CALLING;
         return { count: 1 };
       },
     },

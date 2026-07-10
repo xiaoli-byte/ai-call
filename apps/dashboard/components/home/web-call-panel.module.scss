@@ -1,0 +1,275 @@
+/* 首页 hero 通话面板：浅色营销页风格，与 page.module.scss 的 demoPanel 视觉对齐 */
+
+.panel {
+  position: absolute;
+  right: clamp(14px, 2vw, 24px);
+  bottom: clamp(92px, 9vw, 120px);
+  left: clamp(14px, 2vw, 24px);
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: calc(100% - 150px);
+  padding: 16px 18px;
+  overflow: hidden auto;
+  border: 1px solid #dbe8ff;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 20px 46px rgba(15, 23, 42, 0.12);
+  backdrop-filter: blur(6px);
+}
+
+.panelHeader {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.panelTitle {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 14px;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.panelTitle svg {
+  width: 15px;
+  height: 15px;
+  color: #2563eb;
+}
+
+.closeButton {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  border: 1px solid #dbe8ff;
+  border-radius: 50%;
+  background: #fff;
+  color: #64748b;
+  cursor: pointer;
+}
+
+.closeButton svg {
+  width: 13px;
+  height: 13px;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.field label {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.field select,
+.field input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid #dbe8ff;
+  border-radius: 10px;
+  background: #fbfdff;
+  font-size: 13px;
+  color: #0f172a;
+}
+
+.field select:focus,
+.field input:focus {
+  border-color: #2563eb;
+  outline: none;
+}
+
+.primaryButton {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+  padding: 9px 14px;
+  border: none;
+  border-radius: 999px;
+  background: #2563eb;
+  box-shadow: 0 12px 26px rgba(37, 99, 235, 0.24);
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  cursor: pointer;
+}
+
+.primaryButton:disabled {
+  background: #93b4f8;
+  box-shadow: none;
+  cursor: not-allowed;
+}
+
+.primaryButton svg {
+  width: 14px;
+  height: 14px;
+}
+
+.hangupButton {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  justify-content: center;
+  padding: 9px 14px;
+  border: none;
+  border-radius: 999px;
+  background: #dc2626;
+  box-shadow: 0 12px 26px rgba(220, 38, 38, 0.22);
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  cursor: pointer;
+}
+
+.hangupButton svg {
+  width: 14px;
+  height: 14px;
+}
+
+.hangupButton:disabled {
+  background: #f3a6a6;
+}
+
+.ghostButton {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 14px;
+  border: 1px solid #dbe8ff;
+  border-radius: 999px;
+  background: #fff;
+  font-size: 13px;
+  color: #2563eb;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.statusRow {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.statusBadge {
+  display: inline-flex;
+  gap: 7px;
+  align-items: center;
+  padding: 5px 11px;
+  border-radius: 999px;
+  background: #eef4ff;
+  font-size: 12px;
+  font-weight: 600;
+  color: #2563eb;
+}
+
+.statusBadge::before {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentcolor;
+  content: '';
+}
+
+.statusInCall {
+  background: #ecfdf5;
+  color: #059669;
+}
+
+.statusEnded {
+  background: #f1f5f9;
+  color: #475569;
+}
+
+.statusError {
+  background: #fef2f2;
+  color: #dc2626;
+}
+
+.subtitleList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 72px;
+  max-height: 190px;
+  margin: 0;
+  padding: 10px 12px;
+  overflow-y: auto;
+  border: 1px solid #e6edf8;
+  border-radius: 12px;
+  background: #f8fbff;
+  list-style: none;
+}
+
+.subtitleItem {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: #0f172a;
+}
+
+.subtitleRole {
+  font-size: 11px;
+  font-weight: 600;
+  color: #2563eb;
+}
+
+.subtitleCaller .subtitleRole {
+  color: #059669;
+}
+
+.subtitleEmpty {
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+.errorText {
+  margin: 0;
+  padding: 8px 11px;
+  border: 1px solid #fecaca;
+  border-radius: 10px;
+  background: #fef2f2;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #b91c1c;
+}
+
+.metaText {
+  margin: 0;
+  font-size: 12px;
+  color: #64748b;
+  word-break: break-all;
+}
+
+.endedActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.phoneButton {
+  cursor: pointer;
+}
+
+.phoneButtonActive {
+  border-color: #2563eb;
+  color: #2563eb;
+}

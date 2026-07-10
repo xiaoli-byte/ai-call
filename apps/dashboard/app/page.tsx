@@ -12,11 +12,9 @@ import {
   Gauge,
   GitBranch,
   Headphones,
-  Keyboard,
   LogIn,
   Megaphone,
   Mic2,
-  Phone,
   PhoneCall,
   ShieldCheck,
   Sparkles,
@@ -24,6 +22,7 @@ import {
 } from 'lucide-react';
 
 import Grainient from '../components/Grainient';
+import WebCallPanel from '../components/home/WebCallPanel';
 import styles from './page.module.scss';
 
 export const metadata: Metadata = {
@@ -170,14 +169,7 @@ export default function HomePage() {
                 </p>
               ))}
             </div>
-            <div className={styles.callControls} aria-hidden="true">
-              <span className={styles.callControl}>
-                <Phone />
-              </span>
-              <span className={styles.callControlPrimary}>
-                <Keyboard />
-              </span>
-            </div>
+            <WebCallPanel />
           </div>
         </section>
 
