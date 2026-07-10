@@ -469,7 +469,8 @@ describe('TasksService', () => {
       raw: { 'Event-Name': 'CHANNEL_ANSWER', 'Unique-ID': 'provider-1' },
     });
 
-    assert.equal(calls[0][0], 'outboundTask.update');
+    assert.equal(calls[0][0], 'outboundTask.updateMany');
+    assert.equal(calls[0][1].where.status, TaskStatus.CALLING);
     assert.equal(calls[0][1].data.status, TaskStatus.IN_CALL);
     assert.deepEqual(calls[0][1].data.calledAt, new Date(occurredAt));
     assert.equal(calls[1][0], 'callAttempt.update');
@@ -507,7 +508,8 @@ describe('TasksService', () => {
       raw: { 'Hangup-Cause': 'NO_ANSWER' },
     });
 
-    assert.equal(calls[0][0], 'outboundTask.update');
+    assert.equal(calls[0][0], 'outboundTask.updateMany');
+    assert.equal(calls[0][1].where.status, TaskStatus.CALLING);
     assert.equal(calls[0][1].data.status, TaskStatus.NO_ANSWER);
     assert.deepEqual(calls[0][1].data.endedAt, new Date(occurredAt));
     assert.equal(calls[1][0], 'callAttempt.update');
@@ -574,6 +576,230 @@ describe('TasksService', () => {
     );
     assert.equal(calls[2][1].data.payload.recordingUrl, 'https://recordings.example.test/calls/2026/07/attempt-1.wav');
   });
+
+  it('#4 classifies NORMAL_CLEARING with billsec answer evidence as COMPLETED', async () => {
+    const calls: Call[] = [];
+    const occurredAt = '2026-07-02T00:02:00.000Z';
+    const prisma = providerEventPrisma(calls, {
+      task: taskRecord({ status: TaskStatus.CALLING, calledAt: null }),
+      attempt: attemptRecord({ status: TaskStatus.CALLING, answeredAt: null }),
+    });
+    const service = new TasksService(prisma as never, {} as never, scenarios as never, {} as never);
+
+    await service.recordProviderCallEvent({
+      provider: 'freeswitch',
+      providerEventId: 'event-hangup-billsec',
+      eventType: 'CHANNEL_HANGUP_COMPLETE',
+      providerCallId: 'provider-1',
+      occurredAt,
+      hangupCause: 'NORMAL_CLEARING',
+      raw: { 'Hangup-Cause': 'NORMAL_CLEARING', variable_billsec: '17' },
+    });
+
+    assert.equal(calls[0][0], 'outboundTask.updateMany');
+    assert.equal(calls[0][1].data.status, TaskStatus.COMPLETED);
+    assert.equal(calls[1][0], 'callAttempt.update');
+    assert.equal(calls[1][1].data.status, TaskStatus.COMPLETED);
+    assert.equal(calls[1][1].data.hangupCause, 'NORMAL_CLEARING');
+  });
+
+  it('#3 reconcile skips attempts not yet dialed (providerJobId null)', async () => {
+    const calls: Call[] = [];
+    const observedAt = new Date('2026-07-02T01:00:00.000Z');
+    const startedAt = new Date('2026-07-02T00:58:00.000Z'); // 120s ago, well past the 60s grace
+    const prisma = providerEventPrisma(calls, {
+      task: taskRecord({ status: TaskStatus.CALLING, calledAt: null }),
+      attempt: attemptRecord({
+        status: TaskStatus.CALLING,
+        providerJobId: null,
+        answeredAt: null,
+        startedAt,
+        missingProviderSnapshotCount: 1,
+      }),
+    });
+    const service = new TasksService(prisma as never, {} as never, scenarios as never, {} as never);
+
+    const result = await service.recordProviderActiveSnapshot({
+      provider: 'freeswitch',
+      snapshotId: 'snap-1',
+      observedAt: observedAt.toISOString(),
+      activeChannelIds: [],
+    });
+
+    assert.equal(result.scanned, 1);
+    assert.equal(result.reconciled, 0);
+    assert.equal(result.missing, 0);
+    assert.equal(calls.some(([name]) => name === 'callAttempt.update'), false);
+  });
+
+  it('#2 reconcile preserves an existing hangupCause and derives status from it', async () => {
+    const calls: Call[] = [];
+    const observedAt = new Date('2026-07-02T01:00:00.000Z');
+    const startedAt = new Date('2026-07-02T00:58:00.000Z');
+    const prisma = providerEventPrisma(calls, {
+      task: taskRecord({ status: TaskStatus.IN_CALL, calledAt: startedAt }),
+      attempt: attemptRecord({
+        status: TaskStatus.IN_CALL,
+        providerJobId: 'job-1',
+        providerCallId: 'provider-1',
+        answeredAt: null,
+        hangupCause: 'USER_BUSY',
+        startedAt,
+        lastProviderSnapshotAt: null,
+        missingProviderSnapshotCount: 1,
+      }),
+    });
+    const service = new TasksService(prisma as never, {} as never, scenarios as never, {} as never);
+
+    const result = await service.recordProviderActiveSnapshot({
+      provider: 'freeswitch',
+      snapshotId: 'snap-1',
+      observedAt: observedAt.toISOString(),
+      activeChannelIds: [],
+    });
+
+    assert.equal(result.reconciled, 1);
+    const attemptUpdate = calls.find(([name]) => name === 'callAttempt.update');
+    assert.ok(attemptUpdate);
+    // 已有 hangupCause 保留,未被 EVENT_LOSS_RECONCILED 覆盖
+    assert.equal(attemptUpdate[1].data.hangupCause, 'USER_BUSY');
+    // USER_BUSY ∈ NO_ANSWER → 终态派生为 NO_ANSWER 而非 answered?COMPLETED:FAILED
+    assert.equal(attemptUpdate[1].data.status, TaskStatus.NO_ANSWER);
+    const history = calls.find(([name]) => name === 'contactAttemptHistory.upsert');
+    assert.ok(history);
+    assert.equal(history[1].update.outcome, 'USER_BUSY');
+  });
+
+  it('#1 updateStatus is idempotent when a concurrent writer already reached a terminal state', async () => {
+    const calls: Call[] = [];
+    const task = taskRecord({
+      status: TaskStatus.IN_CALL,
+      calledAt: new Date('2026-07-02T00:00:10.000Z'),
+    });
+    let statusReads = 0;
+    const prisma: any = {
+      outboundTask: {
+        findUnique: async (args: any) => {
+          if (args.select?.id && !args.select?.status) return { id: 'task-1' };
+          if (args.select?.status) {
+            statusReads += 1;
+            return {
+              status: statusReads === 1 ? TaskStatus.IN_CALL : TaskStatus.COMPLETED,
+              calledAt: task.calledAt,
+            };
+          }
+          return { ...task, status: TaskStatus.COMPLETED, attempts: [], transcripts: [], flowVersion: null };
+        },
+        updateMany: async (args: any) => {
+          calls.push(['outboundTask.updateMany', args]);
+          return { count: 0 }; // lost the optimistic race
+        },
+      },
+      callAttempt: {
+        findUniqueOrThrow: async () => { throw new Error('attempt must not be touched on an idempotent no-op'); },
+      },
+      callEvent: {
+        create: async (args: any) => { calls.push(['callEvent.create', args]); return args; },
+      },
+    };
+    prisma.$transaction = async (fn: (tx: unknown) => Promise<void>) => fn(prisma);
+    const service = new TasksService(prisma as never, {} as never, scenarios as never, {} as never);
+
+    const result = await service.updateStatus('task-1', TaskStatus.COMPLETED);
+
+    assert.equal(result.status, TaskStatus.COMPLETED);
+    assert.equal(calls.some(([name]) => name === 'callEvent.create'), false);
+    assert.equal(calls.filter(([name]) => name === 'outboundTask.updateMany').length, 1);
+  });
+
+  it('#2 FreeSWITCH hangup that keeps failing lands the task terminal locally with a warning', async () => {
+    const calls: Call[] = [];
+    const task = taskRecord({
+      status: TaskStatus.IN_CALL,
+      calledAt: new Date('2026-07-02T00:00:10.000Z'),
+    });
+    const prisma: any = {
+      outboundTask: {
+        findUnique: async (args: any) => {
+          if (args.select?.id && !args.select?.status) return { id: 'task-1' };
+          if (args.select?.status) return { status: task.status };
+          return { ...task, attempts: [], transcripts: [], flowVersion: null };
+        },
+        update: async (args: any) => { calls.push(['outboundTask.update', args]); Object.assign(task, args.data); return { ...task }; },
+        updateMany: async (args: any) => {
+          calls.push(['outboundTask.updateMany', args]);
+          if (args.where?.status?.notIn?.includes(task.status)) return { count: 0 };
+          Object.assign(task, args.data);
+          return { count: 1 };
+        },
+      },
+      callAttempt: {
+        findFirst: async () => ({ id: 'attempt-1', taskId: 'task-1', providerCallId: 'provider-1', providerJobId: 'job-1', channel: 'freeswitch' }),
+        findUnique: async () => ({ id: 'attempt-1', answeredAt: new Date('2026-07-02T00:00:20.000Z'), endedAt: null, duration: null }),
+        update: async (args: any) => { calls.push(['callAttempt.update', args]); return args; },
+      },
+      callEvent: {
+        create: async (args: any) => { calls.push(['callEvent.create', args]); return args; },
+      },
+      contactAttemptHistory: {
+        upsert: async (args: any) => { calls.push(['contactAttemptHistory.upsert', args]); return args; },
+      },
+    };
+    prisma.$transaction = async (fn: (tx: unknown) => Promise<void>) => fn(prisma);
+    const freeswitch = {
+      hangup: async () => { throw Object.assign(new Error('esl down'), { code: 'CONNECTION_REFUSED' }); },
+    };
+    const service = new TasksService(prisma as never, {} as never, scenarios as never, freeswitch as never);
+
+    const result = await service.hangup('task-1', { outcome: 'high_intent' as never });
+
+    assert.equal(result.status, TaskStatus.COMPLETED);
+    const eventTypes = calls.filter(([name]) => name === 'callEvent.create').map(([, a]) => a.data.type);
+    assert.ok(eventTypes.includes('call.hangup_requested'));
+    assert.ok(eventTypes.includes('call.hangup_request_failed'));
+    assert.ok(eventTypes.includes('call.hung_up'));
+    assert.ok(calls.some(([name]) => name === 'outboundTask.updateMany'));
+    assert.ok(calls.some(([name]) => name === 'callAttempt.update'));
+  });
+
+  it('#2 hangup with no call attempt records a local terminal end instead of throwing', async () => {
+    const calls: Call[] = [];
+    const task = taskRecord({
+      status: TaskStatus.IN_CALL,
+      calledAt: new Date('2026-07-02T00:00:10.000Z'),
+    });
+    const prisma: any = {
+      outboundTask: {
+        findUnique: async (args: any) => {
+          if (args.select?.id && !args.select?.status) return { id: 'task-1' };
+          if (args.select?.status) return { status: task.status };
+          return { ...task, attempts: [], transcripts: [], flowVersion: null };
+        },
+        updateMany: async (args: any) => {
+          calls.push(['outboundTask.updateMany', args]);
+          if (args.where?.status?.notIn?.includes(task.status)) return { count: 0 };
+          Object.assign(task, args.data);
+          return { count: 1 };
+        },
+      },
+      callAttempt: { findFirst: async () => null },
+      callEvent: {
+        create: async (args: any) => { calls.push(['callEvent.create', args]); return args; },
+      },
+      contactAttemptHistory: {
+        create: async (args: any) => { calls.push(['contactAttemptHistory.create', args]); return args; },
+      },
+    };
+    prisma.$transaction = async (fn: (tx: unknown) => Promise<void>) => fn(prisma);
+    const service = new TasksService(prisma as never, {} as never, scenarios as never, {} as never);
+
+    const result = await service.hangup('task-1');
+
+    assert.equal(result.status, TaskStatus.COMPLETED);
+    const eventTypes = calls.filter(([name]) => name === 'callEvent.create').map(([, a]) => a.data.type);
+    assert.ok(eventTypes.includes('call.hung_up'));
+    assert.ok(!eventTypes.includes('call.hangup_request_failed'));
+  });
 });
 
 function attemptRecord(overrides: Record<string, unknown> = {}) {
@@ -628,6 +854,16 @@ function providerEventPrisma(
         calls.push(['outboundTask.update', args]);
         Object.assign(task, args.data);
         return { ...task };
+      },
+      updateMany: async (args: any) => {
+        calls.push(['outboundTask.updateMany', args]);
+        if (args.where?.id && args.where.id !== task.id) return { count: 0 };
+        if (args.where?.status && task.status !== args.where.status) return { count: 0 };
+        if (args.where?.status?.notIn && args.where.status.notIn.includes(task.status)) {
+          return { count: 0 };
+        }
+        Object.assign(task, args.data);
+        return { count: 1 };
       },
     },
     callAttempt: {

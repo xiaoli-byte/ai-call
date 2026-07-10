@@ -340,24 +340,38 @@ export class TasksService {
 
   async updateStatus(id: string, status: TaskStatus): Promise<OutboundTask> {
     const context = await this.resolveContext(id);
-    const current = await this.get(context.taskId);
-    if (current.status === status) return current;
-    if (!STATUS_TRANSITIONS[current.status].has(status)) {
-      throw new ConflictException(`Invalid task transition: ${current.status} -> ${status}`);
-    }
     const now = new Date();
-    const terminal = TERMINAL_STATUSES.has(status);
-    const calledAt = status === TaskStatus.IN_CALL && !current.calledAt ? now : undefined;
-    const endedAt = terminal ? now : undefined;
-    const duration = terminal && current.calledAt
-      ? Math.max(0, Math.floor((now.getTime() - Date.parse(current.calledAt)) / 1000))
-      : undefined;
-
     await this.prisma.$transaction(async (tx) => {
-      await tx.outboundTask.update({
+      const task = await tx.outboundTask.findUnique({
         where: { id: context.taskId },
-        data: { status, calledAt, endedAt, duration },
+        select: { status: true, calledAt: true },
       });
+      if (!task) throw new NotFoundException(`Task ${context.taskId} not found`);
+      const current = task.status as TaskStatus;
+      if (current === status) return;
+      if (!STATUS_TRANSITIONS[current].has(status)) {
+        throw new ConflictException(`Invalid task transition: ${current} -> ${status}`);
+      }
+      const terminal = TERMINAL_STATUSES.has(status);
+      const calledAt = status === TaskStatus.IN_CALL && !task.calledAt ? now : undefined;
+      const endedAt = terminal ? now : undefined;
+      const duration = terminal && task.calledAt
+        ? Math.max(0, Math.floor((now.getTime() - task.calledAt.getTime()) / 1000))
+        : undefined;
+
+      // #1 乐观锁:仅当当前状态仍为 current 时写入,防止与 ESL 路(recordProviderCallEvent)
+      // 并发丢更新。落空则重读裁决:已终态/已同态 → 幂等返回;否则按 STATUS_TRANSITIONS 拒绝。
+      const { applied, current: fresh } = await this.writeStatusIf(
+        tx, context.taskId, current, status, { calledAt, endedAt, duration },
+      );
+      if (!applied) {
+        if (fresh === status || TERMINAL_STATUSES.has(fresh)) return;
+        if (!STATUS_TRANSITIONS[fresh].has(status)) {
+          throw new ConflictException(`Invalid task transition: ${fresh} -> ${status}`);
+        }
+        return;
+      }
+
       if (context.attemptId) {
         const attempt = await tx.callAttempt.findUniqueOrThrow({ where: { id: context.attemptId } });
         const attemptDuration = terminal && attempt.answeredAt
@@ -379,11 +393,56 @@ export class TasksService {
           taskId: context.taskId,
           attemptId: context.attemptId,
           type: 'task.status_changed',
-          payload: callEventPayload('task.status_changed', { from: current.status, to: status }),
+          payload: callEventPayload('task.status_changed', { from: current, to: status }),
         },
       });
     });
     return this.get(context.taskId);
+  }
+
+  /**
+   * #1 统一状态转换通道:乐观锁写入。仅当行内状态仍等于 `expected` 时把状态置为 `next`
+   * 并附带 `extra` 字段;返回是否写入成功以及写入后(或落空后)读到的最新状态,
+   * 由调用方决定幂等/拒绝语义。HTTP 路(updateStatus/hangup)与 ESL 路(recordProviderCallEvent)
+   * 的任务状态迁移都经此写入,避免"事务外读 + 无条件写"导致的丢更新。
+   */
+  private async writeStatusIf(
+    tx: Prisma.TransactionClient,
+    taskId: string,
+    expected: TaskStatus,
+    next: TaskStatus,
+    extra: Record<string, unknown> = {},
+  ): Promise<{ applied: boolean; current: TaskStatus }> {
+    const claimed = await tx.outboundTask.updateMany({
+      where: { id: taskId, status: expected },
+      data: { status: next, ...extra } as Prisma.OutboundTaskUpdateManyMutationInput,
+    });
+    const fresh = await tx.outboundTask.findUnique({
+      where: { id: taskId },
+      select: { status: true },
+    });
+    return { applied: claimed.count > 0, current: (fresh?.status as TaskStatus) ?? next };
+  }
+
+  /**
+   * #2 强制落终态:仅当当前状态尚未终态时置为 `next`(用户挂断意图明确的收口场景)。
+   * 已终态则不覆盖(幂等),避免与 ESL 终态事件互相踩踏。
+   */
+  private async forceTerminalStatus(
+    tx: Prisma.TransactionClient,
+    taskId: string,
+    next: TaskStatus,
+    extra: Record<string, unknown> = {},
+  ): Promise<{ applied: boolean; current: TaskStatus }> {
+    const claimed = await tx.outboundTask.updateMany({
+      where: { id: taskId, status: { notIn: [...TERMINAL_STATUSES] } },
+      data: { status: next, ...extra } as Prisma.OutboundTaskUpdateManyMutationInput,
+    });
+    const fresh = await tx.outboundTask.findUnique({
+      where: { id: taskId },
+      select: { status: true },
+    });
+    return { applied: claimed.count > 0, current: (fresh?.status as TaskStatus) ?? next };
   }
 
   async recordProviderCallEvent(event: ProviderCallEventDto): Promise<OutboundTask> {
@@ -502,10 +561,15 @@ export class TasksService {
             ? normalizeHangupCause(currentAttempt.hangupCause)
             : undefined;
           effectiveHangupCause = existingFatalCause ?? reportedHangupCause;
-          const nextStatus = deriveTerminalStatus(
-            effectiveHangupCause,
-            Boolean(currentAttempt.answeredAt || (isLatestAttempt && currentTask.calledAt)),
+          // #4 NORMAL_CLEARING∈NO_ANSWER 集合。若 CHANNEL_ANSWER 丢失,answeredAt/calledAt 为空,
+          // 单看它们会把已应答的挂断误判 NO_ANSWER。补充挂断事件自身的应答证据
+          // (billsec/answer_epoch/Answer-State=answered)作为兜底。
+          const answered = Boolean(
+            currentAttempt.answeredAt ||
+            (isLatestAttempt && currentTask.calledAt) ||
+            answerEvidenceFromRaw(event.raw),
           );
+          const nextStatus = deriveTerminalStatus(effectiveHangupCause, answered);
           terminalHistoryStatus = nextStatus;
           attemptUpdate.status = nextStatus;
           attemptUpdate.endedAt = currentAttempt.endedAt ?? occurredAt;
@@ -523,7 +587,11 @@ export class TasksService {
           if (isLatestAttempt) taskUpdate.recordingUrl = recordingUrl;
         }
 
-        if (Object.keys(taskUpdate).length > 0) {
+        // #1 任务状态迁移走统一乐观锁通道;仅非状态字段(如 recordingUrl)才直写。
+        if (typeof taskUpdate.status === 'string' && taskUpdate.status !== taskStatus) {
+          const { status: nextTaskStatus, ...taskExtra } = taskUpdate;
+          await this.writeStatusIf(tx, context.taskId, taskStatus, nextTaskStatus as TaskStatus, taskExtra);
+        } else if (Object.keys(taskUpdate).length > 0) {
           await tx.outboundTask.update({
             where: { id: context.taskId },
             data: taskUpdate,
@@ -617,10 +685,12 @@ export class TasksService {
           taskId: true,
           attemptNo: true,
           providerCallId: true,
+          providerJobId: true,
           status: true,
           startedAt: true,
           answeredAt: true,
           endedAt: true,
+          hangupCause: true,
           lastProviderSnapshotId: true,
           lastProviderSnapshotAt: true,
           missingProviderSnapshotCount: true,
@@ -648,6 +718,13 @@ export class TasksService {
       };
 
       for (const attempt of attempts) {
+        // #3 providerJobId 由 originate 成功时写入,是"真正外拨"的时刻标记。
+        // 尚未外拨的 attempt(outbox 积压 / originate 退避期间,providerJobId 仍为 null)
+        // 不参与对账——否则会被以派发时刻(startedAt)为锚点误判 FAILED。其失败收口
+        // 交由 outbox worker 的重试耗尽路径。(权衡:不新增列/不迁移,以 providerJobId
+        // 是否存在近似"外拨时刻";精确锚点需新增 dialedAt 列,归并行 schema 工单。)
+        if (!attempt.providerJobId) continue;
+
         const lastSnapshotAt = parseProviderDate(attempt.lastProviderSnapshotAt);
         if (
           attempt.lastProviderSnapshotId === snapshotId ||
@@ -683,14 +760,19 @@ export class TasksService {
           continue;
         }
 
-        const terminalStatus = attempt.answeredAt
-          ? TaskStatus.COMPLETED
-          : TaskStatus.FAILED;
+        // #2② reconcile 只填空缺:已有 hangupCause 一律保留,EVENT_LOSS_RECONCILED 仅在缺失时写入。
+        // 若已有真实挂断原因,终态也按其派生(而非一律 answered?COMPLETED:FAILED)。
+        const existingCause = normalizeHangupCause(attempt.hangupCause);
+        const answered = Boolean(attempt.answeredAt);
+        const terminalStatus = existingCause
+          ? deriveTerminalStatus(existingCause, answered)
+          : (answered ? TaskStatus.COMPLETED : TaskStatus.FAILED);
+        const reconciledOutcome = existingCause ?? attempt.task.outcome ?? EVENT_LOSS_RECONCILED;
         Object.assign(snapshotUpdate, {
           status: terminalStatus,
           endedAt: attempt.endedAt ?? observedAt,
           duration: durationSeconds(attempt.answeredAt, observedAt),
-          hangupCause: EVENT_LOSS_RECONCILED,
+          hangupCause: existingCause ?? EVENT_LOSS_RECONCILED,
         });
         await tx.callAttempt.update({ where: { id: attempt.id }, data: snapshotUpdate });
 
@@ -726,7 +808,7 @@ export class TasksService {
           taskId: attempt.taskId,
           attemptId: attempt.id,
           status: terminalStatus,
-          outcome: EVENT_LOSS_RECONCILED,
+          outcome: reconciledOutcome,
           attemptedAt: observedAt,
         });
         result.reconciled += 1;
@@ -799,13 +881,12 @@ export class TasksService {
     const context = await this.resolveContext(id, true);
     const current = await this.get(context.taskId);
     if (TERMINAL_STATUSES.has(current.status)) return current;
-    const now = new Date();
-    const duration = current.calledAt
-      ? Math.max(0, Math.floor((now.getTime() - Date.parse(current.calledAt)) / 1000))
-      : undefined;
     const channelId = context.providerCallId ?? context.attemptId;
+
+    // #2③ 无 attempt/channel:没有可控的通道,但用户挂断意图明确——本地补记结束(200),
+    // 不再抛 409 让 voice-agent 的 fire-and-forget 悬空无人收口。
     if (!context.attemptId || !channelId) {
-      throw new ConflictException(`Task ${context.taskId} has no call attempt to hang up`);
+      return this.finalizeLocalHangup(context, current, body, 'no_attempt');
     }
 
     if (context.channel !== 'web') {
@@ -828,47 +909,85 @@ export class TasksService {
         });
       });
 
+      // #2① 呼叫控制失败重试一次;仍失败则本地直接落终态(不能悬空)+ 记告警事件。
+      // 成功则等待 ESL 的 CHANNEL_HANGUP_COMPLETE 收口(维持既有语义)。
+      const { ok, error } = await this.tryFreeswitchHangup(channelId);
+      if (ok) return this.get(context.taskId);
+      return this.finalizeLocalHangup(context, current, body, 'call_control_failed', channelId, error);
+    }
+
+    // web 通道:无 FreeSWITCH,直接本地落终态。
+    return this.finalizeLocalHangup(context, current, body, 'web', channelId);
+  }
+
+  /** #2① FreeSWITCH 挂断,失败重试一次。返回是否成功及最后一次错误信息。 */
+  private async tryFreeswitchHangup(channelId: string): Promise<{ ok: boolean; error?: string }> {
+    let lastError = 'FreeSWITCH hangup failed';
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
       try {
         await this.freeswitch.hangup(channelId);
+        return { ok: true };
       } catch (err) {
-        const hangupError = safeErrorMessage(err);
-        this.logger.warn(`hangup call control failed channel=${channelId}: ${hangupError}`);
-        await this.prisma.callEvent.create({
+        lastError = safeErrorMessage(err);
+        this.logger.warn(`hangup call control failed (try ${attempt}/2) channel=${channelId}: ${lastError}`);
+      }
+    }
+    return { ok: false, error: lastError };
+  }
+
+  /**
+   * #2 本地收口挂断:强制把任务落 COMPLETED(用户挂断意图明确),更新 attempt、
+   * 记 call.hung_up(呼叫控制失败时另记 call.hangup_request_failed 告警)与联系历史。
+   * 通过 forceTerminalStatus 乐观锁写入:若已被 ESL 抢先落终态则幂等跳过,不覆盖。
+   */
+  private async finalizeLocalHangup(
+    context: ResolvedContext,
+    current: OutboundTask,
+    body: { outcome?: CallOutcome; tags?: string[] },
+    reason: 'web' | 'call_control_failed' | 'no_attempt',
+    channelId?: string,
+    hangupError?: string,
+  ): Promise<OutboundTask> {
+    const now = new Date();
+    const duration = current.calledAt
+      ? Math.max(0, Math.floor((now.getTime() - Date.parse(current.calledAt)) / 1000))
+      : undefined;
+    const effectiveChannelId = channelId ?? context.providerCallId ?? context.attemptId;
+    await this.prisma.$transaction(async (tx) => {
+      const { applied } = await this.forceTerminalStatus(tx, context.taskId, TaskStatus.COMPLETED, {
+        endedAt: now,
+        duration,
+        outcome: body.outcome,
+        intentTags: body.tags,
+      });
+      if (!applied) return; // 已终态(可能被 ESL 抢先),幂等,不覆盖
+
+      if (context.attemptId) {
+        const attempt = await tx.callAttempt.findUnique({ where: { id: context.attemptId } });
+        if (attempt) {
+          await tx.callAttempt.update({
+            where: { id: context.attemptId },
+            data: {
+              status: TaskStatus.COMPLETED,
+              endedAt: attempt.endedAt ?? now,
+              duration: attempt.answeredAt
+                ? Math.max(0, Math.floor((now.getTime() - attempt.answeredAt.getTime()) / 1000))
+                : (attempt.duration ?? undefined),
+            },
+          });
+        }
+      }
+
+      if (reason === 'call_control_failed') {
+        await tx.callEvent.create({
           data: {
             taskId: context.taskId,
             attemptId: context.attemptId,
             type: 'call.hangup_request_failed',
             payload: callEventPayload('call.hangup_request_failed', {
-              channelId,
-              error: hangupError,
+              channelId: effectiveChannelId,
+              error: hangupError ?? 'FreeSWITCH hangup failed',
             }),
-          },
-        });
-      }
-      return this.get(context.taskId);
-    }
-
-    await this.prisma.$transaction(async (tx) => {
-      await tx.outboundTask.update({
-        where: { id: context.taskId },
-        data: {
-          status: TaskStatus.COMPLETED,
-          endedAt: now,
-          duration,
-          outcome: body.outcome,
-          intentTags: body.tags,
-        },
-      });
-      if (context.attemptId) {
-        const attempt = await tx.callAttempt.findUniqueOrThrow({ where: { id: context.attemptId } });
-        await tx.callAttempt.update({
-          where: { id: context.attemptId },
-          data: {
-            status: TaskStatus.COMPLETED,
-            endedAt: now,
-            duration: attempt.answeredAt
-              ? Math.max(0, Math.floor((now.getTime() - attempt.answeredAt.getTime()) / 1000))
-              : undefined,
           },
         });
       }
@@ -880,7 +999,10 @@ export class TasksService {
           payload: callEventPayload('call.hung_up', {
             outcome: body.outcome,
             duration,
-            channelId,
+            channelId: effectiveChannelId,
+            hangupError: reason === 'call_control_failed'
+              ? (hangupError ?? 'FreeSWITCH hangup failed')
+              : undefined,
           }),
         },
       });
@@ -1620,6 +1742,33 @@ function rawString(raw: Record<string, unknown> | undefined, keys: string[]): st
 
 function cleanString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+/**
+ * #4 从挂断事件原始头判断"是否已应答"。任一成立即视为已应答:
+ *  - variable_billsec / billsec > 0(计费秒数,只有接通才 > 0)
+ *  - variable_answer_epoch / answer_epoch > 0(应答的 unix 时刻)
+ *  - Answer-State = answered
+ * 注:billsec / answer_epoch 目前不在 freeswitch-event-parser 的 SAFE_RAW_HEADERS 白名单内,
+ * 需主线放行后才会出现在 raw 里(见报告跟进项);Answer-State 在 CHANNEL_HANGUP_COMPLETE
+ * 时通常已是 "hangup",可靠性有限,故三者取并集兜底。
+ */
+function answerEvidenceFromRaw(raw: Record<string, unknown> | undefined): boolean {
+  if (!raw) return false;
+  const answerState = rawString(raw, ['Answer-State', 'variable_answer_state']);
+  if (answerState && answerState.toLowerCase() === 'answered') return true;
+  const billsec = rawNumber(raw, ['variable_billsec', 'billsec', 'Caller-Billsec']);
+  if (billsec !== undefined && billsec > 0) return true;
+  const answerEpoch = rawNumber(raw, ['variable_answer_epoch', 'answer_epoch']);
+  if (answerEpoch !== undefined && answerEpoch > 0) return true;
+  return false;
+}
+
+function rawNumber(raw: Record<string, unknown> | undefined, keys: string[]): number | undefined {
+  const value = rawString(raw, keys);
+  if (value === undefined) return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
 }
 
 function hashPhone(phoneNumber: string): string {

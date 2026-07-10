@@ -1,5 +1,6 @@
 import type { CallAttemptChannel, TaskStatus, TranscriptTurn } from '@ai-call/shared';
 import type { Prisma } from '../generated/prisma/client.js';
+import type { ProviderCallEventDto } from './dto/provider-call-event.dto.js';
 import { toPrismaJson } from '../common/prisma-json.js';
 
 export { toPrismaJson } from '../common/prisma-json.js';
@@ -52,21 +53,14 @@ export type CallEventPayloadFor<T extends CallEventType> =
   T extends 'call.dispatch_requested.retrying' | 'call.dispatch_requested.failed' | `action.${FlowActionType}.retrying` | `action.${FlowActionType}.failed` ? { attempts: number; error: string } :
   Record<string, never>;
 
-export type ProviderCallEventPayload = {
-  provider: string;
-  providerEventId?: string;
-  eventType: string;
-  taskId: string;
-  attemptId?: string;
-  providerCallId?: string;
-  jobId?: string;
-  backgroundJobResult?: string;
-  occurredAt: string;
-  hangupCause?: string;
-  recordingPath?: string;
-  recordingUrl?: string;
-  raw?: Record<string, unknown>;
-};
+/**
+ * call.provider_event 的持久化载荷。直接从 {@link ProviderCallEventDto} 派生,
+ * 避免与传输层 DTO 平行漂移:落库时 provider/taskId/occurredAt 一定已解析补全,
+ * 故在 DTO 基础上把这三者收窄为必填(eventType 在 DTO 已是必填)。
+ */
+export type ProviderCallEventPayload =
+  & Omit<ProviderCallEventDto, 'provider' | 'taskId' | 'occurredAt'>
+  & Required<Pick<ProviderCallEventDto, 'provider' | 'taskId' | 'occurredAt'>>;
 
 export type CallDispatchRequestedPayload = {
   taskId: string;

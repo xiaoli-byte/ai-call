@@ -36,6 +36,11 @@ const SAFE_RAW_HEADERS = new Set([
   'job-command',
   'hangup-cause',
   'answer-state',
+  // Answer evidence: at CHANNEL_HANGUP_COMPLETE answer-state is usually "hangup",
+  // so terminal classification also reads billsec/answer-epoch to avoid marking
+  // an answered NORMAL_CLEARING call as NO_ANSWER when CHANNEL_ANSWER was lost.
+  'variable_billsec',
+  'variable_answer_epoch',
   'variable_task_id',
   'variable_attempt_id',
   'record-file-path',
