@@ -104,9 +104,9 @@ export default async function TasksPage({
           <h1>外呼任务</h1>
           <p>管理和追踪所有外呼任务的执行情况</p>
         </div>
-        <Link href="/tasks/new" className={styles.primaryButton}>
+        <Link href="/campaigns/new" className={styles.primaryButton}>
           <Plus size={15} />
-          新建任务
+          发起外呼
         </Link>
       </header>
 
