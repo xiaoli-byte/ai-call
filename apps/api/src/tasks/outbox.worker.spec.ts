@@ -203,6 +203,29 @@ describe('OutboxWorker', () => {
     assert.equal(updates[0].data.status, 'failed');
   });
 
+  it('sends a BadRequest config error (bad webhook URL) terminal on the first failure', async () => {
+    const updates: any[] = [];
+    const prisma = {
+      $transaction: async (fn: (tx: unknown) => Promise<void>) => fn({
+        outboxEvent: { update: async (args: any) => { updates.push(args); return args; } },
+        callEvent: { create: async (args: unknown) => args },
+        callAttempt: { updateMany: async (args: unknown) => args },
+        outboundTask: { updateMany: async (args: unknown) => args },
+      }),
+    };
+    const { BadRequestException } = await import('@nestjs/common');
+    const worker = new OutboxWorker(prisma as never, {} as never, {} as never);
+    const baseEvent = {
+      id: 'event-api', aggregateId: 'attempt-1', type: 'action.api',
+      deduplicationKey: 'api-1',
+      payload: { taskId: 'task-1', attemptId: 'attempt-1', config: {} },
+    };
+    // attempts=0 (first try) but permanent config error → terminal, not retry.
+    await (worker as unknown as { handleFailure(event: unknown, error: Error): Promise<void> })
+      .handleFailure({ ...baseEvent, attempts: 0 }, new BadRequestException('Invalid webhook URL'));
+    assert.equal(updates[0].data.status, 'failed');
+  });
+
   it('guards the terminal FAILED write on status CALLING (no clobber of a concurrent terminal)', async () => {
     const attemptWrites: any[] = [];
     const taskWrites: any[] = [];

@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit, Optional } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, OnModuleDestroy, OnModuleInit, Optional } from '@nestjs/common';
 import { TaskStatus } from '@ai-call/shared';
 import { ClsService } from 'nestjs-cls';
 import { hostname } from 'node:os';
@@ -266,7 +266,13 @@ export class OutboxWorker implements OnModuleInit, OnModuleDestroy {
     // unrecognized -ERR rejection) will never succeed on retry — go terminal now
     // instead of burning OUTBOX_MAX_ATTEMPTS redeliveries against the same wall.
     // (Duplicate-UUID is handled as success in deliver() and never lands here.)
-    const nonRetryable = error instanceof FreeSwitchError && error.retryable === false;
+    // 永久性客户端/配置错误(BadRequestException=HTTP 400,在任何网络调用之前抛出:
+    // 非法/未白名单 webhook URL、不支持的方法、缺失 CRM action)重试注定失败,
+    // 直接终态死信,不再空转 OUTBOX_MAX_ATTEMPTS 次。远端 4xx/5xx/网络错误抛的是
+    // 普通 Error,仍可重试。
+    const nonRetryable =
+      (error instanceof FreeSwitchError && error.retryable === false)
+      || error instanceof BadRequestException;
     const terminal =
       nonRetryable || attempts >= Number(process.env.OUTBOX_MAX_ATTEMPTS ?? 5);
     const message = error.message.slice(0, 1000);
