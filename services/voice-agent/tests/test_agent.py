@@ -452,9 +452,10 @@ async def test_receive_audio_suppressed_while_tts_is_speaking(
     vad = FakeVAD()
     agent._stt_handles[call_id] = stt  # type: ignore[assignment]
     agent._vads[call_id] = vad  # type: ignore[assignment]
+    agent._channels[call_id] = "freeswitch"
     agent._speaking[call_id] = True
 
-    await agent.receive_audio(call_id, b"\x01" * 960)
+    await agent.receive_audio(call_id, b"\x01" * 640)
 
     assert stt.sent == []
     assert stt.end_speech_calls == 0
@@ -495,13 +496,133 @@ async def test_receive_audio_suppressed_during_tts_tail_guard_then_recovers(
     agent._vads[call_id] = vad  # type: ignore[assignment]
 
     agent._asr_suppressed_until[call_id] = time.monotonic() + 10
-    await agent.receive_audio(call_id, b"\x01" * 960)
+    await agent.receive_audio(call_id, b"\x01" * 640)
     assert stt.sent == []
     assert vad.reset_calls == 1
 
     agent._asr_suppressed_until[call_id] = time.monotonic() - 1
-    await agent.receive_audio(call_id, b"\x01" * 960)
-    assert stt.sent == [b"\x01" * 960]
+    await agent.receive_audio(call_id, b"\x01" * 640)
+    assert stt.sent == [b"\x01" * 640]
+
+
+class _GateFakeSTT:
+    def __init__(self) -> None:
+        self.sent: list[bytes] = []
+        self.end_speech_calls = 0
+
+    async def send_audio(self, pcm: bytes) -> None:
+        self.sent.append(pcm)
+
+    async def end_speech(self) -> None:
+        self.end_speech_calls += 1
+
+
+class _GateFakeVAD:
+    def __init__(self) -> None:
+        self.feed_calls = 0
+        self.reset_calls = 0
+
+    def feed(self, frame: bytes):
+        self.feed_calls += 1
+        return "speech", [frame]
+
+    def reset(self) -> None:
+        self.reset_calls += 1
+
+
+@pytest.mark.asyncio
+async def test_web_channel_not_suppressed_during_tts(agent: VoiceAgent) -> None:
+    """web 通道 + ASR_TTS_GATE_WEB_ENABLED=false（默认）：播报期间不抑制，
+    尾音保护窗同样跳过（信任浏览器 AEC）。"""
+    call_id = "web-gate-1"
+    stt = _GateFakeSTT()
+    vad = _GateFakeVAD()
+    agent._stt_handles[call_id] = stt  # type: ignore[assignment]
+    agent._vads[call_id] = vad  # type: ignore[assignment]
+    agent._channels[call_id] = "web"
+    agent._speaking[call_id] = True
+    agent._asr_suppressed_until[call_id] = time.monotonic() + 10  # 尾音保护窗也应跳过
+
+    await agent.receive_audio(call_id, b"\x01" * 640)
+
+    assert stt.sent == [b"\x01" * 640]
+    assert vad.feed_calls == 1
+    assert vad.reset_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_web_channel_gate_env_enabled_restores_suppression(
+    mock_llm, mock_tts, mock_tools, mock_rag, mock_tasks
+) -> None:
+    """ASR_TTS_GATE_WEB_ENABLED=true 回退：web 通道播报期间照旧抑制。"""
+    agent = VoiceAgent(
+        llm=mock_llm,
+        tts=mock_tts,
+        tools=mock_tools,
+        rag=mock_rag,
+        tasks=mock_tasks,
+        asr_tts_gate_web_enabled=True,
+    )
+    call_id = "web-gate-2"
+    stt = _GateFakeSTT()
+    vad = _GateFakeVAD()
+    agent._stt_handles[call_id] = stt  # type: ignore[assignment]
+    agent._vads[call_id] = vad  # type: ignore[assignment]
+    agent._channels[call_id] = "web"
+    agent._speaking[call_id] = True
+
+    await agent.receive_audio(call_id, b"\x01" * 640)
+
+    assert stt.sent == []
+    assert vad.feed_calls == 0
+    assert vad.reset_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_stt_partial_triggers_interrupt_and_on_interrupted(
+    agent: VoiceAgent,
+    mock_llm,
+    mock_tts,
+) -> None:
+    """STT partial 触发 _interrupt_speaking，且可选回调 on_interrupted 被调。"""
+
+    class InterruptibleCallbacks(NoopCallbacks):
+        def __init__(self) -> None:
+            self.interrupted_calls = 0
+
+        async def on_interrupted(self) -> None:
+            self.interrupted_calls += 1
+
+    call_id = "barge-web-1"
+    callbacks = InterruptibleCallbacks()
+    agent._callbacks[call_id] = callbacks
+    agent._channels[call_id] = "web"
+    agent._speaking[call_id] = True
+
+    await agent._on_stt_event(call_id, STTEvent(type="partial", text="停一下"))
+    await asyncio.sleep(0)  # 让 create_task 出来的 on_interrupted 执行
+
+    assert mock_tts.interrupt_called
+    assert mock_llm.cancel_called
+    assert not agent._speaking.get(call_id)
+    assert callbacks.interrupted_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_interrupt_without_on_interrupted_callback_is_noop(
+    agent: VoiceAgent,
+    mock_tts,
+) -> None:
+    """callbacks 未实现 on_interrupted（如 TextTestCallbacks）时打断不报错。"""
+    call_id = "barge-plain-1"
+    agent._callbacks[call_id] = NoopCallbacks()
+    agent._speaking[call_id] = True
+
+    agent._interrupt_speaking(call_id)
+    await asyncio.sleep(0)
+
+    assert mock_tts.interrupt_called
+    assert not agent._speaking.get(call_id)
 
 
 @pytest.mark.asyncio

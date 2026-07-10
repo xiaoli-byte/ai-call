@@ -75,11 +75,13 @@ def _build_agent() -> tuple[VoiceAgent, TaskClient, Any]:
     vad_aggressiveness = int(os.getenv("VAD_AGGRESSIVENESS", "3"))
     vad_frame_ms = int(os.getenv("VAD_FRAME_MS", "20"))
     vad_pre_buffer_ms = int(os.getenv("VAD_PRE_BUFFER_MS", "300"))
-    vad_silence_confirm = int(os.getenv("VAD_SILENCE_CONFIRM_FRAMES", "10"))
+    vad_silence_confirm = int(os.getenv("VAD_SILENCE_CONFIRM_FRAMES", "28"))
     vad_speech_confirm = int(os.getenv("VAD_SPEECH_CONFIRM_FRAMES", "3"))
+    vad_min_speech_ms = int(os.getenv("VAD_MIN_SPEECH_MS", "200"))
     asr_tts_gate_enabled = _env_bool("ASR_TTS_GATE_ENABLED", True)
+    asr_tts_gate_web_enabled = _env_bool("ASR_TTS_GATE_WEB_ENABLED", False)
     asr_tts_tail_guard_ms = int(os.getenv("ASR_TTS_TAIL_GUARD_MS", "500"))
-    barge_in_during_tts_enabled = _env_bool("BARGE_IN_DURING_TTS_ENABLED", False)
+    barge_in_during_tts_enabled = _env_bool("BARGE_IN_DURING_TTS_ENABLED", True)
     barge_in_min_ms = int(os.getenv("BARGE_IN_MIN_MS", "500"))
     barge_in_rms_threshold = float(os.getenv("BARGE_IN_RMS_THRESHOLD", "0.08"))
 
@@ -97,9 +99,11 @@ def _build_agent() -> tuple[VoiceAgent, TaskClient, Any]:
         vad_pre_buffer_ms=vad_pre_buffer_ms,
         vad_silence_confirm_frames=vad_silence_confirm,
         vad_speech_confirm_frames=vad_speech_confirm,
+        vad_min_speech_ms=vad_min_speech_ms,
         max_turns=int(os.getenv("MAX_TURNS", "30")),
         turn_timeout_s=int(os.getenv("TURN_TIMEOUT_S", "30")),
         asr_tts_gate_enabled=asr_tts_gate_enabled,
+        asr_tts_gate_web_enabled=asr_tts_gate_web_enabled,
         asr_tts_tail_guard_ms=asr_tts_tail_guard_ms,
         barge_in_during_tts_enabled=barge_in_during_tts_enabled,
         barge_in_min_ms=barge_in_min_ms,

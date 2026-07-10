@@ -199,7 +199,7 @@ class DemoServer:
                         await stt.end_speech()
 
                     # VAD 状态变化 → 推 vad_state 事件
-                    now_speaking = state in ("speech", "speech_end")
+                    now_speaking = state in ("speech_start", "speech", "speech_end")
                     if now_speaking != prev_speaking:
                         prev_speaking = now_speaking
                         try:

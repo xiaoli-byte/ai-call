@@ -214,7 +214,57 @@ async def test_non_web_disconnect_never_triggers_hangup(metadata: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
-# ④ 会话结束 / 错误事件帧
+# ④ barge-in 打断：web 通道 on_interrupted 发 clear_audio 帧
+# ---------------------------------------------------------------------------
+
+
+async def test_web_channel_interrupt_sends_clear_audio_frame() -> None:
+    ws = FakeWebSocket()
+    callbacks = WebSocketCallbacks(ws, "call-1", FakeTasks(), channel="web")
+
+    await callbacks.on_interrupted()
+
+    assert {"type": "clear_audio"} in _text_frames(ws)
+
+
+async def test_freeswitch_raw_pcm_interrupt_sends_no_text_frames() -> None:
+    """FreeSWITCH raw-pcm 直推通道：无可清队列，on_interrupted 不发任何帧。"""
+    ws = FakeWebSocket()
+    callbacks = WebSocketCallbacks(ws, "call-1", FakeTasks())
+
+    await callbacks.on_interrupted()
+
+    assert ws.messages == []
+
+
+async def test_start_agent_session_passes_channel_to_agent() -> None:
+    """server 建会话时应把 metadata.channel 传给 agent.start_session。"""
+
+    class RecordingAgent:
+        def __init__(self) -> None:
+            self.kwargs: dict | None = None
+
+        async def start_session(self, *_args: object, **kwargs: object) -> None:
+            self.kwargs = dict(kwargs)
+
+    agent = RecordingAgent()
+    server = VoiceAgentServer(
+        host="127.0.0.1",
+        port=0,
+        path="/audio-stream",
+        agent=agent,
+        tasks=FakeTasks(),
+    )
+
+    await server._start_agent_session(FakeWebSocket(), "call-1", {"channel": "web"})
+    assert agent.kwargs is not None and agent.kwargs["channel"] == "web"
+
+    await server._start_agent_session(FakeWebSocket(), "call-2", {})
+    assert agent.kwargs["channel"] == "freeswitch"
+
+
+# ---------------------------------------------------------------------------
+# ⑤ 会话结束 / 错误事件帧
 # ---------------------------------------------------------------------------
 
 

@@ -64,13 +64,15 @@ class VoiceAgent:
         funasr_mode: str = "2pass",
         funasr_hotwords: str = "",
         vad_aggressiveness: int = 3,
-        vad_frame_ms: int = 30,
+        vad_frame_ms: int = 20,
         vad_pre_buffer_ms: int = 300,
         vad_silence_confirm_frames: int = 10,
         vad_speech_confirm_frames: int = 3,
+        vad_min_speech_ms: int = 200,
         max_turns: int = 30,
         turn_timeout_s: int = 30,
         asr_tts_gate_enabled: bool = True,
+        asr_tts_gate_web_enabled: bool = False,
         asr_tts_tail_guard_ms: int = 500,
         barge_in_during_tts_enabled: bool = False,
         barge_in_min_ms: int = 500,
@@ -94,6 +96,7 @@ class VoiceAgent:
         self._vad_pre_buffer_ms = vad_pre_buffer_ms
         self._vad_silence_confirm = vad_silence_confirm_frames
         self._vad_speech_confirm = vad_speech_confirm_frames
+        self._vad_min_speech_ms = max(0, vad_min_speech_ms)
 
         # 对话循环配置
         self._max_turns = max_turns
@@ -103,7 +106,10 @@ class VoiceAgent:
         # FreeSWITCH 当前回传音频可能包含 AI 自己的 TTS/扬声器回声。
         # 默认在 Agent 播放 TTS 时暂停向 ASR 送音频，并在 TTS 结束后保留一小段
         # 尾音保护窗口，避免把自己的声音识别成用户输入。
+        # web 通道（浏览器自带 AEC）默认跳过该门控（asr_tts_gate_web_enabled=False），
+        # 播报期间照常送 ASR，STT partial 即可语义级打断。
         self._asr_tts_gate_enabled = asr_tts_gate_enabled
+        self._asr_tts_gate_web_enabled = asr_tts_gate_web_enabled
         self._asr_tts_tail_guard_ms = max(0, asr_tts_tail_guard_ms)
         self._barge_in_during_tts_enabled = barge_in_during_tts_enabled
         self._barge_in_min_ms = max(0, barge_in_min_ms)
@@ -118,6 +124,7 @@ class VoiceAgent:
         self._endpoint_waiters: dict[str, asyncio.Future[str]] = {}
         self._injected_text: dict[str, str] = {}
         self._speaking: dict[str, bool] = {}
+        self._channels: dict[str, str] = {}  # call_id → 会话通道（freeswitch|web）
         self._asr_suppressed_until: dict[str, float] = {}
         self._asr_gate_logged: set[str] = set()
         self._barge_in_voice_ms: dict[str, int] = {}
@@ -135,8 +142,9 @@ class VoiceAgent:
         dry_run: bool = False,
         tenant_id: Optional[str] = None,
         user_id: Optional[str] = None,
+        channel: str = "freeswitch",
     ) -> None:
-        """启动新通话会话。"""
+        """启动新通话会话。channel 来自首帧 metadata（freeswitch|web），决定门控策略。"""
         # 初始化 session
         system_msg = ChatMessage(
             role="system",
@@ -154,6 +162,7 @@ class VoiceAgent:
         self._sessions[call_id] = session
         self._scenario_configs[call_id] = scenario
         self._callbacks[call_id] = callbacks
+        self._channels[call_id] = channel or "freeswitch"
         if dry_run:
             self._dry_run[call_id] = True
 
@@ -437,10 +446,36 @@ class VoiceAgent:
             self._tts.interrupt()
         if self._llm is not None:
             self._llm.cancel()
+        logger.info(
+            "[BargeIn] call_id=%s channel=%s interrupt_executed",
+            call_id,
+            self._channels.get(call_id, "freeswitch"),
+        )
+        # 通知传输层清空下游播放队列（可选回调：WebSocketCallbacks 实现，
+        # TextTestCallbacks/CLI 不实现则跳过）
+        callbacks = self._callbacks.get(call_id)
+        on_interrupted = getattr(callbacks, "on_interrupted", None)
+        if callable(on_interrupted):
+            try:
+                asyncio.get_running_loop().create_task(on_interrupted())
+            except RuntimeError:
+                logger.warning(
+                    "[BargeIn] call_id=%s no running loop, skip on_interrupted", call_id
+                )
 
     def _is_asr_suppressed(self, call_id: str) -> tuple[bool, str]:
-        """当前是否应暂停把入站音频送入 ASR。"""
+        """当前是否应暂停把入站音频送入 ASR。
+
+        web 通道（浏览器自带 AEC）且未显式开启 web 门控时，播报期间不抑制、
+        尾音保护窗同样跳过 —— 打断依赖正常 VAD→FunASR partial 的语义级路径。
+        FreeSWITCH 通道行为不变。
+        """
         if not self._asr_tts_gate_enabled:
+            return False, ""
+        if (
+            self._channels.get(call_id) == "web"
+            and not self._asr_tts_gate_web_enabled
+        ):
             return False, ""
         if self._speaking.get(call_id):
             return True, "tts_playing"
@@ -481,8 +516,9 @@ class VoiceAgent:
                 break
         if triggered:
             logger.info(
-                "[BargeIn] call_id=%s detected voice during TTS; interrupting playback",
+                "[BargeIn] call_id=%s channel=%s source=rms barge_in during TTS",
                 call_id,
+                self._channels.get(call_id, "freeswitch"),
             )
             self._barge_in_voice_ms.pop(call_id, None)
             self._interrupt_speaking(call_id)
@@ -531,6 +567,7 @@ class VoiceAgent:
                 speech_confirm_frames=self._vad_speech_confirm,
                 silence_confirm_frames=self._vad_silence_confirm,
                 pre_buffer_ms=self._vad_pre_buffer_ms,
+                min_speech_ms=self._vad_min_speech_ms,
             )
 
         stt = self._stt_handles[call_id]
@@ -539,8 +576,29 @@ class VoiceAgent:
         # VAD 切片（frame_ms 决定每帧字节数）
         for frame in audio.split_into_frames(audio_bytes, self._vad_frame_ms, 16000):
             state, frames_to_send = vad.feed(frame)
-            if state in {"speech_start", "speech_end"}:
-                logger.info("[VAD] call_id=%s state=%s", call_id, state)
+            if state == "speech_start":
+                logger.info(
+                    "[VAD] call_id=%s speech_start flush_ms=%d",
+                    call_id,
+                    getattr(vad, "last_flush_ms", 0),
+                )
+            elif state == "speech_end":
+                logger.info(
+                    "[VAD] call_id=%s speech_end segment_ms=%d",
+                    call_id,
+                    getattr(vad, "last_segment_ms", 0),
+                )
+            else:
+                pop_discarded = getattr(vad, "pop_discarded_ms", None)
+                discarded_ms = pop_discarded() if callable(pop_discarded) else None
+                if discarded_ms is not None:
+                    logger.info(
+                        "[VAD] call_id=%s utterance_discarded speech_ms=%d "
+                        "min_speech_ms=%d",
+                        call_id,
+                        discarded_ms,
+                        self._vad_min_speech_ms,
+                    )
             for f in frames_to_send:
                 await stt.send_audio(f)
             if state == "speech_end":
@@ -553,6 +611,12 @@ class VoiceAgent:
         )
         if event.type == "partial" and event.text:
             # 用户开始说话 → barge-in
+            if self._speaking.get(call_id):
+                logger.info(
+                    "[BargeIn] call_id=%s channel=%s source=stt_partial barge_in",
+                    call_id,
+                    self._channels.get(call_id, "freeswitch"),
+                )
             self._interrupt_speaking(call_id)
         elif event.type == "final":
             fut = self._endpoint_waiters.get(call_id)
@@ -590,6 +654,7 @@ class VoiceAgent:
         self._callbacks.pop(call_id, None)
         self._injected_text.pop(call_id, None)
         self._speaking.pop(call_id, None)
+        self._channels.pop(call_id, None)
         self._asr_suppressed_until.pop(call_id, None)
         self._asr_gate_logged.discard(call_id)
         self._barge_in_voice_ms.pop(call_id, None)

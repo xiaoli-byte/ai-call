@@ -114,6 +114,60 @@ def test_rejects_unknown_audio_response_format() -> None:
         )
 
 
+class FakeESL:
+    """模拟既有 ESL 控制连接。"""
+
+    def __init__(self, fail: bool = False) -> None:
+        self.commands: list[str] = []
+        self.fail = fail
+
+    async def api(self, command: str) -> str:
+        self.commands.append(command)
+        if self.fail:
+            raise RuntimeError("-ERR no such channel")
+        return "+OK"
+
+
+@pytest.mark.asyncio
+async def test_esl_file_interrupt_sends_uuid_break() -> None:
+    """FreeSWITCH esl-file 播放通道：on_interrupted 经 ESL 发 uuid_break。"""
+    ws = FakeWebSocket()
+    callbacks = WebSocketCallbacks(
+        ws,
+        "call-1",
+        FakeTasks(),
+        audio_response_format="esl-file",
+    )
+    esl = FakeESL()
+    callbacks._playback_esl = esl  # 复用既有 ESL 控制连接
+    callbacks._playback_buffer.extend(b"\x01" * 64)  # 未落盘的 TTS 残余
+
+    await callbacks.on_interrupted()
+
+    assert esl.commands == ["uuid_break call-1 all"]
+    # 残余播放缓冲应被清空，避免打断后续播旧内容
+    assert len(callbacks._playback_buffer) == 0
+    # 不向 FreeSWITCH 发任何文本帧
+    assert ws.messages == []
+
+
+@pytest.mark.asyncio
+async def test_esl_file_interrupt_failure_only_warns() -> None:
+    """uuid_break 失败（如通道已挂断）仅 warn，不向上抛异常。"""
+    callbacks = WebSocketCallbacks(
+        FakeWebSocket(),
+        "call-1",
+        FakeTasks(),
+        audio_response_format="esl-file",
+    )
+    esl = FakeESL(fail=True)
+    callbacks._playback_esl = esl
+
+    await callbacks.on_interrupted()  # 不应抛异常
+
+    assert esl.commands == ["uuid_break call-1 all"]
+
+
 @pytest.mark.asyncio
 async def test_escalation_forwards_extension() -> None:
     tasks = FakeTasks()

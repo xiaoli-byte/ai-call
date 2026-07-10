@@ -39,7 +39,7 @@
       "type": "object",
       "required": ["type"],
       "properties": {
-        "type": { "enum": ["end", "error"] },
+        "type": { "enum": ["end", "error", "clear_audio"] },
         "reason": { "type": "string" },
         "message": { "type": "string" }
       },

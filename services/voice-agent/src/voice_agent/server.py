@@ -437,6 +437,7 @@ class VoiceAgentServer:
                 flow_version=flow_version,
                 tenant_id=tenant_id,
                 user_id=user_id,
+                channel=channel,
             )
         except asyncio.CancelledError:
             logger.info(
@@ -603,6 +604,39 @@ class WebSocketCallbacks:
                 int((time.monotonic() - self._playback_started_at) * 1000),
                 response,
             )
+
+    async def on_interrupted(self) -> None:
+        """barge-in 打断后清空下游播放队列（agent._interrupt_speaking 触发）。
+
+        - web 通道：向浏览器发 {"type":"clear_audio"} 文本帧，前端清空播放队列
+        - FreeSWITCH esl-file 播放：经既有 ESL 控制连接发 uuid_break 停掉
+          uuid_broadcast 队列；失败仅 warn 不抛
+        - FreeSWITCH raw-pcm 直推：无服务端可清的队列，no-op
+        """
+        if self._web_channel:
+            await self._send_json({"type": "clear_audio"})
+            logger.info(
+                "[Interrupt] callId=%s interrupt_executed clear_audio sent",
+                self._call_id,
+            )
+            return
+        if self._audio_response_format == "esl-file":
+            # 丢弃尚未落盘排队的 TTS 残余，避免打断后又续播旧内容
+            self._playback_buffer.clear()
+            try:
+                if self._playback_esl is None:
+                    self._playback_esl = await _get_shared_esl_client()
+                await self._playback_esl.api(f"uuid_break {self._call_id} all")
+                logger.info(
+                    "[Interrupt] callId=%s interrupt_executed uuid_break ok",
+                    self._call_id,
+                )
+            except Exception as err:
+                logger.warning(
+                    "[Interrupt] callId=%s interrupt_executed uuid_break failed: %s",
+                    self._call_id,
+                    err,
+                )
 
     async def on_node_enter(self, node_id: str, node_name: str) -> None:
         pass
