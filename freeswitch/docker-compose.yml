@@ -12,7 +12,7 @@
 #   - 服务器地址：localhost
 #   - 端口：5060
 #   - 用户名：1000 / 1001（默认配置在 conf/directory/default/）
-#   - 密码：1234
+#   - 密码：由 scripts/dev-outbound.ps1 随机生成，不写入仓库或日志
 #
 # 拨打测试分机 9999：
 #   拨号后 FreeSWITCH 会将 RTP 音频 fork 到 mod_audio_fork 配置的 WebSocket 服务器
@@ -29,12 +29,23 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
-      # 配置文件挂载（完整替换镜像默认配置）
-      # drachtio 镜像配置路径为 /usr/local/freeswitch/conf/
-      - ./conf:/usr/local/freeswitch/conf
+      # 配置文件挂载（完整替换镜像默认配置）。本机真实外呼时，编排器通过
+      # FREESWITCH_VARS_FILE 再覆盖 vars.xml；默认文件只提供不可用的安全占位值。
+      - type: bind
+        source: ./conf
+        target: /usr/local/freeswitch/conf
+        read_only: true
+      - type: bind
+        source: ${FREESWITCH_VARS_FILE:-./conf/vars.xml}
+        target: /usr/local/freeswitch/conf/vars.xml
+        read_only: true
       # 录音与日志
-      - ./recordings:/var/lib/freeswitch/recordings
-      - ./logs:/var/log/freeswitch
+      - type: bind
+        source: ./recordings
+        target: /var/lib/freeswitch/recordings
+      - type: bind
+        source: ./logs
+        target: /var/log/freeswitch
     environment:
       - TZ=Asia/Shanghai
     # ESL 外部访问（用于 NestJS 后端通过 ESL 控制呼叫）
@@ -45,6 +56,9 @@ services:
       - "16384-16394:16384-16394/udp"  # RTP 媒体流端口范围（缩小到10个端口，足够单通话测试）
     # drachtio 镜像二进制路径为 /usr/local/freeswitch/bin/freeswitch
     # 禁用镜像内置 STUN/UPnP，避免覆盖 vars.xml 中的宿主机 SIP/RTP 地址
+    # 覆盖镜像 entrypoint：它的 sed -i 会因只读 conf 挂载失败而重启循环；
+    # 我们的 conf 目录已预配好 listen-ip/acl/端口，不需要 entrypoint 动态修改。
+    entrypoint: []
     command: /usr/local/freeswitch/bin/freeswitch -nf -nc -c -nonat -nonatmap
 
   # FunASR 语音识别服务（开源，本地部署）

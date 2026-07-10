@@ -51,6 +51,7 @@ logger = logging.getLogger(__name__)
 
 # 所有合法的 WebSocket 路径
 _VALID_PATHS = {"/audio-stream", "/asr-stream", "/tts-stream", "/text-test"}
+_HEALTH_PATHS = {"/health", "/health/live", "/health/ready"}
 
 
 def _ws_is_open(ws: Any) -> bool:
@@ -79,13 +80,16 @@ class VoiceAgentServer:
         # 复用 agent 内部的 TaskClient，避免重复创建 httpx 连接池
         self._tasks = tasks or TaskClient()
         self._demo = demo_server
+        self._esl_ready = False
 
     async def start(self) -> None:
         """启动 WebSocket 服务端，永久运行。"""
         try:
             await _get_shared_esl_client()
+            self._esl_ready = True
             logger.info("[ESL] persistent control connection ready")
         except Exception as err:
+            self._esl_ready = False
             logger.warning("[ESL] preconnect failed, will retry on playback: %s", err)
         async with websockets.serve(
             self._handle,
@@ -115,6 +119,8 @@ class VoiceAgentServer:
         """
         path = getattr(request, "path", "") or ""
         pathname = urlparse(path).path if path else path
+        if pathname in _HEALTH_PATHS:
+            return self._health_response(pathname)
         if pathname not in _VALID_PATHS:
             logger.warning("[VoiceAgentServer] rejected connection: path=%s", path)
             return Response(
@@ -134,6 +140,47 @@ class VoiceAgentServer:
                     b"Unauthorized\n",
                 )
         return None  # 放行
+
+    def _health_response(self, pathname: str) -> Response:
+        """Return a secret-free HTTP health response on the WebSocket port."""
+        tts = getattr(self._agent, "_tts", None)
+        tts_name = str(getattr(tts, "name", "unconfigured"))
+        tts_ready = bool(tts) and tts_name.strip().lower() not in {
+            "mock",
+            "mock-tts",
+            "unconfigured",
+        }
+        real_call_mode = os.getenv(
+            "OUTBOUND_REAL_CALL_MODE", "false"
+        ).strip().lower() in {"1", "true", "yes", "on"}
+        ready = self._esl_ready and (tts_ready or not real_call_mode)
+        live_only = pathname == "/health/live"
+        status = 200 if live_only or ready else 503
+        payload = json.dumps(
+            {
+                "status": "ok" if ready else "degraded",
+                "live": True,
+                "ready": ready,
+                "esl_ready": self._esl_ready,
+                "tts_provider": tts_name,
+                "tts_ready": tts_ready,
+                "real_call_mode": real_call_mode,
+            },
+            ensure_ascii=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return Response(
+            status,
+            "OK" if status == 200 else "Service Unavailable",
+            Headers(
+                [
+                    ("Content-Type", "application/json"),
+                    ("Cache-Control", "no-store"),
+                    ("Content-Length", str(len(payload))),
+                ]
+            ),
+            payload,
+        )
 
     async def _handle(self, ws: Any) -> None:
         """处理单个 WebSocket 连接 — 按 path 路由分发。"""

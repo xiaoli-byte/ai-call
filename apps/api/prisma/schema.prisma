@@ -270,27 +270,33 @@ model OutboundTask {
 }
 
 model CallAttempt {
-  id             String                  @id @default(uuid()) @db.Uuid
-  taskId         String                  @map("task_id") @db.Uuid
-  task           OutboundTask            @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  attemptNo      Int                     @map("attempt_no")
-  providerCallId String?                 @unique @map("provider_call_id")
-  status         String                  @default("calling")
-  startedAt      DateTime                @default(now()) @map("started_at")
-  ringingAt      DateTime?               @map("ringing_at")
-  answeredAt     DateTime?               @map("answered_at")
-  endedAt        DateTime?               @map("ended_at")
-  duration       Int?
-  hangupCause    String?                 @map("hangup_cause")
-  recordingUrl   String?                 @map("recording_url")
-  transcripts    TranscriptTurn[]
-  events         CallEvent[]
-  analysis       CallAnalysis?
-  handoffTickets HandoffTicket[]
-  contactHistory ContactAttemptHistory[]
-  createdAt      DateTime                @default(now()) @map("created_at")
-  updatedAt      DateTime                @updatedAt @map("updated_at")
-  tenantId       String                  @default("tenant_demo") @map("tenant_id")
+  id                           String                  @id @default(uuid()) @db.Uuid
+  taskId                       String                  @map("task_id") @db.Uuid
+  task                         OutboundTask            @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  attemptNo                    Int                     @map("attempt_no")
+  channel                      String                  @default("freeswitch")
+  providerCallId               String?                 @unique @map("provider_call_id")
+  providerJobId                String?                 @unique @map("provider_job_id")
+  status                       String                  @default("calling")
+  startedAt                    DateTime                @default(now()) @map("started_at")
+  ringingAt                    DateTime?               @map("ringing_at")
+  answeredAt                   DateTime?               @map("answered_at")
+  endedAt                      DateTime?               @map("ended_at")
+  duration                     Int?
+  hangupCause                  String?                 @map("hangup_cause")
+  recordingUrl                 String?                 @map("recording_url")
+  lastProviderEventAt          DateTime?               @map("last_provider_event_at")
+  lastProviderSnapshotId       String?                 @map("last_provider_snapshot_id")
+  lastProviderSnapshotAt       DateTime?               @map("last_provider_snapshot_at")
+  missingProviderSnapshotCount Int                     @default(0) @map("missing_provider_snapshot_count")
+  transcripts                  TranscriptTurn[]
+  events                       CallEvent[]
+  analysis                     CallAnalysis?
+  handoffTickets               HandoffTicket[]
+  contactHistory               ContactAttemptHistory[]
+  createdAt                    DateTime                @default(now()) @map("created_at")
+  updatedAt                    DateTime                @updatedAt @map("updated_at")
+  tenantId                     String                  @default("tenant_demo") @map("tenant_id")
 
   @@unique([taskId, attemptNo])
   @@index([taskId, createdAt])
@@ -436,16 +442,19 @@ model TranscriptTurn {
 }
 
 model CallEvent {
-  id        String       @id @default(uuid()) @db.Uuid
-  taskId    String       @map("task_id") @db.Uuid
-  task      OutboundTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  attemptId String?      @map("attempt_id") @db.Uuid
-  attempt   CallAttempt? @relation(fields: [attemptId], references: [id], onDelete: SetNull)
-  type      String
-  payload   Json         @default("{}")
-  createdAt DateTime     @default(now()) @map("created_at")
-  tenantId  String       @default("tenant_demo") @map("tenant_id")
+  id              String       @id @default(uuid()) @db.Uuid
+  taskId          String       @map("task_id") @db.Uuid
+  task            OutboundTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  attemptId       String?      @map("attempt_id") @db.Uuid
+  attempt         CallAttempt? @relation(fields: [attemptId], references: [id], onDelete: SetNull)
+  type            String
+  provider        String?
+  providerEventId String?      @map("provider_event_id")
+  payload         Json         @default("{}")
+  createdAt       DateTime     @default(now()) @map("created_at")
+  tenantId        String       @default("tenant_demo") @map("tenant_id")
 
+  @@unique([provider, providerEventId])
   @@index([taskId, createdAt])
   @@index([attemptId, createdAt])
   @@index([tenantId])

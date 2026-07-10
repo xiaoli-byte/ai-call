@@ -41,6 +41,12 @@ describe('OutboxWorker', () => {
     const calls: Call[] = [];
     const prisma = {
       $transaction: async (operations: unknown[]) => Promise.all(operations as Promise<unknown>[]),
+      outboxEvent: {
+        update: async (args: unknown) => {
+          calls.push(['outboxEvent.update', args]);
+          return args;
+        },
+      },
       callAttempt: {
         update: async (args: unknown) => {
           calls.push(['callAttempt.update', args]);
@@ -55,8 +61,13 @@ describe('OutboxWorker', () => {
       },
     };
     const freeswitch = {
-      originate: async (to: string, attemptId: string) => {
-        calls.push(['freeswitch.originate', to, attemptId]);
+      originate: async (to: string, attemptId: string, taskId: string) => {
+        calls.push(['freeswitch.originate', to, attemptId + ':' + taskId]);
+        return {
+          accepted: true as const,
+          jobId: 'job-1',
+          replyText: '+OK Job-UUID: job-1',
+        };
       },
     };
 
@@ -75,14 +86,20 @@ describe('OutboxWorker', () => {
       },
     });
 
-    assert.deepEqual(calls[0], ['freeswitch.originate', '+1001', 'attempt-1']);
+    assert.deepEqual(calls[0], ['freeswitch.originate', '+1001', 'attempt-1:task-1']);
     assert.deepEqual(calls[1], ['callAttempt.update', {
       where: { id: 'attempt-1' },
-      data: { status: TaskStatus.CALLING, ringingAt: calls[1][1].data.ringingAt },
+      data: { providerJobId: 'job-1' },
     }]);
     assert.equal(calls[2][0], 'callEvent.create');
     assert.equal(calls[2][1].data.type, 'call.dispatch_accepted');
-    assert.deepEqual(calls[2][1].data.payload, {});
+    assert.deepEqual(calls[2][1].data.payload, {
+      channel: 'freeswitch',
+      provider: 'freeswitch',
+      providerJobId: 'job-1',
+    });
+    assert.equal(calls[3][0], 'outboxEvent.update');
+    assert.equal(calls[3][1].data.status, 'processed');
   });
 
   it('records processed batch metrics and backlog snapshots', async () => {
@@ -117,7 +134,11 @@ describe('OutboxWorker', () => {
       },
     };
     const freeswitch = {
-      originate: async () => '+OK',
+      originate: async () => ({
+        accepted: true as const,
+        jobId: 'job-1',
+        replyText: '+OK Job-UUID: job-1',
+      }),
     };
 
     const worker = new OutboxWorker(prisma as never, freeswitch as never, {} as never, metrics);

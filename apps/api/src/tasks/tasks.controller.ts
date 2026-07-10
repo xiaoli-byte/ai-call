@@ -28,6 +28,7 @@ import {
 } from './dto/task-events.dto.js';
 import { ListTasksDto } from './dto/list-tasks.dto.js';
 import { ProviderCallEventDto } from './dto/provider-call-event.dto.js';
+import { ProviderActiveSnapshotDto } from './dto/provider-active-snapshot.dto.js';
 import { DispatchTaskDto } from './dto/dispatch-task.dto.js';
 
 /**
@@ -76,6 +77,15 @@ export class TasksController {
   @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
   recordProviderCallEvent(@Body() body: ProviderCallEventDto) {
     return this.tasksService.recordProviderCallEvent(body);
+  }
+
+  /** Event worker reconciles active provider channels after an ESL event gap. */
+  @Post('provider-active-snapshots')
+  @Public()
+  @UseGuards(ServiceAuthGuard)
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  recordProviderActiveSnapshot(@Body() body: ProviderActiveSnapshotDto) {
+    return this.tasksService.recordProviderActiveSnapshot(body);
   }
 
   /** 获取任务详情 */

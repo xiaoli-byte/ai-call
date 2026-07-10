@@ -34,6 +34,7 @@ import { ScenariosService } from '../scenarios/scenarios.service.js';
 import { GlobalConfigService } from '../global-config/global-config.service.js';
 import { callEventPayload, outboxPayload, toPrismaJson } from './task-payloads.js';
 import type { ProviderCallEventDto } from './dto/provider-call-event.dto.js';
+import type { ProviderActiveSnapshotDto } from './dto/provider-active-snapshot.dto.js';
 import {
   hasViewPerm,
   isTaskAclBypass,
@@ -47,6 +48,42 @@ type ResolvedContext = {
   taskId: string;
   attemptId?: string;
   providerCallId?: string;
+  providerJobId?: string;
+  channel?: string;
+};
+
+type ProviderAttemptContext = {
+  id: string;
+  taskId: string;
+  attemptNo: number;
+  channel: string;
+  providerCallId: string | null;
+  providerJobId: string | null;
+  status: string;
+  startedAt: Date;
+  ringingAt: Date | null;
+  answeredAt: Date | null;
+  endedAt: Date | null;
+  duration: number | null;
+  hangupCause: string | null;
+  recordingUrl: string | null;
+  lastProviderEventAt: Date | null;
+  lastProviderSnapshotId: string | null;
+  lastProviderSnapshotAt: Date | null;
+  missingProviderSnapshotCount: number;
+};
+
+type ResolvedProviderEventContext = {
+  taskId: string;
+  attempt: ProviderAttemptContext;
+};
+
+export type ProviderActiveSnapshotResult = {
+  accepted: true;
+  scanned: number;
+  active: number;
+  missing: number;
+  reconciled: number;
 };
 
 export type DispatchChannel = 'freeswitch' | 'web';
@@ -92,8 +129,34 @@ const NO_ANSWER_HANGUP_CAUSES = new Set([
   'CALL_REJECTED',
   'ORIGINATOR_CANCEL',
   'SUBSCRIBER_ABSENT',
-  'UNALLOCATED_NUMBER',
+  'NORMAL_CLEARING',
 ]);
+
+const FAILED_HANGUP_CAUSES = new Set([
+  'USER_NOT_REGISTERED',
+  'NO_ROUTE',
+  'NO_ROUTE_DESTINATION',
+  'UNALLOCATED_NUMBER',
+  'INVALID_NUMBER_FORMAT',
+  'DESTINATION_OUT_OF_ORDER',
+  'NETWORK_OUT_OF_ORDER',
+  'NORMAL_TEMPORARY_FAILURE',
+  'SWITCH_CONGESTION',
+  'REQUESTED_CHAN_UNAVAIL',
+  'RECOVERY_ON_TIMER_EXPIRE',
+  'BEARERCAPABILITY_NOTAVAIL',
+  'INCOMPATIBLE_DESTINATION',
+  'PROTOCOL_ERROR',
+  'MEDIA_ERROR',
+  'MEDIA_TIMEOUT',
+  'AUDIO_FORK_ERROR',
+  'BACKGROUND_JOB_FAILED',
+  'EVENT_LOSS_RECONCILED',
+]);
+
+const PROVIDER_EVENT_TRANSACTION_RETRIES = 3;
+const DEFAULT_PROVIDER_SNAPSHOT_GRACE_MS = 60_000;
+const EVENT_LOSS_RECONCILED = 'EVENT_LOSS_RECONCILED';
 
 const PRIORITY_WEIGHT: Record<TaskPriority, number> = {
   [TaskPriority.HIGH]: 3,
@@ -324,14 +387,14 @@ export class TasksService {
   }
 
   async recordProviderCallEvent(event: ProviderCallEventDto): Promise<OutboundTask> {
-    const context = await this.resolveProviderEventContext(event);
+    const provider = normalizeProvider(event.provider);
+    const providerEventId = cleanString(event.providerEventId);
     const eventType = normalizeProviderEventType(event.eventType);
     const occurredAt = parseProviderDate(event.occurredAt) ?? new Date();
-    const providerCallId = cleanString(event.providerCallId)
-      ?? context.providerCallId
-      ?? rawString(event.raw, ['Unique-ID', 'Channel-Call-UUID', 'variable_uuid']);
-    const hangupCause = cleanString(event.hangupCause)
-      ?? rawString(event.raw, ['Hangup-Cause', 'variable_hangup_cause', 'hangup_cause']);
+    const reportedHangupCause = normalizeHangupCause(
+      cleanString(event.hangupCause)
+        ?? rawString(event.raw, ['Hangup-Cause', 'variable_hangup_cause', 'hangup_cause']),
+    );
     const recordingPath = cleanString(event.recordingPath)
       ?? rawString(event.raw, [
         'Record-File-Path',
@@ -341,110 +404,336 @@ export class TasksService {
       ]);
     const recordingUrl = cleanString(event.recordingUrl)
       ?? (recordingPath ? this.buildRecordingUrl(recordingPath) : undefined);
+    let resolvedTaskId: string | undefined;
 
-    await this.prisma.$transaction(async (tx) => {
-      const currentTask = await tx.outboundTask.findUnique({
-        where: { id: context.taskId },
-        select: {
-          status: true,
-          calledAt: true,
-          endedAt: true,
-          to: true,
-          campaignId: true,
-          campaignLeadId: true,
-          outcome: true,
-        },
-      });
-      if (!currentTask) throw new NotFoundException(`Task ${context.taskId} not found`);
-      const currentAttempt = context.attemptId
-        ? await tx.callAttempt.findUniqueOrThrow({ where: { id: context.attemptId } })
-        : undefined;
-      const taskUpdate: Record<string, unknown> = {};
-      const attemptUpdate: Record<string, unknown> = {};
-      const taskStatus = currentTask.status as TaskStatus;
-      const attemptStatus = currentAttempt?.status as TaskStatus | undefined;
+    try {
+      resolvedTaskId = await this.runSerializableTransaction(async (tx) => {
+        const context = await this.resolveProviderEventContext(event, tx);
+        resolvedTaskId = context.taskId;
 
-      if (isAnswerProviderEvent(eventType)) {
-        if (!TERMINAL_STATUSES.has(taskStatus)) {
-          taskUpdate.status = TaskStatus.IN_CALL;
-          taskUpdate.calledAt = currentTask.calledAt ?? occurredAt;
+        if (providerEventId) {
+          const duplicate = await tx.callEvent.findUnique({
+            where: { provider_providerEventId: { provider, providerEventId } },
+            select: { taskId: true, attemptId: true },
+          });
+          if (duplicate) {
+            assertProviderEventIdentity(duplicate, context);
+            return context.taskId;
+          }
         }
-        if (currentAttempt && !TERMINAL_STATUSES.has(attemptStatus ?? TaskStatus.CALLING)) {
+
+        const currentAttempt = context.attempt;
+        const currentTask = await tx.outboundTask.findUnique({
+          where: { id: context.taskId },
+          select: {
+            status: true,
+            calledAt: true,
+            endedAt: true,
+            to: true,
+            campaignId: true,
+            campaignLeadId: true,
+            outcome: true,
+            attemptCount: true,
+          },
+        });
+        if (!currentTask) throw new NotFoundException(`Task ${context.taskId} not found`);
+
+        const taskUpdate: Record<string, unknown> = {};
+        const attemptUpdate: Record<string, unknown> = {};
+        const taskStatus = currentTask.status as TaskStatus;
+        const attemptStatus = currentAttempt.status as TaskStatus;
+        const isLatestAttempt = currentTask.attemptCount === currentAttempt.attemptNo;
+        let effectiveHangupCause = reportedHangupCause;
+        let terminalHistoryStatus: TaskStatus | undefined;
+
+        const lastProviderEventAt = parseProviderDate(currentAttempt.lastProviderEventAt);
+        if (!lastProviderEventAt || occurredAt > lastProviderEventAt) {
+          attemptUpdate.lastProviderEventAt = occurredAt;
+        }
+        const lastSnapshotAt = parseProviderDate(currentAttempt.lastProviderSnapshotAt);
+        if (
+          currentAttempt.missingProviderSnapshotCount > 0 &&
+          (!lastSnapshotAt || occurredAt >= lastSnapshotAt)
+        ) {
+          attemptUpdate.missingProviderSnapshotCount = 0;
+        }
+
+        if (isProgressProviderEvent(eventType)) {
+          const ringingAt = parseProviderDate(currentAttempt.ringingAt);
+          if (!ringingAt || occurredAt < ringingAt) {
+            attemptUpdate.ringingAt = occurredAt;
+          }
+        }
+
+        if (isAnswerProviderEvent(eventType) && !TERMINAL_STATUSES.has(attemptStatus)) {
+          const answeredAt = parseProviderDate(currentAttempt.answeredAt);
           attemptUpdate.status = TaskStatus.IN_CALL;
-          attemptUpdate.answeredAt = currentAttempt.answeredAt ?? occurredAt;
+          if (!answeredAt || occurredAt < answeredAt) {
+            attemptUpdate.answeredAt = occurredAt;
+          }
+          if (isLatestAttempt && !TERMINAL_STATUSES.has(taskStatus)) {
+            const calledAt = parseProviderDate(currentTask.calledAt);
+            taskUpdate.status = TaskStatus.IN_CALL;
+            if (!calledAt || occurredAt < calledAt) taskUpdate.calledAt = occurredAt;
+          }
         }
-      }
 
-      if (isHangupProviderEvent(eventType)) {
-        const nextStatus = TERMINAL_STATUSES.has(taskStatus)
-          ? taskStatus
-          : deriveTerminalStatus(hangupCause, currentTask, currentAttempt);
-        taskUpdate.status = nextStatus;
-        taskUpdate.endedAt = currentTask.endedAt ?? occurredAt;
-        taskUpdate.duration = durationSeconds(currentTask.calledAt, occurredAt);
-
-        if (currentAttempt) {
-          const nextAttemptStatus = TERMINAL_STATUSES.has(attemptStatus ?? TaskStatus.CALLING)
-            ? attemptStatus
-            : nextStatus;
-          attemptUpdate.status = nextAttemptStatus;
+        const backgroundFailure = eventType === 'BACKGROUND_JOB'
+          ? backgroundJobFailureCause(event.backgroundJobResult)
+          : undefined;
+        if (backgroundFailure && !TERMINAL_STATUSES.has(attemptStatus)) {
+          effectiveHangupCause = isFatalHangupCause(reportedHangupCause)
+            ? reportedHangupCause
+            : backgroundFailure;
+          terminalHistoryStatus = TaskStatus.FAILED;
+          attemptUpdate.status = TaskStatus.FAILED;
           attemptUpdate.endedAt = currentAttempt.endedAt ?? occurredAt;
           attemptUpdate.duration = durationSeconds(currentAttempt.answeredAt, occurredAt);
-          if (hangupCause) attemptUpdate.hangupCause = hangupCause;
+          attemptUpdate.hangupCause = effectiveHangupCause;
+          if (isLatestAttempt && !TERMINAL_STATUSES.has(taskStatus)) {
+            taskUpdate.status = TaskStatus.FAILED;
+            taskUpdate.endedAt = currentTask.endedAt ?? occurredAt;
+            taskUpdate.duration = durationSeconds(currentTask.calledAt, occurredAt);
+          }
+        }
+
+        if (isTerminalHangupProviderEvent(eventType) && !TERMINAL_STATUSES.has(attemptStatus)) {
+          const existingFatalCause = isFatalHangupCause(currentAttempt.hangupCause)
+            ? normalizeHangupCause(currentAttempt.hangupCause)
+            : undefined;
+          effectiveHangupCause = existingFatalCause ?? reportedHangupCause;
+          const nextStatus = deriveTerminalStatus(
+            effectiveHangupCause,
+            Boolean(currentAttempt.answeredAt || (isLatestAttempt && currentTask.calledAt)),
+          );
+          terminalHistoryStatus = nextStatus;
+          attemptUpdate.status = nextStatus;
+          attemptUpdate.endedAt = currentAttempt.endedAt ?? occurredAt;
+          attemptUpdate.duration = durationSeconds(currentAttempt.answeredAt, occurredAt);
+          if (effectiveHangupCause) attemptUpdate.hangupCause = effectiveHangupCause;
+          if (isLatestAttempt && !TERMINAL_STATUSES.has(taskStatus)) {
+            taskUpdate.status = nextStatus;
+            taskUpdate.endedAt = currentTask.endedAt ?? occurredAt;
+            taskUpdate.duration = durationSeconds(currentTask.calledAt, occurredAt);
+          }
+        }
+
+        if (isRecordingProviderEvent(eventType) && recordingUrl) {
+          if (currentAttempt.recordingUrl !== recordingUrl) attemptUpdate.recordingUrl = recordingUrl;
+          if (isLatestAttempt) taskUpdate.recordingUrl = recordingUrl;
+        }
+
+        if (Object.keys(taskUpdate).length > 0) {
+          await tx.outboundTask.update({
+            where: { id: context.taskId },
+            data: taskUpdate,
+          });
+        }
+        if (Object.keys(attemptUpdate).length > 0) {
+          await tx.callAttempt.update({
+            where: { id: currentAttempt.id },
+            data: attemptUpdate,
+          });
+        }
+        await tx.callEvent.create({
+          data: {
+            taskId: context.taskId,
+            attemptId: currentAttempt.id,
+            type: 'call.provider_event',
+            provider,
+            providerEventId,
+            payload: callEventPayload('call.provider_event', {
+              provider,
+              providerEventId,
+              eventType,
+              taskId: context.taskId,
+              attemptId: currentAttempt.id,
+              providerCallId: cleanString(event.providerCallId)
+                ?? currentAttempt.providerCallId
+                ?? rawString(event.raw, ['Unique-ID', 'Channel-Call-UUID', 'variable_uuid']),
+              jobId: cleanString(event.jobId) ?? currentAttempt.providerJobId ?? undefined,
+              backgroundJobResult: cleanString(event.backgroundJobResult),
+              occurredAt: occurredAt.toISOString(),
+              hangupCause: effectiveHangupCause,
+              recordingPath,
+              recordingUrl,
+              raw: event.raw,
+            }),
+          },
+        });
+        if (terminalHistoryStatus) {
+          await recordContactAttemptHistory(tx, {
+            phoneNumber: currentTask.to,
+            phoneHash: hashPhone(currentTask.to),
+            campaignId: currentTask.campaignId,
+            campaignLeadId: currentTask.campaignLeadId,
+            taskId: context.taskId,
+            attemptId: currentAttempt.id,
+            status: terminalHistoryStatus,
+            outcome: effectiveHangupCause ?? currentTask.outcome,
+            attemptedAt: occurredAt,
+          });
+        }
+        return context.taskId;
+      });
+    } catch (error) {
+      if (providerEventId && isProviderEventUniqueViolation(error)) {
+        const context = await this.resolveProviderEventContext(event, this.prisma);
+        const duplicate = await this.prisma.callEvent.findUnique({
+          where: { provider_providerEventId: { provider, providerEventId } },
+          select: { taskId: true, attemptId: true },
+        });
+        if (duplicate) {
+          assertProviderEventIdentity(duplicate, context);
+          return this.get(context.taskId);
         }
       }
+      throw error;
+    }
 
-      if (isRecordingProviderEvent(eventType) && recordingUrl) {
-        taskUpdate.recordingUrl = recordingUrl;
-        if (currentAttempt) attemptUpdate.recordingUrl = recordingUrl;
-      }
+    if (!resolvedTaskId) throw new Error('Provider event transaction completed without a task');
+    return this.get(resolvedTaskId);
+  }
 
-      if (Object.keys(taskUpdate).length > 0) {
-        await tx.outboundTask.update({
-          where: { id: context.taskId },
-          data: taskUpdate,
-        });
-      }
-      if (context.attemptId && Object.keys(attemptUpdate).length > 0) {
-        await tx.callAttempt.update({
-          where: { id: context.attemptId },
-          data: attemptUpdate,
-        });
-      }
-      await tx.callEvent.create({
-        data: {
-          taskId: context.taskId,
-          attemptId: context.attemptId,
-          type: 'call.provider_event',
-          payload: callEventPayload('call.provider_event', {
-            provider: cleanString(event.provider) ?? 'freeswitch',
-            eventType,
-            taskId: context.taskId,
-            attemptId: context.attemptId,
-            providerCallId,
-            occurredAt: occurredAt.toISOString(),
-            hangupCause,
-            recordingPath,
-            recordingUrl,
-            raw: event.raw,
-          }),
+  async recordProviderActiveSnapshot(
+    snapshot: ProviderActiveSnapshotDto,
+  ): Promise<ProviderActiveSnapshotResult> {
+    const provider = normalizeProvider(snapshot.provider);
+    const snapshotId = snapshot.snapshotId.trim();
+    const observedAt = parseProviderDate(snapshot.observedAt);
+    if (!observedAt) throw new BadRequestException('Provider snapshot observedAt is invalid');
+    const activeChannelIds = new Set(snapshot.activeChannelIds.map((id) => id.toLowerCase()));
+    const graceMs = providerSnapshotGraceMs();
+
+    return this.runSerializableTransaction(async (tx) => {
+      const attempts = await tx.callAttempt.findMany({
+        where: {
+          channel: provider,
+          status: { in: [TaskStatus.CALLING, TaskStatus.IN_CALL] },
+        },
+        orderBy: { id: 'asc' },
+        select: {
+          id: true,
+          taskId: true,
+          attemptNo: true,
+          providerCallId: true,
+          status: true,
+          startedAt: true,
+          answeredAt: true,
+          endedAt: true,
+          lastProviderSnapshotId: true,
+          lastProviderSnapshotAt: true,
+          missingProviderSnapshotCount: true,
+          task: {
+            select: {
+              status: true,
+              calledAt: true,
+              endedAt: true,
+              to: true,
+              campaignId: true,
+              campaignLeadId: true,
+              outcome: true,
+              attemptCount: true,
+            },
+          },
         },
       });
-      if (isHangupProviderEvent(eventType)) {
-        await recordContactAttemptHistory(tx, {
-          phoneNumber: currentTask.to,
-          phoneHash: hashPhone(currentTask.to),
-          campaignId: currentTask.campaignId,
-          campaignLeadId: currentTask.campaignLeadId,
-          taskId: context.taskId,
-          attemptId: context.attemptId,
-          status: String(taskUpdate.status ?? currentTask.status),
-          outcome: hangupCause ?? currentTask.outcome,
-          attemptedAt: occurredAt,
+
+      const result: ProviderActiveSnapshotResult = {
+        accepted: true,
+        scanned: attempts.length,
+        active: 0,
+        missing: 0,
+        reconciled: 0,
+      };
+
+      for (const attempt of attempts) {
+        const lastSnapshotAt = parseProviderDate(attempt.lastProviderSnapshotAt);
+        if (
+          attempt.lastProviderSnapshotId === snapshotId ||
+          (lastSnapshotAt && observedAt <= lastSnapshotAt)
+        ) {
+          continue;
+        }
+
+        const snapshotUpdate: Record<string, unknown> = {
+          lastProviderSnapshotId: snapshotId,
+          lastProviderSnapshotAt: observedAt,
+        };
+        const channelId = (attempt.providerCallId ?? attempt.id).toLowerCase();
+        if (activeChannelIds.has(channelId)) {
+          result.active += 1;
+          snapshotUpdate.missingProviderSnapshotCount = 0;
+          await tx.callAttempt.update({ where: { id: attempt.id }, data: snapshotUpdate });
+          continue;
+        }
+
+        const startedAt = parseProviderDate(attempt.startedAt) ?? observedAt;
+        if (observedAt.getTime() - startedAt.getTime() < graceMs) {
+          snapshotUpdate.missingProviderSnapshotCount = 0;
+          await tx.callAttempt.update({ where: { id: attempt.id }, data: snapshotUpdate });
+          continue;
+        }
+
+        result.missing += 1;
+        const missingCount = attempt.missingProviderSnapshotCount + 1;
+        snapshotUpdate.missingProviderSnapshotCount = missingCount;
+        if (missingCount < 2) {
+          await tx.callAttempt.update({ where: { id: attempt.id }, data: snapshotUpdate });
+          continue;
+        }
+
+        const terminalStatus = attempt.answeredAt
+          ? TaskStatus.COMPLETED
+          : TaskStatus.FAILED;
+        Object.assign(snapshotUpdate, {
+          status: terminalStatus,
+          endedAt: attempt.endedAt ?? observedAt,
+          duration: durationSeconds(attempt.answeredAt, observedAt),
+          hangupCause: EVENT_LOSS_RECONCILED,
         });
+        await tx.callAttempt.update({ where: { id: attempt.id }, data: snapshotUpdate });
+
+        const taskStatus = attempt.task.status as TaskStatus;
+        const isLatestAttempt = attempt.task.attemptCount === attempt.attemptNo;
+        if (isLatestAttempt && !TERMINAL_STATUSES.has(taskStatus)) {
+          await tx.outboundTask.update({
+            where: { id: attempt.taskId },
+            data: {
+              status: terminalStatus,
+              endedAt: attempt.task.endedAt ?? observedAt,
+              duration: durationSeconds(attempt.task.calledAt, observedAt),
+            },
+          });
+        }
+        await tx.callEvent.create({
+          data: {
+            taskId: attempt.taskId,
+            attemptId: attempt.id,
+            type: 'call.event_loss_reconciled',
+            payload: callEventPayload('call.event_loss_reconciled', {
+              snapshotId,
+              status: terminalStatus,
+              reason: EVENT_LOSS_RECONCILED,
+            }),
+          },
+        });
+        await recordContactAttemptHistory(tx, {
+          phoneNumber: attempt.task.to,
+          phoneHash: hashPhone(attempt.task.to),
+          campaignId: attempt.task.campaignId,
+          campaignLeadId: attempt.task.campaignLeadId,
+          taskId: attempt.taskId,
+          attemptId: attempt.id,
+          status: terminalStatus,
+          outcome: EVENT_LOSS_RECONCILED,
+          attemptedAt: observedAt,
+        });
+        result.reconciled += 1;
       }
+
+      return result;
     });
-    return this.get(context.taskId);
   }
 
   async appendTranscript(
@@ -509,20 +798,56 @@ export class TasksService {
   ): Promise<OutboundTask> {
     const context = await this.resolveContext(id, true);
     const current = await this.get(context.taskId);
+    if (TERMINAL_STATUSES.has(current.status)) return current;
     const now = new Date();
     const duration = current.calledAt
       ? Math.max(0, Math.floor((now.getTime() - Date.parse(current.calledAt)) / 1000))
       : undefined;
     const channelId = context.providerCallId ?? context.attemptId;
-    let hangupError: string | undefined;
-    if (channelId) {
+    if (!context.attemptId || !channelId) {
+      throw new ConflictException(`Task ${context.taskId} has no call attempt to hang up`);
+    }
+
+    if (context.channel !== 'web') {
+      await this.prisma.$transaction(async (tx) => {
+        await tx.outboundTask.update({
+          where: { id: context.taskId },
+          data: { outcome: body.outcome, intentTags: body.tags },
+        });
+        await tx.callEvent.create({
+          data: {
+            taskId: context.taskId,
+            attemptId: context.attemptId,
+            type: 'call.hangup_requested',
+            payload: callEventPayload('call.hangup_requested', {
+              channelId,
+              outcome: body.outcome,
+              tags: body.tags,
+            }),
+          },
+        });
+      });
+
       try {
         await this.freeswitch.hangup(channelId);
       } catch (err) {
-        hangupError = (err as Error).message.slice(0, 1000);
+        const hangupError = safeErrorMessage(err);
         this.logger.warn(`hangup call control failed channel=${channelId}: ${hangupError}`);
+        await this.prisma.callEvent.create({
+          data: {
+            taskId: context.taskId,
+            attemptId: context.attemptId,
+            type: 'call.hangup_request_failed',
+            payload: callEventPayload('call.hangup_request_failed', {
+              channelId,
+              error: hangupError,
+            }),
+          },
+        });
       }
+      return this.get(context.taskId);
     }
+
     await this.prisma.$transaction(async (tx) => {
       await tx.outboundTask.update({
         where: { id: context.taskId },
@@ -556,7 +881,6 @@ export class TasksService {
             outcome: body.outcome,
             duration,
             channelId,
-            hangupError,
           }),
         },
       });
@@ -601,6 +925,7 @@ export class TasksService {
           id: attemptId,
           taskId: id,
           attemptNo: updated.attemptCount,
+          channel,
           providerCallId: attemptId,
           status: TaskStatus.CALLING,
           ...(channel === 'web' ? { ringingAt: now } : {}),
@@ -836,18 +1161,82 @@ export class TasksService {
     return await this.scenarios.resolveConfig(dto.scenario);
   }
 
-  private async resolveProviderEventContext(event: ProviderCallEventDto): Promise<ResolvedContext> {
-    const providerIdentifier = cleanString(event.providerCallId) ?? cleanString(event.attemptId);
-    if (providerIdentifier) {
+  private async resolveProviderEventContext(
+    event: ProviderCallEventDto,
+    client: { callAttempt: Prisma.TransactionClient['callAttempt'] },
+  ): Promise<ResolvedProviderEventContext> {
+    const identifiers = [
+      ['attemptId', cleanString(event.attemptId)],
+      ['providerCallId', cleanString(event.providerCallId)],
+      ['providerJobId', cleanString(event.jobId)],
+    ] as const;
+    const supplied = identifiers.filter((entry): entry is readonly [typeof entry[0], string] => Boolean(entry[1]));
+    if (supplied.length === 0) {
+      throw new BadRequestException(
+        'Provider call event requires attemptId, providerCallId, or jobId; taskId alone is not sufficient',
+      );
+    }
+
+    const matches: ProviderAttemptContext[] = [];
+    for (const [field, value] of supplied) {
+      const where: Prisma.CallAttemptWhereUniqueInput = field === 'attemptId'
+        ? { id: value }
+        : field === 'providerCallId'
+          ? { providerCallId: value }
+          : { providerJobId: value };
+      const attempt = await client.callAttempt.findUnique({
+        where,
+        select: {
+          id: true,
+          taskId: true,
+          attemptNo: true,
+          channel: true,
+          providerCallId: true,
+          providerJobId: true,
+          status: true,
+          startedAt: true,
+          ringingAt: true,
+          answeredAt: true,
+          endedAt: true,
+          duration: true,
+          hangupCause: true,
+          recordingUrl: true,
+          lastProviderEventAt: true,
+          lastProviderSnapshotId: true,
+          lastProviderSnapshotAt: true,
+          missingProviderSnapshotCount: true,
+        },
+      });
+      if (!attempt) {
+        throw new NotFoundException(`CallAttempt not found for ${field}`);
+      }
+      matches.push(attempt as ProviderAttemptContext);
+    }
+
+    const attempt = matches[0];
+    if (matches.some((match) => match.id !== attempt.id || match.taskId !== attempt.taskId)) {
+      throw new ConflictException('Provider call event identifiers refer to different attempts');
+    }
+    const taskId = cleanString(event.taskId);
+    if (taskId && taskId !== attempt.taskId) {
+      throw new ConflictException('Provider call event taskId does not match the resolved attempt');
+    }
+    return { taskId: attempt.taskId, attempt };
+  }
+
+  private async runSerializableTransaction<T>(
+    operation: (tx: Prisma.TransactionClient) => Promise<T>,
+  ): Promise<T> {
+    for (let attempt = 1; attempt <= PROVIDER_EVENT_TRANSACTION_RETRIES; attempt += 1) {
       try {
-        const context = await this.resolveContext(providerIdentifier);
-        if (!event.taskId || context.taskId === event.taskId) return context;
-      } catch (err) {
-        if (!event.taskId) throw err;
+        return await this.prisma.$transaction(operation, { isolationLevel: 'Serializable' });
+      } catch (error) {
+        if (!isPrismaWriteConflict(error) || attempt === PROVIDER_EVENT_TRANSACTION_RETRIES) {
+          throw error;
+        }
       }
     }
-    if (event.taskId) return this.resolveContext(event.taskId, true);
-    throw new BadRequestException('Provider call event requires taskId, attemptId, or providerCallId');
+    throw new Error('Serializable transaction retry limit exhausted');
   }
 
   private buildRecordingUrl(recordingPath: string): string {
@@ -888,25 +1277,40 @@ export class TasksService {
         const attempt = await this.prisma.callAttempt.findFirst({
           where: { taskId: id },
           orderBy: { attemptNo: 'desc' },
-          select: { id: true, providerCallId: true },
+          select: {
+            id: true,
+            providerCallId: true,
+            providerJobId: true,
+            channel: true,
+          },
         });
         return {
           taskId: id,
           attemptId: attempt?.id,
           providerCallId: attempt?.providerCallId ?? undefined,
+          providerJobId: attempt?.providerJobId ?? undefined,
+          channel: attempt?.channel,
         };
       }
       return { taskId: id };
     }
     const attempt = await this.prisma.callAttempt.findFirst({
       where: { OR: [{ id }, { providerCallId: id }] },
-      select: { id: true, taskId: true, providerCallId: true },
+      select: {
+        id: true,
+        taskId: true,
+        providerCallId: true,
+        providerJobId: true,
+        channel: true,
+      },
     });
     if (!attempt) throw new NotFoundException(`Task or CallAttempt ${id} not found`);
     return {
       taskId: attempt.taskId,
       attemptId: attempt.id,
       providerCallId: attempt.providerCallId ?? undefined,
+      providerJobId: attempt.providerJobId ?? undefined,
+      channel: attempt.channel,
     };
   }
 
@@ -954,7 +1358,9 @@ export class TasksService {
       id: attempt.id,
       taskId: attempt.taskId,
       attemptNo: attempt.attemptNo,
+      channel: attempt.channel ?? undefined,
       providerCallId: attempt.providerCallId ?? undefined,
+      providerJobId: attempt.providerJobId ?? undefined,
       status: attempt.status as TaskStatus,
       startedAt: attempt.startedAt.toISOString(),
       ringingAt: attempt.ringingAt?.toISOString(),
@@ -963,6 +1369,10 @@ export class TasksService {
       duration: attempt.duration ?? undefined,
       hangupCause: attempt.hangupCause ?? undefined,
       recordingUrl: attempt.recordingUrl ?? undefined,
+      lastProviderEventAt: attempt.lastProviderEventAt?.toISOString(),
+      lastProviderSnapshotId: attempt.lastProviderSnapshotId ?? undefined,
+      lastProviderSnapshotAt: attempt.lastProviderSnapshotAt?.toISOString(),
+      missingProviderSnapshotCount: attempt.missingProviderSnapshotCount ?? undefined,
     }));
     return {
       id: record.id,
@@ -1057,12 +1467,24 @@ function normalizeProviderEventType(value: string): string {
   return value.trim().replace(/[\s.-]+/g, '_').toUpperCase();
 }
 
+function normalizeProvider(value: unknown): string {
+  return (cleanString(value) ?? 'freeswitch').toLowerCase();
+}
+
+function normalizeHangupCause(value: unknown): string | undefined {
+  return cleanString(value)?.replace(/[\s.-]+/g, '_').toUpperCase();
+}
+
+function isProgressProviderEvent(eventType: string): boolean {
+  return eventType === 'CHANNEL_PROGRESS' || eventType === 'CHANNEL_PROGRESS_MEDIA';
+}
+
 function isAnswerProviderEvent(eventType: string): boolean {
   return eventType === 'CHANNEL_ANSWER';
 }
 
-function isHangupProviderEvent(eventType: string): boolean {
-  return eventType === 'CHANNEL_HANGUP_COMPLETE' || eventType === 'CHANNEL_HANGUP';
+function isTerminalHangupProviderEvent(eventType: string): boolean {
+  return eventType === 'CHANNEL_HANGUP_COMPLETE';
 }
 
 function isRecordingProviderEvent(eventType: string): boolean {
@@ -1100,17 +1522,72 @@ async function recordContactAttemptHistory(tx: unknown, data: ContactAttemptHist
 
 function deriveTerminalStatus(
   hangupCause: string | undefined,
-  task: { status: string; calledAt?: Date | null },
-  attempt?: { answeredAt?: Date | null },
+  answered: boolean,
 ): TaskStatus {
-  const normalizedCause = cleanString(hangupCause)?.toUpperCase();
-  if (normalizedCause && NO_ANSWER_HANGUP_CAUSES.has(normalizedCause)) {
-    return TaskStatus.NO_ANSWER;
-  }
-  if (normalizedCause === 'NORMAL_CLEARING' || task.status === TaskStatus.IN_CALL || task.calledAt || attempt?.answeredAt) {
-    return TaskStatus.COMPLETED;
-  }
+  const normalizedCause = normalizeHangupCause(hangupCause);
+  if (isFatalHangupCause(normalizedCause)) return TaskStatus.FAILED;
+  if (answered) return TaskStatus.COMPLETED;
+  if (normalizedCause && NO_ANSWER_HANGUP_CAUSES.has(normalizedCause)) return TaskStatus.NO_ANSWER;
   return TaskStatus.FAILED;
+}
+
+function isFatalHangupCause(value: unknown): boolean {
+  const cause = normalizeHangupCause(value);
+  if (!cause || NO_ANSWER_HANGUP_CAUSES.has(cause)) return false;
+  if (FAILED_HANGUP_CAUSES.has(cause)) return true;
+  return /(?:NETWORK|PROTOCOL|MEDIA|ROUTE|REGISTER|UNALLOCATED|INVALID_NUMBER|CHAN_UNAVAIL|CONGESTION|INCOMPATIBLE|BEARER|RECOVERY|DESTINATION_OUT_OF_ORDER|FAIL|ERROR)/.test(cause);
+}
+
+function backgroundJobFailureCause(value: unknown): string | undefined {
+  const result = cleanString(value);
+  if (!result || !/^-ERR(?:\s|$)/i.test(result)) return undefined;
+  const candidate = normalizeHangupCause(result.replace(/^-ERR\b/i, ''));
+  return candidate && candidate !== 'UNKNOWN' ? candidate : 'BACKGROUND_JOB_FAILED';
+}
+
+function assertProviderEventIdentity(
+  event: { taskId: string; attemptId: string | null },
+  context: ResolvedProviderEventContext,
+): void {
+  if (event.taskId !== context.taskId || event.attemptId !== context.attempt.id) {
+    throw new ConflictException('providerEventId is already associated with another call attempt');
+  }
+}
+
+function isPrismaWriteConflict(error: unknown): boolean {
+  return Boolean(error && typeof error === 'object' && (error as { code?: unknown }).code === 'P2034');
+}
+
+function isProviderEventUniqueViolation(error: unknown): boolean {
+  if (!error || typeof error !== 'object' || (error as { code?: unknown }).code !== 'P2002') {
+    return false;
+  }
+  const target = (error as { meta?: { target?: unknown } }).meta?.target;
+  const fields = Array.isArray(target)
+    ? target.map((value) => String(value).toLowerCase()).join(',')
+    : String(target ?? '').toLowerCase();
+  return (
+    (fields.includes('provider') && (
+      fields.includes('providereventid') || fields.includes('provider_event_id')
+    )) ||
+    fields.includes('call_events_provider_provider_event_id_key')
+  );
+}
+
+function providerSnapshotGraceMs(): number {
+  const configured = process.env.PROVIDER_SNAPSHOT_GRACE_MS
+    ?? process.env.FREESWITCH_EVENT_RECONCILIATION_GRACE_MS;
+  const parsed = Number(configured);
+  return configured !== undefined && Number.isFinite(parsed) && parsed >= 0
+    ? parsed
+    : DEFAULT_PROVIDER_SNAPSHOT_GRACE_MS;
+}
+
+function safeErrorMessage(error: unknown): string {
+  const code = cleanString((error as { code?: unknown } | null)?.code);
+  return code && /^[A-Z][A-Z0-9_]{1,63}$/.test(code)
+    ? `FreeSWITCH hangup failed: ${code}`
+    : 'FreeSWITCH hangup failed';
 }
 
 function durationSeconds(start: Date | string | null | undefined, end: Date): number | undefined {

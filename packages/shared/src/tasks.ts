@@ -26,6 +26,9 @@ export enum TaskPriority {
   HIGH = 'high',
 }
 
+/** Transport used for a concrete call attempt. */
+export type CallAttemptChannel = 'freeswitch' | 'web';
+
 /** 通话结果分类（用于意向分级） */
 export enum CallOutcome {
   /** 高意向：客户明确表达意向 */
@@ -105,7 +108,9 @@ export interface CallAttempt {
   id: string;
   taskId: string;
   attemptNo: number;
+  channel?: CallAttemptChannel;
   providerCallId?: string;
+  providerJobId?: string;
   status: TaskStatus;
   startedAt: string;
   ringingAt?: string;
@@ -114,6 +119,10 @@ export interface CallAttempt {
   duration?: number;
   hangupCause?: string;
   recordingUrl?: string;
+  lastProviderEventAt?: string;
+  lastProviderSnapshotId?: string;
+  lastProviderSnapshotAt?: string;
+  missingProviderSnapshotCount?: number;
 }
 
 /** 列表页专用轻量模型，不包含流程快照和完整转写。 */
@@ -152,7 +161,9 @@ export interface CallHistoryItem {
   id: string;
   taskId: string;
   attemptNo: number;
+  channel?: CallAttemptChannel;
   providerCallId?: string;
+  providerJobId?: string;
   to: string;
   from: string;
   scenario: ScenarioKey;
@@ -165,6 +176,10 @@ export interface CallHistoryItem {
   duration?: number;
   hangupCause?: string;
   recordingUrl?: string;
+  lastProviderEventAt?: string;
+  lastProviderSnapshotId?: string;
+  lastProviderSnapshotAt?: string;
+  missingProviderSnapshotCount?: number;
   outcome?: CallOutcome;
   intentTags?: string[];
   transcriptCount: number;
@@ -182,6 +197,8 @@ export interface CallHistoryPage {
 export interface CallEventRecord {
   id: string;
   type: string;
+  provider?: string;
+  providerEventId?: string;
   payload: Record<string, unknown>;
   createdAt: string;
 }

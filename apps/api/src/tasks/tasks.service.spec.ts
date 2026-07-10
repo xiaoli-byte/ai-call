@@ -10,6 +10,7 @@ const ENV_KEYS = [
   'CALL_RECORDING_PUBLIC_BASE_URL',
   'FREESWITCH_SHARED_RECORDINGS_CONTAINER',
   'FREESWITCH_SHARED_RECORDINGS_HOST',
+  'PROVIDER_SNAPSHOT_GRACE_MS',
 ] as const;
 const savedEnv = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
 
@@ -383,7 +384,7 @@ describe('TasksService', () => {
     assert.equal(calls.some(([name]) => name === 'outboxEvent.create'), false);
   });
 
-  it('hangup kills the active FreeSWITCH channel and records completion', async () => {
+  it('FreeSWITCH hangup records the request before uuid_kill and waits for the provider terminal event', async () => {
     const calls: Call[] = [];
     const prisma = {
       outboundTask: {
@@ -405,6 +406,7 @@ describe('TasksService', () => {
           id: 'attempt-1',
           taskId: 'task-1',
           providerCallId: 'provider-1',
+          channel: 'freeswitch',
         }),
         findUniqueOrThrow: async () => ({
           id: 'attempt-1',
@@ -437,15 +439,16 @@ describe('TasksService', () => {
     };
     const service = new TasksService(prisma as never, {} as never, scenarios as never, freeswitch as never);
 
-    await service.hangup('attempt-1');
+    const result = await service.hangup('attempt-1', { outcome: 'high_intent' as never });
 
-    assert.deepEqual(calls[0], ['freeswitch.hangup', 'provider-1']);
-    assert.equal(calls[1][1].data.status, TaskStatus.COMPLETED);
-    assert.equal(calls[2][1].data.status, TaskStatus.COMPLETED);
-    assert.equal(calls[3][1].data.type, 'call.hung_up');
-    assert.equal(calls[3][1].data.payload.channelId, 'provider-1');
-    assert.equal(calls[4][0], 'contactAttemptHistory.upsert');
-    assert.deepEqual(calls[4][1].where, { attemptId: 'attempt-1' });
+    assert.equal(calls[0][0], 'outboundTask.update');
+    assert.equal(calls[0][1].data.outcome, 'high_intent');
+    assert.equal(calls[1][0], 'callEvent.create');
+    assert.equal(calls[1][1].data.type, 'call.hangup_requested');
+    assert.equal(calls[1][1].data.payload.channelId, 'provider-1');
+    assert.deepEqual(calls[2], ['freeswitch.hangup', 'provider-1']);
+    assert.equal(calls.some(([name]) => name === 'callAttempt.update'), false);
+    assert.equal(result.status, TaskStatus.IN_CALL);
   });
 
   it('records CHANNEL_ANSWER provider events and marks the attempt in call', async () => {
@@ -459,6 +462,7 @@ describe('TasksService', () => {
 
     await service.recordProviderCallEvent({
       provider: 'freeswitch',
+      providerEventId: 'event-answer-1',
       eventType: 'CHANNEL_ANSWER',
       providerCallId: 'provider-1',
       occurredAt,
@@ -494,6 +498,7 @@ describe('TasksService', () => {
 
     await service.recordProviderCallEvent({
       provider: 'freeswitch',
+      providerEventId: 'event-hangup-1',
       eventType: 'CHANNEL_HANGUP_COMPLETE',
       taskId: 'task-1',
       providerCallId: 'provider-1',
@@ -523,6 +528,7 @@ describe('TasksService', () => {
 
     await service.recordProviderCallEvent({
       provider: 'freeswitch',
+      providerEventId: 'event-hangup-history-1',
       eventType: 'CHANNEL_HANGUP_COMPLETE',
       taskId: 'task-1',
       providerCallId: 'provider-1',
@@ -549,6 +555,7 @@ describe('TasksService', () => {
 
     await service.recordProviderCallEvent({
       provider: 'freeswitch',
+      providerEventId: 'event-record-1',
       eventType: 'RECORD_STOP',
       providerCallId: 'provider-1',
       recordingPath: '/var/lib/freeswitch/recordings/2026/07/attempt-1.wav',
@@ -574,7 +581,9 @@ function attemptRecord(overrides: Record<string, unknown> = {}) {
     id: 'attempt-1',
     taskId: 'task-1',
     attemptNo: 1,
+    channel: 'freeswitch',
     providerCallId: 'provider-1',
+    providerJobId: 'job-1',
     status: TaskStatus.CALLING,
     startedAt: now,
     ringingAt: now,
@@ -583,6 +592,10 @@ function attemptRecord(overrides: Record<string, unknown> = {}) {
     duration: null,
     hangupCause: null,
     recordingUrl: null,
+    lastProviderEventAt: null,
+    lastProviderSnapshotId: null,
+    lastProviderSnapshotAt: null,
+    missingProviderSnapshotCount: 0,
     createdAt: now,
     updatedAt: now,
     ...overrides,
@@ -591,11 +604,16 @@ function attemptRecord(overrides: Record<string, unknown> = {}) {
 
 function providerEventPrisma(
   calls: Call[],
-  records: { task: any; attempt: any },
+  records: { task: any; attempt?: any; attempts?: any[] },
 ) {
   const task = { ...records.task };
-  const attempt = { ...records.attempt };
+  const attempts = (records.attempts ?? [records.attempt]).filter(Boolean).map((attempt) => ({
+    ...attempt,
+  }));
+  task.attemptCount = task.attemptCount || Math.max(...attempts.map((attempt) => attempt.attemptNo), 0);
+  const events: any[] = [];
   const prisma = {
+    __records: { task, attempts, events },
     outboundTask: {
       findUnique: async (args: any) => {
         if (args.where.id !== task.id) return null;
@@ -604,7 +622,7 @@ function providerEventPrisma(
             Object.keys(args.select).map((key) => [key, task[key]]),
           );
         }
-        return { ...task, attempts: [{ ...attempt }], transcripts: [], flowVersion: null };
+        return { ...task, attempts: attempts.map((attempt) => ({ ...attempt })), transcripts: [], flowVersion: null };
       },
       update: async (args: any) => {
         calls.push(['outboundTask.update', args]);
@@ -614,26 +632,57 @@ function providerEventPrisma(
     },
     callAttempt: {
       findFirst: async (args: any) => {
-        if (args.where?.taskId === task.id) return { ...attempt };
+        if (args.where?.taskId === task.id) {
+          return [...attempts]
+            .sort((left, right) => right.attemptNo - left.attemptNo)
+            .map((attempt) => ({ ...attempt }))[0] ?? null;
+        }
         const values = args.where?.OR?.flatMap((entry: any) => [entry.id, entry.providerCallId]).filter(Boolean);
-        return values?.includes(attempt.id) || values?.includes(attempt.providerCallId)
-          ? { ...attempt }
-          : null;
+        const attempt = attempts.find((item) => values?.includes(item.id) || values?.includes(item.providerCallId));
+        return attempt ? project(attempt, args.select) : null;
+      },
+      findUnique: async (args: any) => {
+        const attempt = attempts.find((item) =>
+          (args.where.id && item.id === args.where.id) ||
+          (args.where.providerCallId && item.providerCallId === args.where.providerCallId) ||
+          (args.where.providerJobId && item.providerJobId === args.where.providerJobId));
+        return attempt ? project(attempt, args.select) : null;
       },
       findUniqueOrThrow: async (args: any) => {
-        if (args.where.id !== attempt.id) throw new Error(`Attempt not found: ${args.where.id}`);
+        const attempt = attempts.find((item) => item.id === args.where.id);
+        if (!attempt) throw new Error(`Attempt not found: ${args.where.id}`);
         return { ...attempt };
       },
+      findMany: async (args: any) => attempts
+        .filter((attempt) => {
+          if (args.where?.channel && attempt.channel !== args.where.channel) return false;
+          if (args.where?.status?.in && !args.where.status.in.includes(attempt.status)) return false;
+          return true;
+        })
+        .sort((left, right) => left.id.localeCompare(right.id))
+        .map((attempt) => ({
+          ...project(attempt, args.select),
+          task: project(task, args.select?.task?.select),
+        })),
       update: async (args: any) => {
+        const attempt = attempts.find((item) => item.id === args.where.id);
+        if (!attempt) throw new Error(`Attempt not found: ${args.where.id}`);
         calls.push(['callAttempt.update', args]);
         Object.assign(attempt, args.data);
         return { ...attempt };
       },
     },
     callEvent: {
+      findUnique: async (args: any) => {
+        const key = args.where.provider_providerEventId;
+        const event = events.find((item) => item.provider === key.provider && item.providerEventId === key.providerEventId);
+        return event ? project(event, args.select) : null;
+      },
       create: async (args: any) => {
         calls.push(['callEvent.create', args]);
-        return args;
+        const event = { id: `event-${events.length + 1}`, ...args.data };
+        events.push(event);
+        return event;
       },
     },
     contactAttemptHistory: {
@@ -649,6 +698,15 @@ function providerEventPrisma(
     $transaction: async (fn: (tx: unknown) => Promise<void>) => fn(prisma),
   };
   return prisma;
+}
+
+function project(record: Record<string, any>, select?: Record<string, unknown>): any {
+  if (!select) return { ...record };
+  return Object.fromEntries(
+    Object.keys(select)
+      .filter((key) => key !== 'task')
+      .map((key) => [key, record[key]]),
+  );
 }
 
 /** 最小 ClsService 假实现：只暴露 get(key)，供 CALL-05 ACL 测试注入 userId/roles。 */

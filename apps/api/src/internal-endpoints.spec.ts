@@ -6,6 +6,7 @@ import { IS_PUBLIC_KEY } from '@xiaoli-byte/authz/nestjs';
 import { ServiceAuthGuard } from './common/service-auth.guard.js';
 import { KnowledgeBaseController } from './knowledge-base/knowledge-base.controller.js';
 import { MetricsController } from './metrics/metrics.controller.js';
+import { TasksController } from './tasks/tasks.controller.js';
 import { ToolsController } from './tools/tools.controller.js';
 
 function guardList(target: object | Function): unknown[] {
@@ -35,5 +36,15 @@ describe('internal service endpoints', () => {
       { ok: true },
     );
     assert.equal(typeof snapshotHandler, 'function');
+  });
+
+  it('protects provider events and active snapshots with service authentication', () => {
+    const eventHandler = TasksController.prototype.recordProviderCallEvent;
+    const snapshotHandler = TasksController.prototype.recordProviderActiveSnapshot;
+
+    for (const handler of [eventHandler, snapshotHandler]) {
+      assert.equal(Reflect.getMetadata(IS_PUBLIC_KEY, handler), true);
+      assert.ok(guardList(handler).includes(ServiceAuthGuard));
+    }
   });
 });

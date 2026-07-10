@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import { afterEach, describe, it } from 'node:test';
-import { FreeSwitchEventBridgeService } from './freeswitch-event-bridge.service.js';
+import {
+  FreeSwitchBridgeError,
+  FreeSwitchEventBridgeService,
+} from './freeswitch-event-bridge.service.js';
 
 const ORIGINAL_ENV = { ...process.env };
 const originalFetch = globalThis.fetch;
@@ -22,6 +25,7 @@ describe('FreeSwitchEventBridgeService', () => {
 
     await new FreeSwitchEventBridgeService().postProviderEvent({
       provider: 'freeswitch',
+      providerEventId: 'event-answer',
       eventType: 'CHANNEL_ANSWER',
       providerCallId: 'uuid-answer',
     });
@@ -34,6 +38,7 @@ describe('FreeSwitchEventBridgeService', () => {
     });
     assert.deepEqual(JSON.parse(String(calls[0].init.body)), {
       provider: 'freeswitch',
+      providerEventId: 'event-answer',
       eventType: 'CHANNEL_ANSWER',
       providerCallId: 'uuid-answer',
     });
@@ -47,6 +52,7 @@ describe('FreeSwitchEventBridgeService', () => {
     globalThis.fetch = fakeFetch(calls, 200);
 
     await new FreeSwitchEventBridgeService().postProviderEvent({
+      providerEventId: 'event-hangup',
       eventType: 'CHANNEL_HANGUP_COMPLETE',
       providerCallId: 'uuid-hangup',
     });
@@ -63,6 +69,7 @@ describe('FreeSwitchEventBridgeService', () => {
     globalThis.fetch = fakeFetch(calls, 200);
 
     await new FreeSwitchEventBridgeService().postProviderEvent({
+      providerEventId: 'event-record',
       eventType: 'RECORD_STOP',
       providerCallId: 'uuid-record',
       recordingPath: '/recordings/call.wav',
@@ -88,6 +95,7 @@ describe('FreeSwitchEventBridgeService', () => {
     globalThis.fetch = fakeFetch(calls, 200);
 
     await new FreeSwitchEventBridgeService().postProviderEvent({
+      providerEventId: 'event-answer',
       eventType: 'CHANNEL_ANSWER',
       providerCallId: 'uuid-answer',
     });
@@ -114,17 +122,13 @@ describe('FreeSwitchEventBridgeService', () => {
       'Hangup-Cause': 'NO_ANSWER',
     });
 
-    assert.deepEqual(JSON.parse(String(calls[0].init.body)), {
-      provider: 'freeswitch',
-      eventType: 'CHANNEL_HANGUP_COMPLETE',
-      providerCallId: 'uuid-from-headers',
-      hangupCause: 'NO_ANSWER',
-      raw: {
-        'Event-Name': 'CHANNEL_HANGUP_COMPLETE',
-        'Unique-ID': 'uuid-from-headers',
-        'Hangup-Cause': 'NO_ANSWER',
-      },
-    });
+    const posted = JSON.parse(String(calls[0].init.body));
+    assert.equal(posted.provider, 'freeswitch');
+    assert.match(posted.providerEventId, /^[0-9a-f]{64}$/);
+    assert.equal(posted.eventType, 'CHANNEL_HANGUP_COMPLETE');
+    assert.equal(posted.providerCallId, 'uuid-from-headers');
+    assert.equal(posted.hangupCause, 'NO_ANSWER');
+    assert.equal(posted.raw['Event-Name'], 'CHANNEL_HANGUP_COMPLETE');
   });
 
   it('throws when the provider event endpoint rejects the event', async () => {
@@ -134,10 +138,36 @@ describe('FreeSwitchEventBridgeService', () => {
 
     await assert.rejects(
       () => new FreeSwitchEventBridgeService().postProviderEvent({
+        providerEventId: 'event-answer',
         eventType: 'CHANNEL_ANSWER',
         providerCallId: 'uuid-answer',
       }),
-      /provider event POST failed: HTTP 500 database unavailable/,
+      (error: unknown) => {
+        assert.ok(error instanceof FreeSwitchBridgeError);
+        assert.equal(error.status, 500);
+        assert.equal(error.retryable, true);
+        assert.doesNotMatch(error.message, /database unavailable/);
+        return true;
+      },
+    );
+  });
+
+  it('posts active channel snapshots to the service-auth endpoint', async () => {
+    process.env.INTERNAL_API_BASE_URL = 'http://internal-api:3000';
+    process.env.SERVICE_API_TOKEN = 'service-token';
+    const calls: FetchCall[] = [];
+    globalThis.fetch = fakeFetch(calls, 200);
+
+    await new FreeSwitchEventBridgeService().postActiveSnapshot({
+      provider: 'freeswitch',
+      snapshotId: 'snapshot-1',
+      observedAt: '2026-07-10T07:00:00.000Z',
+      activeChannelIds: ['52ccf8b0-6b2c-4c77-95e3-d10685443db8'],
+    });
+
+    assert.equal(
+      calls[0].url,
+      'http://internal-api:3000/tasks/provider-active-snapshots',
     );
   });
 });

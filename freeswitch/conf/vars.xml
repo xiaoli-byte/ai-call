@@ -5,13 +5,14 @@
   <!-- ==================== IP 与域名 ==================== -->
   <!-- local_ip_v4 是 FreeSWITCH 内置动态变量，启动时自动检测容器 IP，无需 set 覆盖 -->
   <!-- 如果用 set data="local_ip_v4=auto" 会把它变成字符串 "auto"，破坏自动检测 -->
-  <X-PRE-PROCESS cmd="set" data="domain=192.168.0.104"/>
+  <!-- 安全占位：真实本机外呼必须挂载 .runtime/freeswitch/vars.xml。 -->
+  <X-PRE-PROCESS cmd="set" data="domain=localhost"/>
 
   <!-- Docker Desktop 对外发布地址：SIP/SDP 必须声明宿主机 LAN IP，不能声明容器 IP -->
-  <X-PRE-PROCESS cmd="set" data="external_sip_ip=192.168.0.104"/>
-  <X-PRE-PROCESS cmd="set" data="external_rtp_ip=192.168.0.104"/>
+  <X-PRE-PROCESS cmd="set" data="external_sip_ip=127.0.0.1"/>
+  <X-PRE-PROCESS cmd="set" data="external_rtp_ip=127.0.0.1"/>
 
-  <!-- 其他机器联调时将上述地址改为实际宿主机 LAN IP；公网环境再改为 STUN。 -->
+  <!-- 由编排器选择实际硬件默认路由；公网环境应改用受控的生产配置。 -->
   <!-- 注意：不要把 X-PRE-PROCESS 指令放进 XML 注释，FreeSWITCH 仍可能执行它。 -->
 
   <!-- ==================== SIP 端口 ==================== -->
@@ -22,7 +23,7 @@
   <X-PRE-PROCESS cmd="set" data="rtp_end_port=16394"/>
 
   <!-- ==================== 分机密码 ==================== -->
-  <X-PRE-PROCESS cmd="set" data="default_password=1234"/>
+  <!-- 故意不定义 default_password：只有私密 runtime vars 才能启用分机注册。 -->
 
   <!-- ==================== Voice Agent WebSocket ==================== -->
   <X-PRE-PROCESS cmd="set" data="voice_agent_ws_url=ws://host.docker.internal:8090/audio-stream"/>

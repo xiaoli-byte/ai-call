@@ -60,15 +60,32 @@ describe('outbound call business flow smoke', () => {
     assert.equal(prisma.outboxEvents[0].type, 'call.dispatch_requested');
 
     await worker.processBatch();
-    assert.deepEqual(freeswitch.originates, [{ to: '1001', callId: attemptId }]);
+    assert.deepEqual(freeswitch.originates, [{ to: '1001', callId: attemptId, taskId: created.id }]);
     assert.equal(prisma.outboxEvents[0].status, 'processed');
     assert.equal(prisma.events.at(-1)?.type, 'call.dispatch_accepted');
+    assert.equal(prisma.attempts[0].providerJobId, 'job-1');
 
     const context = await tasks.getContext(attemptId);
     assert.equal(context.id, created.id);
     assert.equal(context.flowVersion?.id, 'version-1');
 
-    await tasks.updateStatus(attemptId, TaskStatus.IN_CALL);
+    await tasks.recordProviderCallEvent({
+      provider: 'FreeSWITCH',
+      providerEventId: 'progress-1',
+      eventType: 'CHANNEL_PROGRESS',
+      attemptId,
+      providerCallId: attemptId,
+      occurredAt: '2026-07-03T08:00:05.000Z',
+    });
+    assert.equal((await tasks.get(created.id)).attempts?.[0].ringingAt, '2026-07-03T08:00:05.000Z');
+    await tasks.recordProviderCallEvent({
+      provider: 'freeswitch',
+      providerEventId: 'answer-1',
+      eventType: 'CHANNEL_ANSWER',
+      attemptId,
+      providerCallId: attemptId,
+      occurredAt: '2026-07-03T08:00:10.000Z',
+    });
     await tasks.appendTranscript(
       attemptId,
       { role: 'caller', content: 'please transfer me', timestamp: 1 },
@@ -78,6 +95,16 @@ describe('outbound call business flow smoke', () => {
     await tasks.hangup(created.id, {
       outcome: CallOutcome.ESCALATED,
       tags: ['manual-transfer'],
+    });
+    assert.equal((await tasks.get(created.id)).status, TaskStatus.IN_CALL);
+    await tasks.recordProviderCallEvent({
+      provider: 'freeswitch',
+      providerEventId: 'hangup-1',
+      eventType: 'CHANNEL_HANGUP_COMPLETE',
+      attemptId,
+      providerCallId: attemptId,
+      occurredAt: '2026-07-03T08:00:20.000Z',
+      hangupCause: 'NORMAL_CLEARING',
     });
 
     const finalTask = await tasks.get(created.id);
@@ -93,23 +120,25 @@ describe('outbound call business flow smoke', () => {
         'task.created',
         'call.dispatch_requested',
         'call.dispatch_accepted',
-        'task.status_changed',
+        'call.provider_event',
+        'call.provider_event',
         'transcript.appended',
         'call.transferred',
-        'call.hung_up',
+        'call.hangup_requested',
+        'call.provider_event',
       ],
     );
   });
 });
 
 class FakeFreeSwitch {
-  readonly originates: Array<{ to: string; callId: string }> = [];
+  readonly originates: Array<{ to: string; callId: string; taskId: string }> = [];
   readonly transfers: Array<{ callId: string; extension: string }> = [];
   readonly hangups: string[] = [];
 
-  async originate(to: string, callId: string): Promise<string> {
-    this.originates.push({ to, callId });
-    return '+OK';
+  async originate(to: string, callId: string, taskId: string) {
+    this.originates.push({ to, callId, taskId });
+    return { accepted: true as const, jobId: 'job-1', replyText: '+OK Job-UUID: job-1' };
   }
 
   async transfer(callId: string, extension: string): Promise<string> {
@@ -151,10 +180,11 @@ class InMemoryPrisma {
   readonly callAttempt = {
     create: async (args: any) => this.createAttempt(args),
     findFirst: async (args: any) => this.findAttempt(args),
+    findUnique: async (args: any) => this.findAttemptByUnique(args),
     findUniqueOrThrow: async (args: any) => {
-      const attempt = this.attempts.find((item) => item.id === args.where.id);
-      if (!attempt) throw new Error(`Attempt not found: ${args.where.id}`);
-      return this.cloneAttempt(attempt);
+      const attempt = this.findAttemptByUnique(args);
+      if (!attempt) throw new Error(`Attempt not found: ${JSON.stringify(args.where)}`);
+      return attempt;
     },
     update: async (args: any) => this.updateAttempt(args),
   };
@@ -171,6 +201,7 @@ class InMemoryPrisma {
 
   readonly callEvent = {
     create: async (args: any) => this.createEvent(args),
+    findUnique: async (args: any) => this.findEventByUnique(args),
   };
 
   readonly outboxEvent = {
@@ -269,6 +300,8 @@ class InMemoryPrisma {
       taskId: args.data.taskId,
       attemptNo: args.data.attemptNo,
       providerCallId: args.data.providerCallId ?? null,
+      channel: args.data.channel ?? 'freeswitch',
+      providerJobId: args.data.providerJobId ?? null,
       status: args.data.status,
       startedAt: now,
       ringingAt: null,
@@ -277,6 +310,10 @@ class InMemoryPrisma {
       duration: null,
       hangupCause: null,
       recordingUrl: null,
+      lastProviderEventAt: null,
+      lastProviderSnapshotId: null,
+      lastProviderSnapshotAt: null,
+      missingProviderSnapshotCount: 0,
       createdAt: now,
       updatedAt: now,
     };
@@ -299,6 +336,22 @@ class InMemoryPrisma {
       return attempt ? this.cloneAttempt(attempt) : null;
     }
     return null;
+  }
+
+  private findAttemptByUnique(args: any): AttemptRecord | null {
+    const where = args.where ?? {};
+    const attempt = this.attempts.find((item) =>
+      (where.id && item.id === where.id) ||
+      (where.providerCallId && item.providerCallId === where.providerCallId) ||
+      (where.providerJobId && item.providerJobId === where.providerJobId),
+    );
+    if (!attempt) return null;
+    if (args.select) {
+      return Object.fromEntries(
+        Object.keys(args.select).map((key) => [key, (attempt as Record<string, unknown>)[key] ?? null]),
+      ) as AttemptRecord;
+    }
+    return this.cloneAttempt(attempt);
   }
 
   private updateAttempt(args: any): AttemptRecord {
@@ -325,15 +378,32 @@ class InMemoryPrisma {
   }
 
   private createEvent(args: any): EventRecord {
-    const event = {
+    const event: EventRecord = {
       id: `event-${++this.eventSeq}`,
       taskId: args.data.taskId,
       attemptId: args.data.attemptId ?? null,
       type: args.data.type,
       payload: args.data.payload ?? {},
+      provider: args.data.provider ?? null,
+      providerEventId: args.data.providerEventId ?? null,
       createdAt: now,
     };
     this.events.push(event);
+    return event;
+  }
+
+  private findEventByUnique(args: any): EventRecord | null {
+    const where = args.where?.provider_providerEventId;
+    if (!where) return null;
+    const event = this.events.find(
+      (item) => item.provider === where.provider && item.providerEventId === where.providerEventId,
+    );
+    if (!event) return null;
+    if (args.select) {
+      return Object.fromEntries(
+        Object.keys(args.select).map((key) => [key, (event as Record<string, unknown>)[key] ?? null]),
+      ) as EventRecord;
+    }
     return event;
   }
 
@@ -443,6 +513,8 @@ type AttemptRecord = {
   taskId: string;
   attemptNo: number;
   providerCallId: string | null;
+  channel: string;
+  providerJobId: string | null;
   status: string;
   startedAt: Date;
   ringingAt: Date | null;
@@ -451,6 +523,10 @@ type AttemptRecord = {
   duration: number | null;
   hangupCause: string | null;
   recordingUrl: string | null;
+  lastProviderEventAt: Date | null;
+  lastProviderSnapshotId: string | null;
+  lastProviderSnapshotAt: Date | null;
+  missingProviderSnapshotCount: number;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -473,6 +549,8 @@ type EventRecord = {
   attemptId: string | null;
   type: string;
   payload: unknown;
+  provider: string | null;
+  providerEventId: string | null;
   createdAt: Date;
 };
 

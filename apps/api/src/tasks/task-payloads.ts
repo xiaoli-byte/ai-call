@@ -1,4 +1,4 @@
-import type { TaskStatus, TranscriptTurn } from '@ai-call/shared';
+import type { CallAttemptChannel, TaskStatus, TranscriptTurn } from '@ai-call/shared';
 import type { Prisma } from '../generated/prisma/client.js';
 import { toPrismaJson } from '../common/prisma-json.js';
 
@@ -18,6 +18,9 @@ export type CallEventType =
   | 'transcript.appended'
   | 'call.outcome_set'
   | 'call.hung_up'
+  | 'call.hangup_requested'
+  | 'call.hangup_request_failed'
+  | 'call.event_loss_reconciled'
   | 'call.provider_event'
   | 'call.dispatch_requested'
   | 'call.dispatch_accepted'
@@ -33,9 +36,16 @@ export type CallEventPayloadFor<T extends CallEventType> =
   T extends 'transcript.appended' ? { role: TranscriptTurn['role'] } :
   T extends 'call.outcome_set' ? { outcome: string; tags?: string[] } :
   T extends 'call.hung_up' ? { outcome?: string; duration?: number; channelId?: string; hangupError?: string } :
+  T extends 'call.hangup_requested' ? { channelId?: string; outcome?: string; tags?: string[] } :
+  T extends 'call.hangup_request_failed' ? { channelId?: string; error: string } :
+  T extends 'call.event_loss_reconciled' ? { snapshotId: string; status: TaskStatus; reason: string } :
   T extends 'call.provider_event' ? ProviderCallEventPayload :
   T extends 'call.dispatch_requested' | `action.${FlowActionType}.delivered` ? Record<string, never> :
-  T extends 'call.dispatch_accepted' ? { channel?: 'web' } :
+  T extends 'call.dispatch_accepted' ? {
+    channel?: CallAttemptChannel;
+    provider?: string;
+    providerJobId?: string;
+  } :
   T extends 'call.policy_blocked' ? { code: string; message: string; details?: Record<string, unknown> } :
   T extends 'call.transferred' ? { extension: string; channelId: string } :
   T extends `action.${FlowActionType}.requested` ? { outboxEventId: string } :
@@ -44,10 +54,13 @@ export type CallEventPayloadFor<T extends CallEventType> =
 
 export type ProviderCallEventPayload = {
   provider: string;
+  providerEventId?: string;
   eventType: string;
   taskId: string;
   attemptId?: string;
   providerCallId?: string;
+  jobId?: string;
+  backgroundJobResult?: string;
   occurredAt: string;
   hangupCause?: string;
   recordingPath?: string;

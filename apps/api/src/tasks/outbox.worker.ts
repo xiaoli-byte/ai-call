@@ -108,42 +108,63 @@ export class OutboxWorker implements OnModuleInit, OnModuleDestroy {
     if (claimed.count === 0) return;
 
     try {
-      await this.deliver(event);
-      await this.prisma.outboxEvent.update({
-        where: { id: event.id },
-        data: {
-          status: 'processed',
-          processedAt: new Date(),
-          lastError: null,
-          lockedAt: null,
-          lockedBy: null,
-        },
-      });
+      const finalized = await this.deliver(event);
+      if (!finalized) {
+        await this.prisma.outboxEvent.update({
+          where: { id: event.id },
+          data: {
+            status: 'processed',
+            processedAt: new Date(),
+            lastError: null,
+            lockedAt: null,
+            lockedBy: null,
+          },
+        });
+      }
       this.metrics?.incrementCounter('outbox.processed');
     } catch (error) {
       await this.handleFailure(event, error as Error);
     }
   }
 
-  private async deliver(event: OutboxRecord): Promise<void> {
+  private async deliver(event: OutboxRecord): Promise<boolean> {
     if (event.type === 'call.dispatch_requested') {
       const payload = parseOutboxPayload(event.type, event.payload);
-      await this.freeswitch.originate(payload.to, payload.attemptId);
+      const result = await this.freeswitch.originate(
+        payload.to,
+        payload.attemptId,
+        payload.taskId,
+      );
+      const processedAt = new Date();
       await this.prisma.$transaction([
         this.prisma.callAttempt.update({
           where: { id: payload.attemptId },
-          data: { status: TaskStatus.CALLING, ringingAt: new Date() },
+          data: { providerJobId: result.jobId },
         }),
         this.prisma.callEvent.create({
           data: {
             taskId: payload.taskId,
             attemptId: payload.attemptId,
             type: 'call.dispatch_accepted',
-            payload: callEventPayload('call.dispatch_accepted', {}),
+            payload: callEventPayload('call.dispatch_accepted', {
+              channel: 'freeswitch',
+              provider: 'freeswitch',
+              providerJobId: result.jobId,
+            }),
+          },
+        }),
+        this.prisma.outboxEvent.update({
+          where: { id: event.id },
+          data: {
+            status: 'processed',
+            processedAt,
+            lastError: null,
+            lockedAt: null,
+            lockedBy: null,
           },
         }),
       ]);
-      return;
+      return true;
     }
     if (event.type === 'action.sms') {
       const payload = parseOutboxPayload(event.type, event.payload);
@@ -152,7 +173,7 @@ export class OutboxWorker implements OnModuleInit, OnModuleDestroy {
         event.deduplicationKey ?? event.id,
       );
       await this.recordActionDelivered(payload, 'sms');
-      return;
+      return false;
     }
     if (event.type === 'action.api') {
       const payload = parseOutboxPayload(event.type, event.payload);
@@ -161,7 +182,7 @@ export class OutboxWorker implements OnModuleInit, OnModuleDestroy {
         event.deduplicationKey ?? event.id,
       );
       await this.recordActionDelivered(payload, 'api');
-      return;
+      return false;
     }
     if (event.type === 'action.crm') {
       const payload = parseOutboxPayload(event.type, event.payload);
@@ -170,7 +191,7 @@ export class OutboxWorker implements OnModuleInit, OnModuleDestroy {
         event.deduplicationKey ?? event.id,
       );
       await this.recordActionDelivered(payload, 'crm');
-      return;
+      return false;
     }
     throw new Error(`Unsupported outbox event: ${event.type}`);
   }

@@ -39,6 +39,12 @@ Thumbs.db
 .codex-runtime
 .runtime
 
+# private local outbound orchestration (also covered by .runtime; kept explicit)
+.runtime/microsip.env
+.runtime/freeswitch/vars.xml
+.runtime/outbound/
+**/MicroSIP.ini.bak.*
+
 # freeswitch runtime
 freeswitch/recordings/
 freeswitch/logs/
