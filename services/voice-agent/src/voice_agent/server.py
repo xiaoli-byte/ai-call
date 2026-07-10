@@ -80,16 +80,13 @@ class VoiceAgentServer:
         # 复用 agent 内部的 TaskClient，避免重复创建 httpx 连接池
         self._tasks = tasks or TaskClient()
         self._demo = demo_server
-        self._esl_ready = False
 
     async def start(self) -> None:
         """启动 WebSocket 服务端，永久运行。"""
         try:
             await _get_shared_esl_client()
-            self._esl_ready = True
             logger.info("[ESL] persistent control connection ready")
         except Exception as err:
-            self._esl_ready = False
             logger.warning("[ESL] preconnect failed, will retry on playback: %s", err)
         async with websockets.serve(
             self._handle,
@@ -108,6 +105,22 @@ class VoiceAgentServer:
                 "[VoiceAgentServer] waiting for FreeSWITCH mod_audio_fork connections..."
             )
             await asyncio.Future()  # run forever
+
+    @property
+    def _esl_ready(self) -> bool:
+        """实时判定 ESL 控制连接是否就绪（不依赖 start() 时写入的静态标志）。
+
+        - 共享 ESL 客户端已创建：以其 is_open 为准，断线会立即反映。
+        - 客户端尚未创建：若配置了 ESL host/port 环境变量，则视为未就绪
+          （等待 start() 的预连接或首次播放触发的懒连接）；纯 web 模式下
+          （未配置 ESL）不应因此拦截 /health/ready。
+        """
+        if _shared_esl_client is not None:
+            return _shared_esl_client.is_open
+        esl_configured = bool(os.getenv("FREESWITCH_ESL_HOST")) or bool(
+            os.getenv("FREESWITCH_ESL_PORT")
+        )
+        return not esl_configured
 
     def _check_path(
         self, connection: Any, request: Any

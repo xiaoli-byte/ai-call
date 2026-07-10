@@ -55,6 +55,24 @@ describe('EslFrameParser', () => {
     assert.equal(getEslHeader(frames[1].headers, 'Content-Type'), 'command/reply');
   });
 
+  it('reassembles a large body delivered as many small chunks', () => {
+    const body = Buffer.alloc(64 * 1024, 0x61);
+    const wire = Buffer.concat([
+      Buffer.from(`Content-Type: api/response\nContent-Length: ${body.length}\n\n`),
+      body,
+    ]);
+    const parser = new EslFrameParser();
+    const frames = [];
+    for (let offset = 0; offset < wire.length; offset += 1400) {
+      frames.push(...parser.push(wire.subarray(offset, offset + 1400)));
+    }
+
+    assert.equal(frames.length, 1);
+    assert.equal(frames[0].body.length, body.length);
+    assert.ok(frames[0].body.equals(body));
+    parser.finish();
+  });
+
   it('rejects oversized headers and bodies', () => {
     assert.throws(
       () => new EslFrameParser({ maxHeaderBytes: 8 }).push(

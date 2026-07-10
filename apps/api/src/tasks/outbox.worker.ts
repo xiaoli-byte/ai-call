@@ -4,6 +4,7 @@ import { ClsService } from 'nestjs-cls';
 import { hostname } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { FreeSwitchService } from '../freeswitch/freeswitch.service.js';
+import { FreeSwitchError, isCallAlreadyActiveError } from '../freeswitch/freeswitch-errors.js';
 import { MetricsService } from '../metrics/metrics.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { runAsSystem } from '../prisma/system-context.js';
@@ -130,11 +131,43 @@ export class OutboxWorker implements OnModuleInit, OnModuleDestroy {
   private async deliver(event: OutboxRecord): Promise<boolean> {
     if (event.type === 'call.dispatch_requested') {
       const payload = parseOutboxPayload(event.type, event.payload);
-      const result = await this.freeswitch.originate(
-        payload.to,
-        payload.attemptId,
-        payload.taskId,
-      );
+
+      // Idempotency guard. originate() places a real phone call *before* this
+      // worker commits providerJobId, so a redelivery (lease expiry, or a crash
+      // between originate and commit) must never dial the same person twice.
+      // If a prior delivery already recorded a job id, or the attempt has moved
+      // past CALLING, the call was already placed — finish without re-dialing.
+      const attempt = await this.prisma.callAttempt.findUnique({
+        where: { id: payload.attemptId },
+        select: { providerJobId: true, status: true },
+      });
+      if (attempt && (attempt.providerJobId || attempt.status !== TaskStatus.CALLING)) {
+        await this.markDispatchProcessed(event.id);
+        return true;
+      }
+
+      let result: Awaited<ReturnType<FreeSwitchService['originate']>>;
+      try {
+        result = await this.freeswitch.originate(
+          payload.to,
+          payload.attemptId,
+          payload.taskId,
+        );
+      } catch (error) {
+        // The call is already live on FreeSWITCH (a prior delivery originated it
+        // via the deterministic origination_uuid but crashed before committing).
+        // Treat as already-placed: the event pipeline owns the task state — never
+        // re-dial and never mark the task FAILED for a call that is in progress.
+        if (isCallAlreadyActiveError(error)) {
+          this.logger.warn(
+            `dispatch already active on FreeSWITCH, treating as placed attemptId=${payload.attemptId}`,
+          );
+          await this.markDispatchProcessed(event.id);
+          return true;
+        }
+        throw error;
+      }
+
       const processedAt = new Date();
       await this.prisma.$transaction([
         this.prisma.callAttempt.update({
@@ -196,6 +229,21 @@ export class OutboxWorker implements OnModuleInit, OnModuleDestroy {
     throw new Error(`Unsupported outbox event: ${event.type}`);
   }
 
+  /** Marks a dispatch outbox event processed without touching the call — used
+   * on the idempotent no-op paths (already dialed / already active). */
+  private async markDispatchProcessed(eventId: string): Promise<void> {
+    await this.prisma.outboxEvent.update({
+      where: { id: eventId },
+      data: {
+        status: 'processed',
+        processedAt: new Date(),
+        lastError: null,
+        lockedAt: null,
+        lockedBy: null,
+      },
+    });
+  }
+
   private async recordActionDelivered(
     payload: { taskId: string; attemptId?: string },
     actionType: string,
@@ -213,7 +261,13 @@ export class OutboxWorker implements OnModuleInit, OnModuleDestroy {
 
   private async handleFailure(event: OutboxRecord, error: Error): Promise<void> {
     const attempts = event.attempts + 1;
-    const terminal = attempts >= Number(process.env.OUTBOX_MAX_ATTEMPTS ?? 5);
+    // A provider error flagged non-retryable (bad config, unroutable number, an
+    // unrecognized -ERR rejection) will never succeed on retry — go terminal now
+    // instead of burning OUTBOX_MAX_ATTEMPTS redeliveries against the same wall.
+    // (Duplicate-UUID is handled as success in deliver() and never lands here.)
+    const nonRetryable = error instanceof FreeSwitchError && error.retryable === false;
+    const terminal =
+      nonRetryable || attempts >= Number(process.env.OUTBOX_MAX_ATTEMPTS ?? 5);
     const message = error.message.slice(0, 1000);
     const payload = parseOutboxPayload(event.type as OutboxEventType, event.payload);
     const eventType = outboxFailureCallEventType(event.type as OutboxEventType, terminal);

@@ -133,7 +133,7 @@ async def ws_main() -> None:
     agent, tasks, demo = _build_agent()
     # 空字符串/未设置 → None（asyncio 绑定所有接口，IPv4 + IPv6 双栈）
     host = os.getenv("VOICE_AGENT_WS_HOST") or None
-    port = int(os.getenv("VOICE_AGENT_WS_PORT", "8080"))
+    port = int(os.getenv("VOICE_AGENT_WS_PORT", "8090"))
     path = os.getenv("VOICE_AGENT_WS_PATH", "/audio-stream")
 
     server = VoiceAgentServer(host, port, path, agent, tasks, demo_server=demo)

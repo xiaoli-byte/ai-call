@@ -21,6 +21,7 @@ export type EslFrameParserErrorCode =
 
 const DEFAULT_MAX_HEADER_BYTES = 64 * 1024;
 const DEFAULT_MAX_BODY_BYTES = 16 * 1024 * 1024;
+const EMPTY_BUFFER = Buffer.alloc(0);
 
 export class EslFrameParserError extends Error {
   readonly name = 'EslFrameParserError';
@@ -37,7 +38,12 @@ export class EslFrameParserError extends Error {
 export class EslFrameParser {
   private readonly maxHeaderBytes: number;
   private readonly maxBodyBytes: number;
-  private buffer = Buffer.alloc(0);
+  // Unconsumed bytes are staged as-received and only concatenated when a frame
+  // can actually make progress (header boundary found, or body fully arrived).
+  // Concatenating on every push would recopy the growing residual each time —
+  // O(n²) when a large body streams in over many small TCP segments.
+  private chunks: Buffer[] = [];
+  private bufferedBytes = 0;
   private pending?: { headers: EslHeaders; bodyLength: number };
 
   constructor(options: EslFrameParserOptions = {}) {
@@ -58,17 +64,18 @@ export class EslFrameParser {
       const bytes = Buffer.isBuffer(chunk)
         ? chunk
         : Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength);
-      this.buffer = this.buffer.length === 0
-        ? Buffer.from(bytes)
-        : Buffer.concat([this.buffer, bytes]);
+      // Copy defensively: staged chunks outlive this call until coalesced.
+      this.chunks.push(Buffer.from(bytes));
+      this.bufferedBytes += bytes.byteLength;
     }
 
     const frames: EslFrame[] = [];
     while (true) {
       if (!this.pending) {
-        const boundary = findHeaderBoundary(this.buffer);
+        const buffer = this.coalesce();
+        const boundary = findHeaderBoundary(buffer);
         if (!boundary) {
-          if (this.buffer.length > this.maxHeaderBytes) {
+          if (this.bufferedBytes > this.maxHeaderBytes) {
             throw new EslFrameParserError('HEADER_TOO_LARGE');
           }
           break;
@@ -78,19 +85,22 @@ export class EslFrameParser {
         }
 
         const headers = parseHeaderBlock(
-          this.buffer.subarray(0, boundary.index),
+          buffer.subarray(0, boundary.index),
           false,
         );
         const bodyLength = contentLength(headers, this.maxBodyBytes);
-        this.buffer = this.buffer.subarray(boundary.index + boundary.length);
+        this.consumeFront(boundary.index + boundary.length);
         this.pending = { headers, bodyLength };
       }
 
-      if (this.buffer.length < this.pending.bodyLength) break;
+      // Body still incomplete: return without coalescing so subsequent chunks
+      // keep accumulating cheaply instead of recopying the partial body.
+      if (this.bufferedBytes < this.pending.bodyLength) break;
 
+      const buffer = this.coalesce();
       const { headers, bodyLength } = this.pending;
-      const body = Buffer.from(this.buffer.subarray(0, bodyLength));
-      this.buffer = this.buffer.subarray(bodyLength);
+      const body = Buffer.from(buffer.subarray(0, bodyLength));
+      this.consumeFront(bodyLength);
       this.pending = undefined;
       frames.push({ headers, body });
     }
@@ -100,14 +110,26 @@ export class EslFrameParser {
 
   /** Rejects a connection that ended in the middle of an ESL frame. */
   finish(): void {
-    if (this.pending || this.buffer.length > 0) {
+    if (this.pending || this.bufferedBytes > 0) {
       throw new EslFrameParserError('INCOMPLETE_FRAME');
     }
   }
 
-  reset(): void {
-    this.buffer = Buffer.alloc(0);
-    this.pending = undefined;
+  /** Folds staged chunks into a single buffer; amortized O(n) over the stream. */
+  private coalesce(): Buffer {
+    if (this.chunks.length === 0) return EMPTY_BUFFER;
+    if (this.chunks.length > 1) {
+      this.chunks = [Buffer.concat(this.chunks, this.bufferedBytes)];
+    }
+    return this.chunks[0];
+  }
+
+  /** Drops `length` leading bytes. Must be called only after `coalesce()`. */
+  private consumeFront(length: number): void {
+    if (length === 0) return;
+    const remainder = this.chunks[0].subarray(length);
+    this.chunks = remainder.byteLength > 0 ? [remainder] : [];
+    this.bufferedBytes = remainder.byteLength;
   }
 }
 

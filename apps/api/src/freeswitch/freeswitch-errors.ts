@@ -58,8 +58,19 @@ const RETRYABLE_PROVIDER_CODES = new Set([
   'SWITCH_CONGESTION',
 ]);
 
+/**
+ * `-ERR Duplicate [Call] UUID` — a re-`originate` with the same
+ * `origination_uuid` while the first call is still live. It is NOT a dispatch
+ * failure: the call already exists, so callers must treat it as already-placed
+ * (never re-dial, never mark the task FAILED). Recognizing it as a distinct,
+ * safe code is what lets the outbox tell "already dialing" apart from a real
+ * rejection.
+ */
+export const CALL_ALREADY_ACTIVE_PROVIDER_CODE = 'DUPLICATE';
+
 const SAFE_PROVIDER_CODES = new Set([
   ...RETRYABLE_PROVIDER_CODES,
+  CALL_ALREADY_ACTIVE_PROVIDER_CODE,
   'CALL_REJECTED',
   'INVALID_NUMBER_FORMAT',
   'NO_ANSWER',
@@ -83,6 +94,19 @@ export function rejectedCommandError(
     retryable: RETRYABLE_PROVIDER_CODES.has(providerCode),
     providerCode,
   });
+}
+
+/**
+ * True when `error` reports that a call for this `origination_uuid` is already
+ * active on FreeSWITCH. The outbox treats this as an idempotent success rather
+ * than dialing again or failing the task.
+ */
+export function isCallAlreadyActiveError(error: unknown): boolean {
+  return (
+    error instanceof FreeSwitchError
+    && error.operation === 'originate'
+    && error.providerCode === CALL_ALREADY_ACTIVE_PROVIDER_CODE
+  );
 }
 
 function safeProviderCode(replyText: string): string {

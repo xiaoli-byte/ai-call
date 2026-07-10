@@ -48,6 +48,7 @@ describe('OutboxWorker', () => {
         },
       },
       callAttempt: {
+        findUnique: async () => ({ providerJobId: null, status: TaskStatus.CALLING }),
         update: async (args: unknown) => {
           calls.push(['callAttempt.update', args]);
           return args;
@@ -102,6 +103,106 @@ describe('OutboxWorker', () => {
     assert.equal(calls[3][1].data.status, 'processed');
   });
 
+  it('skips re-dialing when a prior delivery already placed the call', async () => {
+    const calls: Call[] = [];
+    const prisma = {
+      $transaction: async (operations: unknown[]) => Promise.all(operations as Promise<unknown>[]),
+      outboxEvent: {
+        update: async (args: unknown) => {
+          calls.push(['outboxEvent.update', args]);
+          return args;
+        },
+      },
+      callAttempt: {
+        // Already dialed on a prior delivery — providerJobId committed.
+        findUnique: async () => ({ providerJobId: 'job-prev', status: TaskStatus.CALLING }),
+        update: async (args: unknown) => {
+          calls.push(['callAttempt.update', args]);
+          return args;
+        },
+      },
+      callEvent: { create: async (args: unknown) => { calls.push(['callEvent.create', args]); return args; } },
+    };
+    const freeswitch = {
+      originate: async () => {
+        calls.push(['freeswitch.originate']);
+        return { accepted: true as const, jobId: 'job-2', replyText: '+OK' };
+      },
+    };
+
+    const worker = new OutboxWorker(prisma as never, freeswitch as never, {} as never);
+    await (worker as unknown as { deliver(event: unknown): Promise<void> }).deliver({
+      id: 'event-1', aggregateId: 'attempt-1', type: 'call.dispatch_requested',
+      attempts: 0, deduplicationKey: 'dispatch-1',
+      payload: { taskId: 'task-1', attemptId: 'attempt-1', to: '+1001', from: '+1000' },
+    });
+
+    // No second real call; only the outbox event is marked processed.
+    assert.ok(!calls.some((c) => c[0] === 'freeswitch.originate'), 'must not re-originate');
+    assert.deepEqual(calls, [['outboxEvent.update', {
+      where: { id: 'event-1' },
+      data: { status: 'processed', processedAt: calls[0][1].data.processedAt, lastError: null, lockedAt: null, lockedBy: null },
+    }]]);
+  });
+
+  it('treats a call already active on FreeSWITCH as placed, without re-dialing or failing', async () => {
+    const calls: Call[] = [];
+    const prisma = {
+      $transaction: async (operations: unknown[]) => Promise.all(operations as Promise<unknown>[]),
+      outboxEvent: { update: async (args: unknown) => { calls.push(['outboxEvent.update', args]); return args; } },
+      callAttempt: {
+        findUnique: async () => ({ providerJobId: null, status: TaskStatus.CALLING }),
+        update: async (args: unknown) => { calls.push(['callAttempt.update', args]); return args; },
+      },
+      callEvent: { create: async (args: unknown) => { calls.push(['callEvent.create', args]); return args; } },
+    };
+    const { FreeSwitchError } = await import('../freeswitch/freeswitch-errors.js');
+    const freeswitch = {
+      originate: async () => {
+        throw new FreeSwitchError({
+          operation: 'originate', code: 'COMMAND_REJECTED', retryable: false, providerCode: 'DUPLICATE',
+        });
+      },
+    };
+
+    const worker = new OutboxWorker(prisma as never, freeswitch as never, {} as never);
+    await (worker as unknown as { deliver(event: unknown): Promise<void> }).deliver({
+      id: 'event-1', aggregateId: 'attempt-1', type: 'call.dispatch_requested',
+      attempts: 0, deduplicationKey: 'dispatch-1',
+      payload: { taskId: 'task-1', attemptId: 'attempt-1', to: '+1001', from: '+1000' },
+    });
+
+    // Outbox marked processed; no callAttempt/task FAILED write for a live call.
+    assert.ok(!calls.some((c) => c[0] === 'callAttempt.update'), 'must not mutate the live attempt');
+    assert.equal(calls[0][0], 'outboxEvent.update');
+    assert.equal(calls[0][1].data.status, 'processed');
+  });
+
+  it('sends a non-retryable dispatch error terminal on the first failure', async () => {
+    const updates: any[] = [];
+    const prisma = {
+      $transaction: async (fn: (tx: unknown) => Promise<void>) => fn({
+        outboxEvent: { update: async (args: any) => { updates.push(args); return args; } },
+        callEvent: { create: async (args: unknown) => args },
+        callAttempt: { update: async (args: unknown) => args },
+        outboundTask: { update: async (args: unknown) => args },
+      }),
+    };
+    const { FreeSwitchError } = await import('../freeswitch/freeswitch-errors.js');
+    const worker = new OutboxWorker(prisma as never, {} as never, {} as never);
+    const baseEvent = {
+      id: 'event-1', aggregateId: 'attempt-1', type: 'call.dispatch_requested',
+      deduplicationKey: 'dispatch-1',
+      payload: { taskId: 'task-1', attemptId: 'attempt-1', to: '+1001', from: '+1000' },
+    };
+    // attempts=0 (first try) but non-retryable → must go terminal, not retry.
+    await (worker as unknown as { handleFailure(event: unknown, error: Error): Promise<void> })
+      .handleFailure({ ...baseEvent, attempts: 0 }, new FreeSwitchError({
+        operation: 'originate', code: 'INVALID_CONFIGURATION', retryable: false,
+      }));
+    assert.equal(updates[0].data.status, 'failed');
+  });
+
   it('records processed batch metrics and backlog snapshots', async () => {
     const metrics = new MetricsService();
     const event = {
@@ -127,6 +228,7 @@ describe('OutboxWorker', () => {
         update: async (args: unknown) => args,
       },
       callAttempt: {
+        findUnique: async () => ({ providerJobId: null, status: TaskStatus.CALLING }),
         update: async (args: unknown) => args,
       },
       callEvent: {
