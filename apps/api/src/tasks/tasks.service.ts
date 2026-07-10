@@ -10,6 +10,8 @@ import type { ClsService } from 'nestjs-cls';
 import { createHash, randomUUID } from 'node:crypto';
 import {
   CallOutcome,
+  FAILED_HANGUP_CAUSES,
+  NO_ANSWER_HANGUP_CAUSES,
   SCENARIO_CONFIGS,
   Scenario,
   TaskPriority,
@@ -122,37 +124,8 @@ const STATUS_TRANSITIONS: Record<TaskStatus, ReadonlySet<TaskStatus>> = {
   [TaskStatus.CANCELLED]: new Set(),
 };
 
-const NO_ANSWER_HANGUP_CAUSES = new Set([
-  'NO_ANSWER',
-  'NO_USER_RESPONSE',
-  'USER_BUSY',
-  'CALL_REJECTED',
-  'ORIGINATOR_CANCEL',
-  'SUBSCRIBER_ABSENT',
-  'NORMAL_CLEARING',
-]);
-
-const FAILED_HANGUP_CAUSES = new Set([
-  'USER_NOT_REGISTERED',
-  'NO_ROUTE',
-  'NO_ROUTE_DESTINATION',
-  'UNALLOCATED_NUMBER',
-  'INVALID_NUMBER_FORMAT',
-  'DESTINATION_OUT_OF_ORDER',
-  'NETWORK_OUT_OF_ORDER',
-  'NORMAL_TEMPORARY_FAILURE',
-  'SWITCH_CONGESTION',
-  'REQUESTED_CHAN_UNAVAIL',
-  'RECOVERY_ON_TIMER_EXPIRE',
-  'BEARERCAPABILITY_NOTAVAIL',
-  'INCOMPATIBLE_DESTINATION',
-  'PROTOCOL_ERROR',
-  'MEDIA_ERROR',
-  'MEDIA_TIMEOUT',
-  'AUDIO_FORK_ERROR',
-  'BACKGROUND_JOB_FAILED',
-  'EVENT_LOSS_RECONCILED',
-]);
+// hangup-cause → 终态的 NO_ANSWER / FAILED 集合派生自 packages/shared 的单一权威分类表
+// (HANGUP_CAUSE_CLASSIFICATIONS)。此处不再各自维护副本,避免与 freeswitch-errors 漂移。
 
 const PROVIDER_EVENT_TRANSACTION_RETRIES = 3;
 const DEFAULT_PROVIDER_SNAPSHOT_GRACE_MS = 60_000;
@@ -1647,17 +1620,25 @@ function deriveTerminalStatus(
   answered: boolean,
 ): TaskStatus {
   const normalizedCause = normalizeHangupCause(hangupCause);
+  // 致命 cause 先判 FAILED——即便有应答证据也不翻 COMPLETED(技术性失败优先)。
   if (isFatalHangupCause(normalizedCause)) return TaskStatus.FAILED;
+  // R-B #4:应答证据存在时,即便 cause ∈ NO_ANSWER(如 NORMAL_CLEARING)也判 COMPLETED。
   if (answered) return TaskStatus.COMPLETED;
   if (normalizedCause && NO_ANSWER_HANGUP_CAUSES.has(normalizedCause)) return TaskStatus.NO_ANSWER;
+  // 唯一默认兜底:表内未收录的未知 cause(且未接通)判 FAILED。此为删除正则兜底后的
+  // 明确默认策略,不再靠子串正则猜测。
   return TaskStatus.FAILED;
 }
 
+// 致命挂断原因 = 权威分类表中 terminalStatus=FAILED 的 cause。
+// FAILED 与 NO_ANSWER 两集合互斥,故无需先排除 NO_ANSWER。
+// 历史上此处末尾有一段 /(NETWORK|PROTOCOL|…|FAIL|ERROR)/ 子串正则兜底:任何名字含
+// FAIL/ERROR 等的未知 cause 会被静默判 FAILED。该兜底脆弱且不可审计,已删除——
+// 表内未收录的未知 cause 统一走 deriveTerminalStatus 的唯一默认策略(未接通即 FAILED),
+// 不再靠子串猜测(行为差异见重构报告)。
 function isFatalHangupCause(value: unknown): boolean {
   const cause = normalizeHangupCause(value);
-  if (!cause || NO_ANSWER_HANGUP_CAUSES.has(cause)) return false;
-  if (FAILED_HANGUP_CAUSES.has(cause)) return true;
-  return /(?:NETWORK|PROTOCOL|MEDIA|ROUTE|REGISTER|UNALLOCATED|INVALID_NUMBER|CHAN_UNAVAIL|CONGESTION|INCOMPATIBLE|BEARER|RECOVERY|DESTINATION_OUT_OF_ORDER|FAIL|ERROR)/.test(cause);
+  return cause ? FAILED_HANGUP_CAUSES.has(cause) : false;
 }
 
 function backgroundJobFailureCause(value: unknown): string | undefined {

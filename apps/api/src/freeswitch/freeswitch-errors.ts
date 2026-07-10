@@ -1,3 +1,7 @@
+// provider-code 的可重试 / 可暴露集合派生自 packages/shared 的单一权威分类表
+// (HANGUP_CAUSE_CLASSIFICATIONS)。此处不再各自维护副本,避免与 tasks.service 漂移。
+import { RETRYABLE_PROVIDER_CODES, SAFE_PROVIDER_CODES } from '@ai-call/shared';
+
 export type FreeSwitchOperation =
   | 'connect'
   | 'hangup'
@@ -47,41 +51,16 @@ export class FreeSwitchError extends Error {
   }
 }
 
-const RETRYABLE_PROVIDER_CODES = new Set([
-  'DESTINATION_OUT_OF_ORDER',
-  'GATEWAY_DOWN',
-  'NETWORK_OUT_OF_ORDER',
-  'NORMAL_TEMPORARY_FAILURE',
-  'RECOVERY_ON_TIMER_EXPIRE',
-  'REQUESTED_CHAN_UNAVAIL',
-  'SERVICE_UNAVAILABLE',
-  'SWITCH_CONGESTION',
-]);
-
 /**
  * `-ERR Duplicate [Call] UUID` — a re-`originate` with the same
  * `origination_uuid` while the first call is still live. It is NOT a dispatch
  * failure: the call already exists, so callers must treat it as already-placed
  * (never re-dial, never mark the task FAILED). Recognizing it as a distinct,
  * safe code is what lets the outbox tell "already dialing" apart from a real
- * rejection.
+ * rejection. Its safe-to-expose classification lives in the shared table
+ * (`DUPLICATE`); this constant only names it for `isCallAlreadyActiveError`.
  */
 export const CALL_ALREADY_ACTIVE_PROVIDER_CODE = 'DUPLICATE';
-
-const SAFE_PROVIDER_CODES = new Set([
-  ...RETRYABLE_PROVIDER_CODES,
-  CALL_ALREADY_ACTIVE_PROVIDER_CODE,
-  'CALL_REJECTED',
-  'INVALID_NUMBER_FORMAT',
-  'NO_ANSWER',
-  'NO_ROUTE_DESTINATION',
-  'NORMAL_CLEARING',
-  'ORIGINATOR_CANCEL',
-  'SUBSCRIBER_ABSENT',
-  'UNALLOCATED_NUMBER',
-  'USER_BUSY',
-  'USER_NOT_REGISTERED',
-]);
 
 export function rejectedCommandError(
   operation: FreeSwitchOperation,

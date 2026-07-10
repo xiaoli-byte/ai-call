@@ -603,6 +603,78 @@ describe('TasksService', () => {
     assert.equal(calls[1][1].data.hangupCause, 'NORMAL_CLEARING');
   });
 
+  it('#B3 fatal cause (MEDIA_TIMEOUT) stays FAILED even with billsec answer evidence', async () => {
+    const calls: Call[] = [];
+    const occurredAt = '2026-07-02T00:02:00.000Z';
+    const prisma = providerEventPrisma(calls, {
+      task: taskRecord({ status: TaskStatus.CALLING, calledAt: null }),
+      attempt: attemptRecord({ status: TaskStatus.CALLING, answeredAt: null }),
+    });
+    const service = new TasksService(prisma as never, {} as never, scenarios as never, {} as never);
+
+    await service.recordProviderCallEvent({
+      provider: 'freeswitch',
+      providerEventId: 'event-hangup-media-timeout',
+      eventType: 'CHANNEL_HANGUP_COMPLETE',
+      providerCallId: 'provider-1',
+      occurredAt,
+      hangupCause: 'MEDIA_TIMEOUT',
+      raw: { 'Hangup-Cause': 'MEDIA_TIMEOUT', variable_billsec: '17' },
+    });
+
+    // 致命 cause 优先于应答证据:answered 也不翻 COMPLETED。
+    assert.equal(calls[0][1].data.status, TaskStatus.FAILED);
+    assert.equal(calls[1][1].data.status, TaskStatus.FAILED);
+  });
+
+  it('#B3 unknown cause, not answered → FAILED (single default policy, no regex)', async () => {
+    const calls: Call[] = [];
+    const occurredAt = '2026-07-02T00:02:00.000Z';
+    const prisma = providerEventPrisma(calls, {
+      task: taskRecord({ status: TaskStatus.CALLING, calledAt: null }),
+      attempt: attemptRecord({ status: TaskStatus.CALLING, answeredAt: null }),
+    });
+    const service = new TasksService(prisma as never, {} as never, scenarios as never, {} as never);
+
+    await service.recordProviderCallEvent({
+      provider: 'freeswitch',
+      providerEventId: 'event-hangup-unknown',
+      eventType: 'CHANNEL_HANGUP_COMPLETE',
+      providerCallId: 'provider-1',
+      occurredAt,
+      hangupCause: 'SOME_UNLISTED_CAUSE',
+      raw: { 'Hangup-Cause': 'SOME_UNLISTED_CAUSE' },
+    });
+
+    assert.equal(calls[0][1].data.status, TaskStatus.FAILED);
+    assert.equal(calls[1][1].data.status, TaskStatus.FAILED);
+  });
+
+  it('#B3 regex-removal diff: unknown FAIL-named cause with answer evidence → COMPLETED', async () => {
+    // 旧的子串正则会把 "SYSTEM_FAILURE"(含 FAIL)判致命→FAILED,压过应答证据。
+    // 删除正则后,该未收录 cause 走应答证据分支→COMPLETED。此为报告中列明的行为差异。
+    const calls: Call[] = [];
+    const occurredAt = '2026-07-02T00:02:00.000Z';
+    const prisma = providerEventPrisma(calls, {
+      task: taskRecord({ status: TaskStatus.CALLING, calledAt: null }),
+      attempt: attemptRecord({ status: TaskStatus.CALLING, answeredAt: null }),
+    });
+    const service = new TasksService(prisma as never, {} as never, scenarios as never, {} as never);
+
+    await service.recordProviderCallEvent({
+      provider: 'freeswitch',
+      providerEventId: 'event-hangup-system-failure',
+      eventType: 'CHANNEL_HANGUP_COMPLETE',
+      providerCallId: 'provider-1',
+      occurredAt,
+      hangupCause: 'SYSTEM_FAILURE',
+      raw: { 'Hangup-Cause': 'SYSTEM_FAILURE', variable_billsec: '9' },
+    });
+
+    assert.equal(calls[0][1].data.status, TaskStatus.COMPLETED);
+    assert.equal(calls[1][1].data.status, TaskStatus.COMPLETED);
+  });
+
   it('#3 reconcile skips attempts not yet dialed (providerJobId null)', async () => {
     const calls: Call[] = [];
     const observedAt = new Date('2026-07-02T01:00:00.000Z');
