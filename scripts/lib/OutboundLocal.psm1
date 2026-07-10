@@ -489,15 +489,30 @@ function Invoke-FreeSwitchLocalCommand {
   if ($Command.IndexOf("`n") -ge 0 -or $Command.IndexOf("`r") -ge 0 -or $Command.IndexOf([char]0) -ge 0) {
     throw 'Rejected an unsafe FreeSWITCH command.'
   }
-  $output = @(& docker exec ai-call-freeswitch fs_cli -x $Command 2>&1)
-  if ($LASTEXITCODE -ne 0) { throw 'FreeSWITCH control command failed.' }
-  return ($output -join "`n").Trim()
+  # 原生命令的 stderr 不并入 stdout（2>&1 会污染 fs_cli 的 JSON 输出）；
+  # 单独重定向到临时文件，仅用于失败时的诊断日志。
+  $stderrPath = Join-Path ([IO.Path]::GetTempPath()) ('ai-call-fs-cli-' + [guid]::NewGuid().ToString('N') + '.stderr.log')
+  try {
+    $output = @(& docker exec ai-call-freeswitch fs_cli -x $Command 2>$stderrPath)
+    $exitCode = $LASTEXITCODE
+    if ((Test-Path -LiteralPath $stderrPath) -and (Get-Item -LiteralPath $stderrPath).Length -gt 0) {
+      Write-Verbose ('FreeSWITCH stderr: ' + ([IO.File]::ReadAllText($stderrPath)).Trim())
+    }
+    if ($exitCode -ne 0) { throw 'FreeSWITCH control command failed.' }
+    return ($output -join "`n").Trim()
+  } finally {
+    if (Test-Path -LiteralPath $stderrPath) { Remove-Item -LiteralPath $stderrPath -Force -ErrorAction SilentlyContinue }
+  }
 }
 
 function ConvertFrom-FreeSwitchJson {
   param([Parameter(Mandatory = $true)][string]$Command)
   $raw = Invoke-FreeSwitchLocalCommand -Command $Command
-  try { return $raw | ConvertFrom-Json } catch { throw 'FreeSWITCH returned malformed JSON.' }
+  # 截取首个 '{' 或 '[' 起始的子串，防止任何 stdout 前缀噪声（横幅/告警行）污染解析。
+  $jsonStart = [regex]::Match($raw, '[\{\[]')
+  if (-not $jsonStart.Success) { throw 'FreeSWITCH returned malformed JSON.' }
+  $jsonText = $raw.Substring($jsonStart.Index)
+  try { return $jsonText | ConvertFrom-Json } catch { throw 'FreeSWITCH returned malformed JSON.' }
 }
 
 function Test-FreeSwitchRegistration {

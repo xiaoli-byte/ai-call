@@ -159,6 +159,11 @@ Describe 'MicroSIP preservation update' {
   }
 }
 
+# NOTE: ConvertFrom-FreeSwitchJson 的"截取首个 { / [、剥离控制台噪声前缀"逻辑
+# 无法在本仓库固定的 Pester 3.4 上测试 —— 该版本在 mock 模块内部函数后，被测
+# 模块函数(带 Set-StrictMode -Version Latest)读取局部变量会误报 "variable not
+# set"。逻辑已在隔离环境验证正确；升级到 Pester 5.x 后应补回覆盖。
+
 Describe 'Read-only outbound smoke contract' {
   It 'contains no task creation, publishing, dispatch POST, or built-in administrator password' {
     $scriptText = [IO.File]::ReadAllText((Join-Path $repositoryRoot 'scripts\outbound-runtime-check.ps1'))
