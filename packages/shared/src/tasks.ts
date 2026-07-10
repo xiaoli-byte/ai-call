@@ -45,6 +45,8 @@ export enum CallOutcome {
   ESCALATED = 'escalated',
   /** 通话异常 */
   ERROR = 'error',
+  /** 通话正常完成但未捕获明确意向（中性终态；voice-agent 非转人工默认上报） */
+  COMPLETED = 'completed',
 }
 
 /** 外呼任务 */
