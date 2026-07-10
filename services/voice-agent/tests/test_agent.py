@@ -505,6 +505,94 @@ async def test_receive_audio_suppressed_during_tts_tail_guard_then_recovers(
     assert stt.sent == [b"\x01" * 640]
 
 
+def _pcm_frame(amplitude: int, frame_ms: int = 20, sample_rate: int = 16000) -> bytes:
+    """构造定幅 PCM16 单声道帧，用于合成高/低能量测试音频。"""
+    num_samples = sample_rate * frame_ms // 1000
+    return amplitude.to_bytes(2, "little", signed=True) * num_samples
+
+
+@pytest.fixture
+def rms_barge_agent(mock_llm, mock_tts, mock_tools, mock_rag, mock_tasks) -> VoiceAgent:
+    """开启 RMS barge-in 粗检测的 VoiceAgent，用于测试挂起容差逻辑。"""
+    return VoiceAgent(
+        llm=mock_llm,
+        tts=mock_tts,
+        tools=mock_tools,
+        rag=mock_rag,
+        tasks=mock_tasks,
+        barge_in_during_tts_enabled=True,
+        barge_in_min_ms=500,
+        barge_in_rms_threshold=0.08,
+        barge_in_hangover_ms=240,
+    )
+
+
+def test_barge_in_rms_high_low_alternating_within_hangover_accumulates(
+    rms_barge_agent: VoiceAgent, mock_tts
+) -> None:
+    """高-低交替、低谷时长均小于 hangover 时，有效发声时长应继续累计并最终触发。
+
+    自然语音音节间存在短暂能量低谷（远小于 hangover），不应清零已累计的
+    有效发声时长，否则连续说话永远攒不够 barge_in_min_ms。
+    """
+    call_id = "rms-barge-1"
+    rms_barge_agent._speaking[call_id] = True
+
+    high_frame = _pcm_frame(12000)  # rms ≈ 0.366，远超阈值 0.08
+    low_frame = _pcm_frame(200)  # rms ≈ 0.006，远低于阈值
+    # 每轮 5 个高帧（100ms）+ 3 个低帧（60ms，< hangover 240ms），共 5 轮
+    # 累计有效发声 = 5*5*20ms = 500ms，达到 barge_in_min_ms 应触发
+    audio_bytes = (high_frame * 5 + low_frame * 3) * 5
+
+    triggered = rms_barge_agent._observe_barge_in_candidate(call_id, audio_bytes)
+
+    assert triggered
+    assert mock_tts.interrupt_called
+    assert call_id not in rms_barge_agent._barge_in_voice_ms
+    assert call_id not in rms_barge_agent._barge_in_low_ms
+
+
+def test_barge_in_rms_low_gap_exceeding_hangover_resets_accumulation(
+    rms_barge_agent: VoiceAgent, mock_tts
+) -> None:
+    """低谷本身持续达到 hangover 时，视为真正停顿，应清零已累计的发声时长。"""
+    call_id = "rms-barge-2"
+    rms_barge_agent._speaking[call_id] = True
+
+    high_frame = _pcm_frame(12000)
+    low_frame = _pcm_frame(200)
+    # 5 个高帧（100ms，未达阈值）+ 12 个低帧（240ms == hangover，触发清零）
+    audio_bytes = high_frame * 5 + low_frame * 12
+
+    triggered = rms_barge_agent._observe_barge_in_candidate(call_id, audio_bytes)
+
+    assert not triggered
+    assert not mock_tts.interrupt_called
+    assert rms_barge_agent._barge_in_voice_ms.get(call_id, 0) == 0
+
+    # 清零后再补少量高帧，仍不足 barge_in_min_ms，不应触发
+    triggered_again = rms_barge_agent._observe_barge_in_candidate(call_id, high_frame * 5)
+    assert not triggered_again
+    assert not mock_tts.interrupt_called
+
+
+def test_barge_in_rms_all_low_energy_never_triggers(
+    rms_barge_agent: VoiceAgent, mock_tts
+) -> None:
+    """全程低能量（如静音/背景噪声）不应触发 barge-in。"""
+    call_id = "rms-barge-3"
+    rms_barge_agent._speaking[call_id] = True
+
+    low_frame = _pcm_frame(200)
+    audio_bytes = low_frame * 50  # 1000ms 低能量音频
+
+    triggered = rms_barge_agent._observe_barge_in_candidate(call_id, audio_bytes)
+
+    assert not triggered
+    assert not mock_tts.interrupt_called
+    assert rms_barge_agent._barge_in_voice_ms.get(call_id, 0) == 0
+
+
 class _GateFakeSTT:
     def __init__(self) -> None:
         self.sent: list[bytes] = []
@@ -1015,3 +1103,72 @@ async def test_flow_transfer_passes_extension(
 
     assert captured_callbacks.escalations == ["客户要求人工"]
     assert captured_callbacks.escalation_extensions == ["1001"]
+
+
+# ---------------------------------------------------------------------------
+# _speak 取消来源区分：外部任务取消(挂断)必须传播；tts.interrupt() 自抛(barge-in)吞掉
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_speak_propagates_external_cancellation(agent: VoiceAgent) -> None:
+    """挂断/会话拆除时 session_task.cancel() 落在 synthesize 里,
+    CancelledError 必须传播出 _speak,否则会话僵尸运行。"""
+
+    class HangingTTS:
+        def __init__(self) -> None:
+            self.interrupt_called = False
+
+        async def synthesize(self, text, on_chunk, speaker=None, instruct_text=None):
+            await asyncio.Event().wait()  # 永不返回,模拟合成期被外部取消
+
+        def interrupt(self) -> None:
+            self.interrupt_called = True
+
+        @property
+        def name(self) -> str:
+            return "hanging"
+
+    call_id = "speak-cancel-external"
+    agent._tts = HangingTTS()  # type: ignore[assignment]
+    agent._callbacks[call_id] = NoopCallbacks()
+    agent._speaking[call_id] = True
+
+    task = asyncio.create_task(agent._speak(call_id, "你好"))
+    await asyncio.sleep(0.02)  # 进入 synthesize 的 await
+    task.cancel()  # 模拟 session_task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    # finally 仍应清理 _speaking
+    assert call_id not in agent._speaking
+
+
+@pytest.mark.asyncio
+async def test_speak_swallows_barge_in_cancellation(agent: VoiceAgent) -> None:
+    """tts.interrupt() 令 synthesize 自抛 CancelledError = barge-in,
+    _speak 应吞掉并正常返回(不传播)。"""
+
+    class SelfInterruptingTTS:
+        def __init__(self) -> None:
+            self.interrupt_called = False
+
+        async def synthesize(self, text, on_chunk, speaker=None, instruct_text=None):
+            # 模拟 interrupt() 后 synthesize 自抛 CancelledError(非外部 task.cancel)
+            raise asyncio.CancelledError()
+
+        def interrupt(self) -> None:
+            self.interrupt_called = True
+
+        @property
+        def name(self) -> str:
+            return "self-interrupting"
+
+    call_id = "speak-cancel-bargein"
+    agent._tts = SelfInterruptingTTS()  # type: ignore[assignment]
+    agent._callbacks[call_id] = NoopCallbacks()
+    agent._speaking[call_id] = True
+
+    # 直接以任务运行以便 current_task().cancelling() 有意义;不应抛出
+    await asyncio.create_task(agent._speak(call_id, "你好"))
+    assert call_id not in agent._speaking

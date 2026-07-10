@@ -25,6 +25,7 @@ import os
 import secrets
 import time
 import wave
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import parse_qs, urlparse
@@ -512,7 +513,39 @@ class VoiceAgentServer:
             if channel == "web":
                 await self._send_json(ws, {"type": "error", "message": str(err)})
             return False
+        finally:
+            # 会话拆除兜底：无论正常结束/取消/异常，都终结可能残留的节拍泵，
+            # 防止挂断/异常路径泵泄漏（正常路径此时 stream 已为 None，no-op）。
+            await callbacks.cancel_playback()
         return True
+
+
+# 音频恒为 16kHz/16bit/mono → 32 字节 = 1ms，32000 字节 = 1s。
+# 节拍泵用它把"按字节计的已投递量"换算成"按实时计的应发时刻"。
+_AUDIO_BYTES_PER_SEC = 32000
+
+
+def _env_int(name: str, default: int) -> int:
+    """安全解析整型环境变量：空/非数字时回退默认值，不让构造炸。"""
+    try:
+        return int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+@dataclass
+class _PacedStream:
+    """一次 utterance 的节拍投递状态（每次 TTS 合成一个，打断/结束即弃）。
+
+    queue 里放 TTS 原始块，None 为终止哨兵；pump 是单消费者协程任务；
+    t0 在"第一次实际发送前"取样，作为字节钟原点；sent_bytes 记已投递字节数
+    （既是节流基准，也是 utterance 结束时等待电话真实播完的依据）。
+    """
+
+    queue: "asyncio.Queue[Optional[bytes]]"
+    pump: "Optional[asyncio.Task[None]]" = None
+    t0: Optional[float] = None
+    sent_bytes: int = 0
 
 
 class WebSocketCallbacks:
@@ -550,6 +583,15 @@ class WebSocketCallbacks:
         self._playback_buffer = bytearray()
         playback_chunk_ms = int(os.getenv("FREESWITCH_PLAYBACK_CHUNK_MS", "960"))
         self._playback_chunk_bytes = max(3200, playback_chunk_ms * 32)
+        # 节拍投递（paced delivery）：让投递按实时节拍走，Python 侧始终握着
+        # 未投递音频，长播报期打断只需杀在途 → _speaking 语义回归"电话还在放"。
+        # 回退开关关闭时完全走旧的逐块立即投递路径（逐行为等价）。
+        self._paced_enabled = (
+            os.getenv("TTS_PACED_DELIVERY_ENABLED", "true").lower() != "false"
+        )
+        self._paced_lead_ms = _env_int("TTS_PACED_LEAD_MS", 1200)
+        self._paced_tail_margin_ms = _env_int("TTS_PACED_TAIL_MARGIN_MS", 200)
+        self._stream: Optional[_PacedStream] = None
 
     async def on_agent_speech(self, text: str) -> None:
         logger.info("[Agent] 🤖 %s", text)
@@ -581,49 +623,196 @@ class WebSocketCallbacks:
         """把 TTS 合成的 PCM 音频推回给 FreeSWITCH 播放。"""
         self._output_chunks += 1
         self._output_bytes += len(audio)
-        if self._audio_response_format == "esl-file":
-            self._playback_buffer.extend(audio)
-            while len(self._playback_buffer) >= self._playback_chunk_bytes:
-                chunk = bytes(self._playback_buffer[: self._playback_chunk_bytes])
-                del self._playback_buffer[: self._playback_chunk_bytes]
-                await self._play_audio_chunk(chunk)
+        if not self._paced_enabled:
+            # ===== 旧路径：逐块立即投递（回退开关关闭时逐行为等价） =====
+            if self._audio_response_format == "esl-file":
+                self._playback_buffer.extend(audio)
+                while len(self._playback_buffer) >= self._playback_chunk_bytes:
+                    chunk = bytes(self._playback_buffer[: self._playback_chunk_bytes])
+                    del self._playback_buffer[: self._playback_chunk_bytes]
+                    await self._play_audio_chunk(chunk)
+                return
+            if self._output_chunks == 1 or self._output_chunks % 50 == 0:
+                logger.info(
+                    "[MediaOut] callId=%s chunks=%d bytes=%d format=%s",
+                    self._call_id,
+                    self._output_chunks,
+                    self._output_bytes,
+                    self._audio_response_format,
+                )
+            if self._audio_response_format == "base64-json":
+                await self._send_json(
+                    {
+                        "type": "streamAudio",
+                        "data": {
+                            "audioDataType": "raw",
+                            "sampleRate": 16000,
+                            "audioData": base64.b64encode(audio).decode("ascii"),
+                        },
+                    }
+                )
+                return
+            await self._send_bytes(audio)
             return
-        if self._output_chunks == 1 or self._output_chunks % 50 == 0:
-            logger.info(
-                "[MediaOut] callId=%s chunks=%d bytes=%d format=%s",
-                self._call_id,
-                self._output_chunks,
-                self._output_bytes,
-                self._audio_response_format,
+
+        # ===== 节拍泵路径：只入队，实时节流交给单消费者泵 =====
+        # 入口守卫：清理罕见的孤儿泵（上一次 utterance 因非打断异常退出但未清理）。
+        if self._stream is not None and (
+            self._stream.pump is None or self._stream.pump.done()
+        ):
+            self._stream = None
+        if self._stream is None:
+            self._open_stream()
+        assert self._stream is not None
+        self._stream.queue.put_nowait(audio)
+        # 让出一个事件循环 tick，使泵能立即投递 LEAD 窗口内已就绪的块（首包
+        # 延迟不劣化）；节流本身由泵按字节钟执行，这里不阻塞 QwenTTS ws 读取。
+        await asyncio.sleep(0)
+
+    def _open_stream(self) -> None:
+        """为一次 utterance 创建队列并启动节拍泵。"""
+        queue: "asyncio.Queue[Optional[bytes]]" = asyncio.Queue()
+        stream = _PacedStream(queue=queue)
+        stream.pump = asyncio.create_task(self._run_pump(stream))
+        self._stream = stream
+
+    async def _run_pump(self, stream: "_PacedStream") -> None:
+        """节拍泵：单消费者，按字节钟把音频节流投递给下游。
+
+        为什么要泵：_speaking 的旧语义是"投递指令发完"，而投递远快于实时，
+        长播报时电话还在放、Python 已清 _speaking → STT/RMS 打断全失效。让投递
+        本身按实时节拍走，utterance 结束时等到电话真实播完才返回，_speaking 的
+        清除时刻 ≈ 真实播完时刻，打断全程有效，agent.py 零改动。
+        """
+        esl_file = self._audio_response_format == "esl-file"
+        # esl-file 聚合缓冲：泵私有，打断随泵一起丢弃，故无需清 self._playback_buffer。
+        buffer = bytearray()
+        while True:
+            item = await stream.queue.get()
+            if item is None:
+                # 终止哨兵：flush esl-file 残余，再等到电话真实播完 + 尾裕量
+                if esl_file and buffer:
+                    await self._paced_send(stream, bytes(buffer))
+                    buffer.clear()
+                if stream.t0 is not None:
+                    target = (
+                        stream.t0
+                        + stream.sent_bytes / _AUDIO_BYTES_PER_SEC
+                        + self._paced_tail_margin_ms / 1000
+                    )
+                    delay = target - time.monotonic()
+                    if delay > 0:
+                        await asyncio.sleep(delay)
+                if esl_file:
+                    # 保留旧的"stream complete"日志语义（泵退出前打）
+                    logger.info(
+                        "[Playback] callId=%s stream complete source_chunks=%d files=%d bytes=%d",
+                        self._call_id,
+                        self._output_chunks,
+                        self._playback_sequence,
+                        self._output_bytes,
+                    )
+                return
+            if esl_file:
+                buffer.extend(item)
+                while len(buffer) >= self._playback_chunk_bytes:
+                    chunk = bytes(buffer[: self._playback_chunk_bytes])
+                    del buffer[: self._playback_chunk_bytes]
+                    await self._paced_send(stream, chunk)
+            else:
+                await self._paced_send(stream, item)
+
+    async def _paced_send(self, stream: "_PacedStream", chunk: bytes) -> None:
+        """按字节钟节流后，用现有发送路径投递一个块。"""
+        if stream.t0 is not None:
+            # 第 k 块应在 t0 + 已投递时长 - LEAD 时刻发出；
+            # LEAD 窗口内 delay<=0 立即放行，此后按实时节拍节流。
+            target = (
+                stream.t0
+                + stream.sent_bytes / _AUDIO_BYTES_PER_SEC
+                - self._paced_lead_ms / 1000
             )
-        if self._audio_response_format == "base64-json":
+            delay = target - time.monotonic()
+            if delay > 0:
+                await asyncio.sleep(delay)
+        if self._audio_response_format == "esl-file":
+            await self._play_audio_chunk(chunk)
+        elif self._audio_response_format == "base64-json":
             await self._send_json(
                 {
                     "type": "streamAudio",
                     "data": {
                         "audioDataType": "raw",
                         "sampleRate": 16000,
-                        "audioData": base64.b64encode(audio).decode("ascii"),
+                        "audioData": base64.b64encode(chunk).decode("ascii"),
                     },
                 }
             )
+        else:
+            await self._send_bytes(chunk)
+        stream.sent_bytes += len(chunk)
+        if stream.t0 is None:
+            # 首块投递完成后再起字节钟原点：把写 WAV + ESL 往返耗时计入，
+            # 否则原点偏早、极端下尾部 hold 会提前结束。首包延迟不变（首块已放行）。
+            stream.t0 = time.monotonic()
+
+    def _cancel_stream(self) -> None:
+        """终结当前节拍泵并丢弃未投递音频（打断/会话拆除共用，同步、不发 uuid_break）。"""
+        stream = self._stream
+        self._stream = None
+        if stream is None:
             return
-        await self._send_bytes(audio)
+        if stream.pump is not None and not stream.pump.done():
+            stream.pump.cancel()
+        while not stream.queue.empty():
+            try:
+                stream.queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+
+    async def cancel_playback(self) -> None:
+        """会话拆除兜底：终结节拍泵，防挂断/异常路径泵泄漏（不发 uuid_break）。"""
+        stream = self._stream
+        self._cancel_stream()
+        if stream is not None and stream.pump is not None:
+            try:
+                await stream.pump
+            except (asyncio.CancelledError, Exception):
+                pass
 
     async def on_audio_output_complete(self) -> None:
         """结束当前流式文件播放批次。"""
-        if self._audio_response_format == "esl-file":
-            if self._playback_buffer:
-                chunk = bytes(self._playback_buffer)
-                self._playback_buffer.clear()
-                await self._play_audio_chunk(chunk)
-            logger.info(
-                "[Playback] callId=%s stream complete source_chunks=%d files=%d bytes=%d",
-                self._call_id,
-                self._output_chunks,
-                self._playback_sequence,
-                self._output_bytes,
-            )
+        if not self._paced_enabled:
+            # ===== 旧路径 =====
+            if self._audio_response_format == "esl-file":
+                if self._playback_buffer:
+                    chunk = bytes(self._playback_buffer)
+                    self._playback_buffer.clear()
+                    await self._play_audio_chunk(chunk)
+                logger.info(
+                    "[Playback] callId=%s stream complete source_chunks=%d files=%d bytes=%d",
+                    self._call_id,
+                    self._output_chunks,
+                    self._playback_sequence,
+                    self._output_bytes,
+                )
+            return
+
+        # ===== 节拍泵路径：等泵把最后一块播完（含尾裕量）才返回 =====
+        # 这样 _speak() finally 清 _speaking 的时刻 ≈ 电话真实播完时刻。
+        stream = self._stream
+        if stream is None:
+            return
+        stream.queue.put_nowait(None)
+        try:
+            await stream.pump
+        except asyncio.CancelledError:
+            # 双保险：speak task 被取消时同时终结泵，再向上抛（取消链契约）
+            if stream.pump is not None:
+                stream.pump.cancel()
+            raise
+        finally:
+            self._stream = None
 
     async def _play_audio_chunk(self, audio: bytes) -> None:
         """将一个聚合 PCM 分片写为 WAV 并排队到 FreeSWITCH。"""
@@ -673,6 +862,11 @@ class WebSocketCallbacks:
           uuid_broadcast 队列；失败仅 warn 不抛
         - FreeSWITCH raw-pcm 直推：无服务端可清的队列，no-op
         """
+        if self._paced_enabled:
+            # 打断优先杀在途：未投递音频根本不出 Python（直接弃队列 + 停泵）。
+            # 与 on_audio_output_complete 的 CancelledError 分支共同构成取消链双保险：
+            # synthesize 中途被打断时 complete 不会被调用 → 泵由这里终结。
+            self._cancel_stream()
         if self._web_channel:
             await self._send_json({"type": "clear_audio"})
             logger.info(
@@ -769,6 +963,19 @@ class _ESLClient:
         return cls(reader, writer)
 
     async def api(self, command: str) -> str:
+        # 共享 ESL 连接：把"锁+写+读"整体放进被 shield 保护的内部协程。
+        # 取消（如节拍泵在读处被 cancel）只中断等待者，_exchange 交换后台跑完 →
+        # 响应帧不会滞留 socket，连接始终对齐，下一条命令不会错读上一条的响应。
+        task = asyncio.ensure_future(self._exchange(command))
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            # 等待者被取消：让交换后台跑完保持连接对齐；吞掉其结果/异常
+            # 防 "Future exception was never retrieved" 噪声。
+            task.add_done_callback(lambda t: t.cancelled() or t.exception())
+            raise
+
+    async def _exchange(self, command: str) -> str:
         async with self._command_lock:
             self._writer.write(f"api {command}\n\n".encode())
             await self._writer.drain()

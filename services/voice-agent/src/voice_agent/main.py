@@ -84,6 +84,7 @@ def _build_agent() -> tuple[VoiceAgent, TaskClient, Any]:
     barge_in_during_tts_enabled = _env_bool("BARGE_IN_DURING_TTS_ENABLED", True)
     barge_in_min_ms = int(os.getenv("BARGE_IN_MIN_MS", "500"))
     barge_in_rms_threshold = float(os.getenv("BARGE_IN_RMS_THRESHOLD", "0.08"))
+    barge_in_hangover_ms = int(os.getenv("BARGE_IN_HANGOVER_MS", "240"))
 
     agent = VoiceAgent(
         llm=llm,
@@ -108,6 +109,7 @@ def _build_agent() -> tuple[VoiceAgent, TaskClient, Any]:
         barge_in_during_tts_enabled=barge_in_during_tts_enabled,
         barge_in_min_ms=barge_in_min_ms,
         barge_in_rms_threshold=barge_in_rms_threshold,
+        barge_in_hangover_ms=barge_in_hangover_ms,
     )
 
     # 构造 DemoServer（/asr-stream + /tts-stream），共享 agent 的 VAD/STT/TTS 配置

@@ -43,6 +43,30 @@ from .vad import VoiceActivityDetector
 logger = logging.getLogger(__name__)
 
 
+def _is_degenerate_transcript(text: str) -> bool:
+    """ASR 幻觉过滤。
+
+    话机通道无 AEC 时，TTS 回声/环境噪声常被识别成单 token 高频重复
+    （实测如 "the the the the ..."）。此类退化结果不是真实用户话语，
+    不应污染转写、驱动 LLM 或触发端点。判定保守，仅命中明显重复，
+    避免误伤正常短句（中文无空格短句 token 数为 1，天然不命中）。
+    """
+    stripped = text.strip()
+    if not stripped:
+        return True
+    tokens = stripped.split()
+    if len(tokens) >= 5:
+        dominant = max(set(tokens), key=tokens.count)
+        if tokens.count(dominant) / len(tokens) >= 0.6:
+            return True
+    compact = stripped.replace(" ", "")
+    if len(compact) >= 8:
+        dominant_char = max(set(compact), key=compact.count)
+        if compact.count(dominant_char) / len(compact) >= 0.7:
+            return True
+    return False
+
+
 class VoiceAgent:
     """语音对话主循环 - 与具体传输层解耦。
 
@@ -77,6 +101,7 @@ class VoiceAgent:
         barge_in_during_tts_enabled: bool = False,
         barge_in_min_ms: int = 500,
         barge_in_rms_threshold: float = 0.08,
+        barge_in_hangover_ms: int = 240,
     ) -> None:
         # AI providers（共享实例）
         self._llm = llm
@@ -114,6 +139,9 @@ class VoiceAgent:
         self._barge_in_during_tts_enabled = barge_in_during_tts_enabled
         self._barge_in_min_ms = max(0, barge_in_min_ms)
         self._barge_in_rms_threshold = max(0.0, barge_in_rms_threshold)
+        # 挂起容差：自然语音音节间存在短暂能量低谷，容差内不清零已累计的
+        # "有效发声"时长，避免连续语音永远攒不够 barge_in_min_ms。
+        self._barge_in_hangover_ms = max(0, barge_in_hangover_ms)
 
         # 会话状态（call_id → ...）
         self._sessions: dict[str, CallSession] = {}
@@ -128,6 +156,8 @@ class VoiceAgent:
         self._asr_suppressed_until: dict[str, float] = {}
         self._asr_gate_logged: set[str] = set()
         self._barge_in_voice_ms: dict[str, int] = {}
+        self._barge_in_low_ms: dict[str, int] = {}  # 挂起容差内的连续低能量累计（call_id → ms）
+        self._barge_in_probe: dict[str, tuple[float, float]] = {}  # call_id → (窗口起始, 窗口内 max_rms)，仅用于日志探针
         self._ended: set[str] = set()
         self._escalated: set[str] = set()  # 标记本次会话是否触发过转人工
         self._dry_run: dict[str, bool] = {}  # 调试模式标记（按 call_id）
@@ -387,6 +417,8 @@ class VoiceAgent:
         self._speaking[call_id] = True
         self._asr_suppressed_until.pop(call_id, None)
         self._barge_in_voice_ms.pop(call_id, None)
+        self._barge_in_low_ms.pop(call_id, None)
+        self._barge_in_probe.pop(call_id, None)
         try:
             tts_chunks = 0
             tts_bytes = 0
@@ -424,6 +456,12 @@ class VoiceAgent:
                 tts_bytes,
             )
         except asyncio.CancelledError:
+            task = asyncio.current_task()
+            if task is not None and task.cancelling():
+                # 外部任务取消（挂断/会话拆除时 session_task.cancel()）：必须向上
+                # 传播，否则 CancelledError 被吞、会话继续僵尸运行。
+                raise
+            # tts.interrupt() 自抛的 CancelledError = barge-in，按原设计吞掉
             logger.info("[VoiceAgent] call_id=%s TTS cancelled (barge-in)", call_id)
         finally:
             was_interrupted = not self._speaking.get(call_id, False)
@@ -435,6 +473,8 @@ class VoiceAgent:
                         time.monotonic() + self._asr_tts_tail_guard_ms / 1000
                     )
                 self._barge_in_voice_ms.pop(call_id, None)
+                self._barge_in_low_ms.pop(call_id, None)
+                self._barge_in_probe.pop(call_id, None)
             self._speaking.pop(call_id, None)
 
     def _interrupt_speaking(self, call_id: str) -> None:
@@ -499,18 +539,45 @@ class VoiceAgent:
 
         默认关闭。开启后只基于持续高能量做粗检测；达到阈值时中断 TTS，
         但不会把当前这段可能包含回声的音频送入 ASR，后续音频再正常识别。
+
+        挂起容差（hangover）：自然语音音节间存在短暂能量低谷，若一帧低于
+        阈值就把已累计的"有效发声"时长清零，连续说话也永远攒不够
+        barge_in_min_ms，检测形同虚设。改为低谷在容差内先只累计低谷自身
+        时长、不清零已累计的发声时长；只有低谷本身持续达到容差才判定为
+        真正的停顿，此时才清零重新开始计数。
         """
         if not self._barge_in_during_tts_enabled or not self._speaking.get(call_id):
             return False
         triggered = False
         for frame in audio.split_into_frames(audio_bytes, self._vad_frame_ms, 16000):
             rms = audio.compute_rms(frame)
+
+            # 探针日志：每约 1 秒输出一次窗口内峰值 RMS，用于真机通话时校准阈值。
+            now = time.monotonic()
+            window_start, window_max_rms = self._barge_in_probe.get(call_id, (now, 0.0))
+            window_max_rms = max(window_max_rms, rms)
+            if now - window_start >= 1.0:
+                logger.info(
+                    "[BargeIn/Probe] call_id=%s max_rms=%.4f threshold=%.4f voice_ms=%d",
+                    call_id,
+                    window_max_rms,
+                    self._barge_in_rms_threshold,
+                    self._barge_in_voice_ms.get(call_id, 0),
+                )
+                self._barge_in_probe[call_id] = (now, 0.0)
+            else:
+                self._barge_in_probe[call_id] = (window_start, window_max_rms)
+
             if rms >= self._barge_in_rms_threshold:
                 self._barge_in_voice_ms[call_id] = (
                     self._barge_in_voice_ms.get(call_id, 0) + self._vad_frame_ms
                 )
+                self._barge_in_low_ms[call_id] = 0
             else:
-                self._barge_in_voice_ms[call_id] = 0
+                low_ms = self._barge_in_low_ms.get(call_id, 0) + self._vad_frame_ms
+                self._barge_in_low_ms[call_id] = low_ms
+                if low_ms >= self._barge_in_hangover_ms:
+                    self._barge_in_voice_ms[call_id] = 0
             if self._barge_in_voice_ms.get(call_id, 0) >= self._barge_in_min_ms:
                 triggered = True
                 break
@@ -521,6 +588,8 @@ class VoiceAgent:
                 self._channels.get(call_id, "freeswitch"),
             )
             self._barge_in_voice_ms.pop(call_id, None)
+            self._barge_in_low_ms.pop(call_id, None)
+            self._barge_in_probe.pop(call_id, None)
             self._interrupt_speaking(call_id)
         return triggered
 
@@ -619,6 +688,15 @@ class VoiceAgent:
                 )
             self._interrupt_speaking(call_id)
         elif event.type == "final":
+            if event.text and _is_degenerate_transcript(event.text):
+                # 退化识别（回声/噪声幻觉）：既不落转写也不驱动对话，
+                # 更不触发端点/打断，防止 agent 被自己的回声带偏。
+                logger.info(
+                    "[ASR] call_id=%s dropped degenerate final text=%s",
+                    call_id,
+                    event.text,
+                )
+                return
             fut = self._endpoint_waiters.get(call_id)
             if fut and not fut.done():
                 fut.set_result(event.text)
@@ -675,6 +753,8 @@ class VoiceAgent:
         self._asr_suppressed_until.pop(call_id, None)
         self._asr_gate_logged.discard(call_id)
         self._barge_in_voice_ms.pop(call_id, None)
+        self._barge_in_low_ms.pop(call_id, None)
+        self._barge_in_probe.pop(call_id, None)
         self._dry_run.pop(call_id, None)
 
     async def close(self) -> None:
