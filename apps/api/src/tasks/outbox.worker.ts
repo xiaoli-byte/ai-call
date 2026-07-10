@@ -297,12 +297,18 @@ export class OutboxWorker implements OnModuleInit, OnModuleDestroy {
         },
       });
       if (terminal && event.type === 'call.dispatch_requested' && payload.attemptId) {
-        await tx.callAttempt.update({
-          where: { id: payload.attemptId },
+        // Only fail a still-dialing task/attempt. Guarding on status (vs an
+        // unconditional update) keeps dispatch-exhaustion from clobbering a
+        // terminal set concurrently by another path — e.g. a user CANCEL while
+        // originate retries were still failing. A dispatch failure is a distinct
+        // pre-call terminal, so it stays a direct FAILED write rather than going
+        // through deriveTerminalStatus (which classifies real call outcomes).
+        await tx.callAttempt.updateMany({
+          where: { id: payload.attemptId, status: TaskStatus.CALLING },
           data: { status: TaskStatus.FAILED, endedAt: new Date(), hangupCause: message },
         });
-        await tx.outboundTask.update({
-          where: { id: payload.taskId },
+        await tx.outboundTask.updateMany({
+          where: { id: payload.taskId, status: TaskStatus.CALLING },
           data: { status: TaskStatus.FAILED, endedAt: new Date() },
         });
       }

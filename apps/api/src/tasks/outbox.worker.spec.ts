@@ -184,8 +184,8 @@ describe('OutboxWorker', () => {
       $transaction: async (fn: (tx: unknown) => Promise<void>) => fn({
         outboxEvent: { update: async (args: any) => { updates.push(args); return args; } },
         callEvent: { create: async (args: unknown) => args },
-        callAttempt: { update: async (args: unknown) => args },
-        outboundTask: { update: async (args: unknown) => args },
+        callAttempt: { updateMany: async (args: unknown) => args },
+        outboundTask: { updateMany: async (args: unknown) => args },
       }),
     };
     const { FreeSwitchError } = await import('../freeswitch/freeswitch-errors.js');
@@ -201,6 +201,33 @@ describe('OutboxWorker', () => {
         operation: 'originate', code: 'INVALID_CONFIGURATION', retryable: false,
       }));
     assert.equal(updates[0].data.status, 'failed');
+  });
+
+  it('guards the terminal FAILED write on status CALLING (no clobber of a concurrent terminal)', async () => {
+    const attemptWrites: any[] = [];
+    const taskWrites: any[] = [];
+    const prisma = {
+      $transaction: async (fn: (tx: unknown) => Promise<void>) => fn({
+        outboxEvent: { update: async (args: unknown) => args },
+        callEvent: { create: async (args: unknown) => args },
+        callAttempt: { updateMany: async (args: any) => { attemptWrites.push(args); return { count: 0 }; } },
+        outboundTask: { updateMany: async (args: any) => { taskWrites.push(args); return { count: 0 }; } },
+      }),
+    };
+    const { FreeSwitchError } = await import('../freeswitch/freeswitch-errors.js');
+    const worker = new OutboxWorker(prisma as never, {} as never, {} as never);
+    await (worker as unknown as { handleFailure(event: unknown, error: Error): Promise<void> })
+      .handleFailure({
+        id: 'event-1', aggregateId: 'attempt-1', type: 'call.dispatch_requested',
+        deduplicationKey: 'dispatch-1', attempts: 0,
+        payload: { taskId: 'task-1', attemptId: 'attempt-1', to: '+1001', from: '+1000' },
+      }, new FreeSwitchError({ operation: 'originate', code: 'INVALID_CONFIGURATION', retryable: false }));
+
+    // Both terminal writes must be gated on the still-dialing state.
+    assert.equal(attemptWrites[0].where.status, TaskStatus.CALLING);
+    assert.equal(taskWrites[0].where.status, TaskStatus.CALLING);
+    assert.equal(attemptWrites[0].data.status, TaskStatus.FAILED);
+    assert.equal(taskWrites[0].data.status, TaskStatus.FAILED);
   });
 
   it('records processed batch metrics and backlog snapshots', async () => {
@@ -260,8 +287,8 @@ describe('OutboxWorker', () => {
       $transaction: async (fn: (tx: unknown) => Promise<void>) => fn({
         outboxEvent: { update: async (args: unknown) => args },
         callEvent: { create: async (args: unknown) => args },
-        callAttempt: { update: async (args: unknown) => args },
-        outboundTask: { update: async (args: unknown) => args },
+        callAttempt: { updateMany: async (args: unknown) => args },
+        outboundTask: { updateMany: async (args: unknown) => args },
       }),
     };
     const worker = new OutboxWorker(prisma as never, {} as never, {} as never, metrics);

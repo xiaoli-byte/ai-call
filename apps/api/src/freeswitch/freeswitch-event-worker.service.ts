@@ -123,6 +123,11 @@ implements OnModuleInit, OnModuleDestroy {
     1_000,
     300_000,
   );
+  // Append-only sink for events the API rejected (400/422) or that exhausted
+  // delivery retries. The default filename resolves against the worker's CWD,
+  // so in production set FREESWITCH_EVENT_DEAD_LETTER_PATH to an absolute path on
+  // a durable volume — otherwise replay files scatter/vanish across restarts or
+  // CWD changes. The resolved absolute path is logged at startup and per write.
   private readonly deadLetterPath = resolvePath(
     process.env.FREESWITCH_EVENT_DEAD_LETTER_PATH
       ?? 'freeswitch-event-dead-letter.jsonl',
@@ -157,6 +162,13 @@ implements OnModuleInit, OnModuleDestroy {
       this.state = 'disabled';
       return;
     }
+    this.logger.log(
+      `FreeSWITCH event dead-letter sink: ${this.deadLetterPath}`
+      + (process.env.FREESWITCH_EVENT_DEAD_LETTER_PATH
+        ? ''
+        : ' (default, CWD-relative — set FREESWITCH_EVENT_DEAD_LETTER_PATH to a'
+          + ' durable volume in production so replays survive restarts)'),
+    );
     this.connect();
     this.snapshotTimer = setInterval(
       () => void this.publishActiveSnapshot(),
@@ -480,6 +492,10 @@ implements OnModuleInit, OnModuleDestroy {
     };
     try {
       await this.appendDeadLetter(JSON.stringify(record) + '\n');
+      this.logger.warn(
+        `FreeSWITCH event dead-lettered (reason=${reason}, status=${status ?? 'n/a'})`
+        + ` → ${this.deadLetterPath}`,
+      );
     } catch (error) {
       // Last-resort: we could not even persist locally. Log loudly with the full
       // payload so the event survives in the process log at least.
