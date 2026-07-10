@@ -626,6 +626,47 @@ async def test_interrupt_without_on_interrupted_callback_is_noop(
 
 
 @pytest.mark.asyncio
+async def test_stt_final_without_waiter_buffers_text_and_interrupts(
+    agent: VoiceAgent,
+    mock_tts,
+) -> None:
+    """final 落在 waiter 窗口外（如播报中）：缓冲进 _injected_text 并打断,不丢句。
+
+    短语打断往往只出 final 不出 online partial(2pass 在线块 ~600ms),
+    丢弃 final 会导致"用户说完了 agent 还在等"——打不断 + 体感延迟暴增。
+    """
+    call_id = "final-buffer-1"
+    agent._callbacks[call_id] = NoopCallbacks()
+    agent._channels[call_id] = "web"
+    agent._speaking[call_id] = True
+
+    await agent._on_stt_event(call_id, STTEvent(type="final", text="停一下"))
+
+    assert mock_tts.interrupt_called
+    assert not agent._speaking.get(call_id)
+    # 下一次 _wait_for_user_speech 立即消费缓冲文本
+    assert await agent._wait_for_user_speech(call_id) == "停一下"
+
+    # 多个 final 依次落在窗口外:拼接不覆盖
+    await agent._on_stt_event(call_id, STTEvent(type="final", text="不需要了"))
+    await agent._on_stt_event(call_id, STTEvent(type="final", text="谢谢"))
+    assert await agent._wait_for_user_speech(call_id) == "不需要了 谢谢"
+
+
+@pytest.mark.asyncio
+async def test_stt_final_empty_without_waiter_is_dropped(agent: VoiceAgent) -> None:
+    """窗口外的空 final(纯噪声整句被识别为空)不缓冲、不打断。"""
+    call_id = "final-buffer-2"
+    agent._callbacks[call_id] = NoopCallbacks()
+    agent._speaking[call_id] = True
+
+    await agent._on_stt_event(call_id, STTEvent(type="final", text=""))
+
+    assert agent._speaking.get(call_id)
+    assert call_id not in agent._injected_text
+
+
+@pytest.mark.asyncio
 async def test_max_turns_limit(
     scenario_config,
     variables,

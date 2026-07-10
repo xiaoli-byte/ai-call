@@ -622,6 +622,23 @@ class VoiceAgent:
             fut = self._endpoint_waiters.get(call_id)
             if fut and not fut.done():
                 fut.set_result(event.text)
+            elif event.text:
+                # final 落在 waiter 窗口外（agent 正在播报，或上一轮收尾、
+                # waiter 尚未建立）。丢弃会让"用户说完了、agent 还在等"，
+                # 体感为打不断 + 响应极慢：短语打断往往只出 final 不出
+                # online partial（2pass 在线块 ~600ms）。缓冲进 _injected_text
+                # 供下一次 _wait_for_user_speech 立即消费，播报中则一并打断。
+                if self._speaking.get(call_id):
+                    logger.info(
+                        "[BargeIn] call_id=%s channel=%s source=stt_final barge_in",
+                        call_id,
+                        self._channels.get(call_id, "freeswitch"),
+                    )
+                buffered = self._injected_text.get(call_id)
+                self._injected_text[call_id] = (
+                    f"{buffered} {event.text}" if buffered else event.text
+                )
+                self._interrupt_speaking(call_id)
 
     async def inject_user_text(self, call_id: str, text: str) -> None:
         """CLI/测试模式：直接注入用户文本（跳过 STT）。"""
