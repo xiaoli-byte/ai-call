@@ -109,7 +109,104 @@ describe('FreeSwitchEventWorkerService', () => {
     assert.equal(worker.health().live, true);
     assert.equal(worker.health().ready, false);
   });
+
+  it('dead-letters a schema-rejected (400) event instead of dropping it', async () => {
+    const deadLetters: any[] = [];
+    const worker = makeWorker({
+      postProviderEvent: async () => {
+        throw new FreeSwitchBridgeError('provider-event', false, 400, 'bad schema');
+      },
+    });
+    (worker as any).appendDeadLetter = async (line: string) => {
+      deadLetters.push(JSON.parse(line));
+    };
+    (worker as any).state = 'subscribed';
+    (worker as any).lastHeartbeatAt = Date.now();
+
+    (worker as any).handleFrame(managedProgressEvent());
+    await wait(30);
+
+    assert.equal(deadLetters.length, 1);
+    assert.equal(deadLetters[0].type, 'call.provider_event.dead_letter');
+    assert.equal(deadLetters[0].reason, 'rejected');
+    assert.equal(deadLetters[0].status, 400);
+    assert.equal(deadLetters[0].event.providerCallId, CALL_ID);
+    assert.equal(worker.health().queueDepth, 0);
+    assert.equal(worker.health().deadLetterCount, 1);
+  });
+
+  it('dead-letters an event after exhausting retryable delivery attempts', async () => {
+    process.env.FREESWITCH_EVENT_DELIVERY_MAX_ATTEMPTS = '1';
+    process.env.FREESWITCH_EVENT_DELIVERY_BASE_DELAY_MS = '10';
+    const deadLetters: any[] = [];
+    const worker = makeWorker({
+      postProviderEvent: async () => {
+        throw new FreeSwitchBridgeError('provider-event', true, 503, 'upstream down');
+      },
+    });
+    (worker as any).appendDeadLetter = async (line: string) => {
+      deadLetters.push(JSON.parse(line));
+    };
+    (worker as any).state = 'subscribed';
+    (worker as any).lastHeartbeatAt = Date.now();
+
+    (worker as any).handleFrame(managedProgressEvent());
+    await wait(40);
+
+    assert.equal(deadLetters.length, 1);
+    assert.equal(deadLetters[0].reason, 'exhausted');
+    assert.equal(deadLetters[0].status, 503);
+    assert.equal(worker.health().queueDepth, 0);
+    assert.equal(worker.health().deadLetterCount, 1);
+  });
+
+  it('keeps ready true when a frame fails to parse (parse failure ≠ delivery health)', () => {
+    const worker = makeWorker();
+    (worker as any).state = 'subscribed';
+    (worker as any).lastHeartbeatAt = Date.now();
+
+    // text/event-plain body with no header boundary → parsePlainEventPayload throws.
+    (worker as any).handleFrame(frame(
+      { 'Content-Type': 'text/event-plain' },
+      'Event-Name: CHANNEL_PROGRESS\nno-terminating-blank-line',
+    ));
+
+    assert.equal(worker.health().parseFailureCount, 1);
+    assert.ok(worker.health().lastParseErrorAt);
+    assert.equal(worker.health().lastErrorCode, 'INVALID_EVENT_FRAME');
+    // The malformed frame must NOT wedge readiness (#3 sticky-503 regression).
+    assert.equal(worker.health().ready, true);
+  });
+
+  it('clears a stale delivery flag on a heartbeat when the queue is idle', () => {
+    const worker = makeWorker();
+    (worker as any).state = 'subscribed';
+    (worker as any).lastHeartbeatAt = Date.now();
+    // Simulate a prior delivery failure that left the worker unhealthy.
+    (worker as any).deliveryHealthy = false;
+    assert.equal(worker.health().ready, false);
+
+    (worker as any).handleFrame(plainEvent([
+      'Event-Name: HEARTBEAT',
+      'Core-UUID: core-1',
+      'Event-Sequence: 9',
+    ]));
+
+    assert.equal(worker.health().ready, true);
+  });
 });
+
+function managedProgressEvent(): EslFrame {
+  return plainEvent([
+    'Event-Name: CHANNEL_PROGRESS',
+    'Core-UUID: core-1',
+    'Event-Sequence: 2',
+    'Unique-ID: ' + CALL_ID,
+    'variable_attempt_id: ' + CALL_ID,
+    'variable_ai_call_managed: true',
+    'Event-Date-Timestamp: 1700000000000000',
+  ]);
+}
 
 function makeWorker(bridgeOverrides: {
   postProviderEvent?: (event: ProviderCallEventDto) => Promise<void>;

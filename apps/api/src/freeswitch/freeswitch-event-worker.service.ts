@@ -6,8 +6,11 @@ import {
   Optional,
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
+import { appendFile } from 'node:fs/promises';
 import { Socket } from 'node:net';
+import { resolve as resolvePath } from 'node:path';
 import type { ProviderCallEventDto } from '../tasks/dto/provider-call-event.dto.js';
+import { exponentialBackoffMs } from '../common/backoff.js';
 import { MetricsService } from '../metrics/metrics.service.js';
 import {
   EslFrameParser,
@@ -43,8 +46,14 @@ export type FreeSwitchEventWorkerHealth = {
   state: WorkerState;
   queueDepth: number;
   reconnectCount: number;
+  /** Count of ESL frames we could not parse. Surfaced for observability only —
+   * it does NOT drag `ready` to 503, because a malformed frame says nothing
+   * about whether the worker can deliver the events it does parse. */
+  parseFailureCount: number;
+  deadLetterCount: number;
   lastHeartbeatAt?: string;
   lastEventAt?: string;
+  lastParseErrorAt?: string;
   lastErrorCode?: string;
 };
 
@@ -114,6 +123,10 @@ implements OnModuleInit, OnModuleDestroy {
     1_000,
     300_000,
   );
+  private readonly deadLetterPath = resolvePath(
+    process.env.FREESWITCH_EVENT_DEAD_LETTER_PATH
+      ?? 'freeswitch-event-dead-letter.jsonl',
+  );
 
   private state: WorkerState = 'idle';
   private socket?: Socket;
@@ -125,8 +138,11 @@ implements OnModuleInit, OnModuleDestroy {
   private reconnectCount = 0;
   private lastHeartbeatAt?: number;
   private lastEventAt?: number;
+  private lastParseErrorAt?: number;
   private lastErrorCode?: string;
   private deliveryHealthy = true;
+  private parseFailureCount = 0;
+  private deadLetterCount = 0;
   private queue: QueuedEvent[] = [];
   private draining = false;
 
@@ -174,8 +190,11 @@ implements OnModuleInit, OnModuleDestroy {
       state: this.state,
       queueDepth: this.queue.length,
       reconnectCount: this.reconnectCount,
+      parseFailureCount: this.parseFailureCount,
+      deadLetterCount: this.deadLetterCount,
       lastHeartbeatAt: toIso(this.lastHeartbeatAt),
       lastEventAt: toIso(this.lastEventAt),
+      lastParseErrorAt: toIso(this.lastParseErrorAt),
       lastErrorCode: this.lastErrorCode,
     };
   }
@@ -267,15 +286,17 @@ implements OnModuleInit, OnModuleDestroy {
     try {
       plain = parsePlainEventPayload(frame.body);
     } catch {
-      this.lastErrorCode = 'INVALID_EVENT_FRAME';
-      this.deliveryHealthy = false;
-      this.metrics?.incrementCounter('freeswitch.event.invalid');
+      this.recordParseFailure('INVALID_EVENT_FRAME');
       return;
     }
     const eventName = getEslHeader(plain.headers, 'Event-Name')?.toUpperCase();
     this.lastEventAt = Date.now();
     if (eventName === 'HEARTBEAT') {
       this.lastHeartbeatAt = this.lastEventAt;
+      // A fresh heartbeat proves the ESL link is alive; when nothing is queued
+      // there is no delivery in trouble, so clear any stale delivery flag that
+      // would otherwise pin `ready` at 503 through an idle period (#3).
+      if (this.queue.length === 0) this.deliveryHealthy = true;
       this.metrics?.incrementCounter('freeswitch.event.heartbeat');
       return;
     }
@@ -289,10 +310,18 @@ implements OnModuleInit, OnModuleDestroy {
       this.enqueue(event);
       this.metrics?.incrementCounter('freeswitch.event.received');
     } catch {
-      this.lastErrorCode = 'EVENT_PARSE_FAILED';
-      this.deliveryHealthy = false;
-      this.metrics?.incrementCounter('freeswitch.event.invalid');
+      this.recordParseFailure('EVENT_PARSE_FAILED');
     }
+  }
+
+  /** A frame we could not parse is a data/upstream problem, not a delivery
+   * problem — count it for observability but keep it OUT of `deliveryHealthy`
+   * so it cannot wedge readiness at 503 during an idle window (#3). */
+  private recordParseFailure(code: string): void {
+    this.parseFailureCount += 1;
+    this.lastParseErrorAt = Date.now();
+    this.lastErrorCode = code;
+    this.metrics?.incrementCounter('freeswitch.event.invalid');
   }
 
   private isManagedEvent(
@@ -341,28 +370,45 @@ implements OnModuleInit, OnModuleDestroy {
           );
         } catch (error) {
           item.attempts += 1;
-          const retryable = error instanceof FreeSwitchBridgeError
-            && error.retryable;
+          const bridgeError = error instanceof FreeSwitchBridgeError
+            ? error
+            : undefined;
+          const status = bridgeError?.status;
+          const summary = bridgeError?.bodySummary;
+          const retryable = bridgeError?.retryable ?? false;
           if (!retryable || item.attempts >= this.deliveryMaxAttempts) {
             this.queue.shift();
             this.deliveryHealthy = false;
+            const reason: DeadLetterReason = retryable ? 'exhausted' : 'rejected';
             this.lastErrorCode = retryable
               ? 'DELIVERY_EXHAUSTED'
               : 'DELIVERY_REJECTED';
             this.metrics?.incrementCounter('freeswitch.event.delivery_failed');
             this.logger.error(
-              'FreeSWITCH event delivery failed eventId='
-              + (item.event.providerEventId ?? 'unknown'),
+              'FreeSWITCH event delivery ' + reason
+              + ' eventId=' + (item.event.providerEventId ?? 'unknown')
+              + ' status=' + (status ?? 'n/a')
+              + ' body=' + (summary ?? 'n/a'),
             );
+            await this.writeDeadLetter(item, reason, status, summary);
             continue;
+          }
+          // 401/403 is retryable (see isRetryableStatus) but signals a token
+          // misconfig — shout about it. The backoff below rate-limits the log.
+          if (status === 401 || status === 403) {
+            this.logger.error(
+              'FreeSWITCH bridge rejected event auth (HTTP ' + status
+              + ') — check SERVICE_API_TOKEN; retrying with backoff'
+              + ' body=' + (summary ?? 'n/a'),
+            );
           }
           this.deliveryHealthy = false;
           this.lastErrorCode = 'DELIVERY_RETRYING';
           this.metrics?.incrementCounter('freeswitch.event.delivery_retry');
-          await delay(Math.min(
-            30_000,
-            this.deliveryBaseDelayMs * 2 ** (item.attempts - 1),
-          ));
+          await delay(exponentialBackoffMs(item.attempts, {
+            baseMs: this.deliveryBaseDelayMs,
+            capMs: 30_000,
+          }));
         }
       }
     } finally {
@@ -378,40 +424,76 @@ implements OnModuleInit, OnModuleDestroy {
       const activeChannelIds = [
         ...(await this.freeswitch.listActiveChannelIds()),
       ];
-      await this.retrySnapshot({
+      // Single attempt: the snapshot timer re-fires every ~10s, so a failed
+      // snapshot self-heals on the next tick — an inner retry loop only delayed
+      // that and duplicated the backoff logic (#4).
+      await this.bridge.postActiveSnapshot({
         provider: 'freeswitch',
         snapshotId,
         observedAt,
         activeChannelIds,
       });
+      // A delivered snapshot proves the bridge/API is reachable, so it also
+      // clears a stale delivery flag (#3).
+      this.deliveryHealthy = true;
       this.metrics?.incrementCounter('freeswitch.snapshot.delivered');
-    } catch {
+    } catch (error) {
+      const status = error instanceof FreeSwitchBridgeError
+        ? error.status
+        : undefined;
       this.lastErrorCode = 'SNAPSHOT_FAILED';
       this.metrics?.incrementCounter('freeswitch.snapshot.failed');
+      this.logger.warn(
+        'FreeSWITCH active snapshot delivery failed status=' + (status ?? 'n/a'),
+      );
     }
   }
 
-  private async retrySnapshot(snapshot: {
-    provider: string;
-    snapshotId: string;
-    observedAt: string;
-    activeChannelIds: string[];
-  }): Promise<void> {
-    for (let attempt = 1; attempt <= 3; attempt += 1) {
-      try {
-        await this.bridge.postActiveSnapshot(snapshot);
-        return;
-      } catch (error) {
-        if (
-          !(error instanceof FreeSwitchBridgeError)
-          || !error.retryable
-          || attempt === 3
-        ) {
-          throw error;
-        }
-        await delay(this.deliveryBaseDelayMs * 2 ** (attempt - 1));
-      }
+  /**
+   * Persist an undeliverable event to a local append-only JSONL dead letter so
+   * a terminal call event is never silently dropped and can be replayed by ops.
+   *
+   * Why local JSONL rather than a call_events row via the bridge: both triggers
+   * that reach here defeat a bridge write — a `rejected` event was refused by
+   * the API as malformed (400/422), so re-POSTing anything derived from it fails
+   * again; an `exhausted` event means the API was unreachable/erroring across
+   * every retry, so a fresh network write is exactly the thing that just failed.
+   * A host-local append has no such dependency and is trivially replayable
+   * (`cat *.jsonl | re-post`). A future ops tool can drain it into call_events.
+   */
+  private async writeDeadLetter(
+    item: QueuedEvent,
+    reason: DeadLetterReason,
+    status: number | undefined,
+    bodySummary: string | undefined,
+  ): Promise<void> {
+    this.deadLetterCount += 1;
+    this.metrics?.incrementCounter('freeswitch.event.dead_letter');
+    const record = {
+      type: 'call.provider_event.dead_letter',
+      deadLetteredAt: new Date().toISOString(),
+      reason,
+      status: status ?? null,
+      bodySummary: bodySummary ?? null,
+      attempts: item.attempts,
+      event: item.event,
+    };
+    try {
+      await this.appendDeadLetter(JSON.stringify(record) + '\n');
+    } catch (error) {
+      // Last-resort: we could not even persist locally. Log loudly with the full
+      // payload so the event survives in the process log at least.
+      this.metrics?.incrementCounter('freeswitch.event.dead_letter_write_failed');
+      this.logger.error(
+        'FreeSWITCH event dead-letter persist FAILED ('
+        + (error as Error).message + '); payload=' + JSON.stringify(record),
+      );
     }
+  }
+
+  /** Seam over the filesystem append so tests can capture dead letters. */
+  private async appendDeadLetter(line: string): Promise<void> {
+    await appendFile(this.deadLetterPath, line, 'utf8');
   }
 
   private write(value: string): void {
@@ -441,20 +523,24 @@ implements OnModuleInit, OnModuleDestroy {
 
   private scheduleReconnect(): void {
     if (this.stopped || this.reconnectTimer || !this.enabled) return;
-    const exponential = Math.min(
-      this.reconnectMaxMs,
-      this.reconnectMinMs * 2 ** this.reconnectAttempt,
-    );
-    const jitter = Math.floor(Math.random() * Math.max(1, exponential / 4));
+    // reconnectAttempt is 0-based; +1 maps it onto the helper's 1-based attempt.
+    // Jitter stays ON here to de-correlate reconnect storms across workers.
+    const delayMs = exponentialBackoffMs(this.reconnectAttempt + 1, {
+      baseMs: this.reconnectMinMs,
+      capMs: this.reconnectMaxMs,
+      jitter: true,
+    });
     this.reconnectAttempt += 1;
     this.reconnectCount += 1;
     this.metrics?.incrementCounter('freeswitch.event.reconnect');
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = undefined;
       this.connect();
-    }, exponential + jitter);
+    }, delayMs);
   }
 }
+
+type DeadLetterReason = 'rejected' | 'exhausted';
 
 function isOkReply(frame: EslFrame): boolean {
   const replyText = getEslHeader(frame.headers, 'Reply-Text');

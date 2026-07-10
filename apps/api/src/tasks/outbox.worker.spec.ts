@@ -125,7 +125,7 @@ describe('OutboxWorker', () => {
     };
     const freeswitch = {
       originate: async () => {
-        calls.push(['freeswitch.originate']);
+        calls.push(['freeswitch.originate', null]);
         return { accepted: true as const, jobId: 'job-2', replyText: '+OK' };
       },
     };

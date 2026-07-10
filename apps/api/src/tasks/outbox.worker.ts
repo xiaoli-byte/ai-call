@@ -3,6 +3,7 @@ import { TaskStatus } from '@ai-call/shared';
 import { ClsService } from 'nestjs-cls';
 import { hostname } from 'node:os';
 import { randomUUID } from 'node:crypto';
+import { exponentialBackoffMs } from '../common/backoff.js';
 import { FreeSwitchService } from '../freeswitch/freeswitch.service.js';
 import { FreeSwitchError, isCallAlreadyActiveError } from '../freeswitch/freeswitch-errors.js';
 import { MetricsService } from '../metrics/metrics.service.js';
@@ -276,7 +277,12 @@ export class OutboxWorker implements OnModuleInit, OnModuleDestroy {
         where: { id: event.id },
         data: {
           status: terminal ? 'failed' : 'pending',
-          availableAt: new Date(Date.now() + Math.min(60_000, 1000 * 2 ** attempts)),
+          // attempts is 1-based here; +1 maps onto the helper's 1-based attempt
+          // to preserve the prior min(60_000, 1000 * 2**attempts) schedule.
+          availableAt: new Date(
+            Date.now()
+            + exponentialBackoffMs(attempts + 1, { baseMs: 1_000, capMs: 60_000 }),
+          ),
           lastError: message,
           lockedAt: null,
           lockedBy: null,

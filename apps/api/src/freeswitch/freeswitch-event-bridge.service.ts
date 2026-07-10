@@ -2,10 +2,8 @@ import { Injectable } from '@nestjs/common';
 import { createHmac } from 'node:crypto';
 import type { ProviderActiveSnapshotDto } from '../tasks/dto/provider-active-snapshot.dto.js';
 import type { ProviderCallEventDto } from '../tasks/dto/provider-call-event.dto.js';
-import {
-  parseFreeSwitchEventHeaders,
-  type FreeSwitchEventHeaders,
-} from './freeswitch-event-parser.js';
+
+const BODY_SUMMARY_MAX_LEN = 500;
 
 export class FreeSwitchBridgeError extends Error {
   readonly name = 'FreeSwitchBridgeError';
@@ -14,20 +12,20 @@ export class FreeSwitchBridgeError extends Error {
     readonly operation: 'provider-event' | 'active-snapshot',
     readonly retryable: boolean,
     readonly status?: number,
+    /** Truncated response body, retained so operators can see the API's reason
+     * (e.g. a validation message) instead of a bare status code. */
+    readonly bodySummary?: string,
   ) {
     super(
       'FreeSWITCH bridge ' + operation + ' failed'
-      + (status ? ' (HTTP ' + status + ')' : ''),
+      + (status ? ' (HTTP ' + status + ')' : '')
+      + (bodySummary ? ': ' + bodySummary : ''),
     );
   }
 }
 
 @Injectable()
 export class FreeSwitchEventBridgeService {
-  async postFreeSwitchHeaders(headers: FreeSwitchEventHeaders): Promise<void> {
-    await this.postProviderEvent(parseFreeSwitchEventHeaders(headers));
-  }
-
   async postProviderEvent(event: ProviderCallEventDto): Promise<void> {
     await this.postJson(
       this.providerEventsUrl(),
@@ -62,11 +60,12 @@ export class FreeSwitchEventBridgeService {
     }
 
     if (!response.ok) {
-      await response.body?.cancel().catch(() => undefined);
+      const bodySummary = await readBodySummary(response);
       throw new FreeSwitchBridgeError(
         operation,
         isRetryableStatus(response.status),
         response.status,
+        bodySummary,
       );
     }
   }
@@ -125,10 +124,35 @@ function signServiceRequest(timestamp: string, token: string): string {
 }
 
 function isRetryableStatus(status: number): boolean {
-  return status === 404
+  // 400/422 are genuine schema/validation rejections of THIS payload — retrying
+  // the identical body is futile, so they are terminal (→ dead letter).
+  if (status === 400 || status === 422) return false;
+  // 401/403 almost always mean a mis-set SERVICE_API_TOKEN (an ops/config issue),
+  // not a permanent rejection of the event. Treat as retryable so a token fix or
+  // rotation recovers the backlog instead of silently dropping terminal call
+  // events; the worker emits an explicit alarm log and backs off to avoid a
+  // request storm while the token is wrong.
+  return status === 401
+    || status === 403
+    || status === 404
     || status === 408
     || status === 409
     || status === 425
     || status === 429
     || status >= 500;
+}
+
+async function readBodySummary(
+  response: Response,
+): Promise<string | undefined> {
+  try {
+    const text = await response.text();
+    const collapsed = text.replace(/\s+/g, ' ').trim();
+    if (!collapsed) return undefined;
+    return collapsed.length > BODY_SUMMARY_MAX_LEN
+      ? collapsed.slice(0, BODY_SUMMARY_MAX_LEN) + '…'
+      : collapsed;
+  } catch {
+    return undefined;
+  }
 }

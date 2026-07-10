@@ -110,28 +110,30 @@ describe('FreeSwitchEventBridgeService', () => {
     );
   });
 
-  it('parses FreeSWITCH headers before posting them', async () => {
+  it('posts an already-parsed provider event including raw headers verbatim', async () => {
     process.env.INTERNAL_API_BASE_URL = 'http://internal-api:3000';
     process.env.SERVICE_API_TOKEN = 'service-token';
     const calls: FetchCall[] = [];
     globalThis.fetch = fakeFetch(calls, 200);
 
-    await new FreeSwitchEventBridgeService().postFreeSwitchHeaders({
-      'Event-Name': 'CHANNEL_HANGUP_COMPLETE',
-      'Unique-ID': 'uuid-from-headers',
-      'Hangup-Cause': 'NO_ANSWER',
+    await new FreeSwitchEventBridgeService().postProviderEvent({
+      provider: 'freeswitch',
+      providerEventId: 'a'.repeat(64),
+      eventType: 'CHANNEL_HANGUP_COMPLETE',
+      providerCallId: 'uuid-from-headers',
+      hangupCause: 'NO_ANSWER',
+      raw: { 'Event-Name': 'CHANNEL_HANGUP_COMPLETE' },
     });
 
     const posted = JSON.parse(String(calls[0].init.body));
     assert.equal(posted.provider, 'freeswitch');
-    assert.match(posted.providerEventId, /^[0-9a-f]{64}$/);
     assert.equal(posted.eventType, 'CHANNEL_HANGUP_COMPLETE');
     assert.equal(posted.providerCallId, 'uuid-from-headers');
     assert.equal(posted.hangupCause, 'NO_ANSWER');
     assert.equal(posted.raw['Event-Name'], 'CHANNEL_HANGUP_COMPLETE');
   });
 
-  it('throws when the provider event endpoint rejects the event', async () => {
+  it('surfaces the status and a body summary when the endpoint rejects the event', async () => {
     process.env.INTERNAL_API_BASE_URL = 'http://internal-api:3000';
     process.env.SERVICE_API_TOKEN = 'service-token';
     globalThis.fetch = fakeFetch([], 500, 'database unavailable');
@@ -146,7 +148,56 @@ describe('FreeSwitchEventBridgeService', () => {
         assert.ok(error instanceof FreeSwitchBridgeError);
         assert.equal(error.status, 500);
         assert.equal(error.retryable, true);
-        assert.doesNotMatch(error.message, /database unavailable/);
+        // The API's reason must survive into the error for triage (was dropped).
+        assert.equal(error.bodySummary, 'database unavailable');
+        assert.match(error.message, /database unavailable/);
+        return true;
+      },
+    );
+  });
+
+  it('treats 401/403 (token misconfig) as retryable but 400/422 as terminal', async () => {
+    process.env.INTERNAL_API_BASE_URL = 'http://internal-api:3000';
+    process.env.SERVICE_API_TOKEN = 'wrong-token';
+
+    for (const [status, retryable] of [
+      [401, true],
+      [403, true],
+      [400, false],
+      [422, false],
+    ] as const) {
+      globalThis.fetch = fakeFetch([], status, 'reason');
+      await assert.rejects(
+        () => new FreeSwitchEventBridgeService().postProviderEvent({
+          providerEventId: 'event-' + status,
+          eventType: 'CHANNEL_ANSWER',
+          providerCallId: 'uuid-answer',
+        }),
+        (error: unknown) => {
+          assert.ok(error instanceof FreeSwitchBridgeError);
+          assert.equal(error.status, status);
+          assert.equal(error.retryable, retryable);
+          return true;
+        },
+      );
+    }
+  });
+
+  it('truncates an oversized response body summary to 500 characters', async () => {
+    process.env.INTERNAL_API_BASE_URL = 'http://internal-api:3000';
+    process.env.SERVICE_API_TOKEN = 'service-token';
+    globalThis.fetch = fakeFetch([], 500, 'x'.repeat(2_000));
+
+    await assert.rejects(
+      () => new FreeSwitchEventBridgeService().postProviderEvent({
+        providerEventId: 'event-answer',
+        eventType: 'CHANNEL_ANSWER',
+        providerCallId: 'uuid-answer',
+      }),
+      (error: unknown) => {
+        assert.ok(error instanceof FreeSwitchBridgeError);
+        assert.equal(error.bodySummary?.length, 501);
+        assert.ok(error.bodySummary?.endsWith('…'));
         return true;
       },
     );
