@@ -49,6 +49,18 @@ def _env_bool(name: str, default: bool = False) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+def _env_int(name: str, default: int) -> int:
+    """安全读取整型环境变量：未设置/空/非法一律回默认并告警（参考 intent_embed）。"""
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        logger.warning("[VoiceAgent] %s=%r 非法（非整数），用默认 %s", name, raw, default)
+        return default
+
+
 def _build_agent() -> tuple[VoiceAgent, TaskClient, Any]:
     """根据环境变量构造 VoiceAgent 实例。
 
@@ -85,6 +97,11 @@ def _build_agent() -> tuple[VoiceAgent, TaskClient, Any]:
     barge_in_min_ms = int(os.getenv("BARGE_IN_MIN_MS", "500"))
     barge_in_rms_threshold = float(os.getenv("BARGE_IN_RMS_THRESHOLD", "0.08"))
     barge_in_hangover_ms = int(os.getenv("BARGE_IN_HANGOVER_MS", "240"))
+    # 语义自适应端点检测（B-P1b）：全部安全解析，坏值回默认。
+    vad_semantic_endpoint_enabled = _env_bool("VAD_SEMANTIC_ENDPOINT_ENABLED", True)
+    vad_semantic_extend_digit_ms = _env_int("VAD_SEMANTIC_EXTEND_DIGIT_MS", 600)
+    vad_semantic_extend_hesitation_ms = _env_int("VAD_SEMANTIC_EXTEND_HESITATION_MS", 400)
+    vad_semantic_max_total_ms = _env_int("VAD_SEMANTIC_MAX_TOTAL_MS", 1600)
 
     agent = VoiceAgent(
         llm=llm,
@@ -110,6 +127,10 @@ def _build_agent() -> tuple[VoiceAgent, TaskClient, Any]:
         barge_in_min_ms=barge_in_min_ms,
         barge_in_rms_threshold=barge_in_rms_threshold,
         barge_in_hangover_ms=barge_in_hangover_ms,
+        vad_semantic_endpoint_enabled=vad_semantic_endpoint_enabled,
+        vad_semantic_extend_digit_ms=vad_semantic_extend_digit_ms,
+        vad_semantic_extend_hesitation_ms=vad_semantic_extend_hesitation_ms,
+        vad_semantic_max_total_ms=vad_semantic_max_total_ms,
     )
 
     # 构造 DemoServer（/asr-stream + /tts-stream），共享 agent 的 VAD/STT/TTS 配置

@@ -67,6 +67,33 @@ def _is_degenerate_transcript(text: str) -> bool:
     return False
 
 
+# 语义自适应端点检测（B-P1b）的判定表：常量置于模块级便于真机调参。
+# 数字结尾（报号码等）：阿拉伯数字 + 常见中文数字。
+_SEMANTIC_DIGIT_CHARS = frozenset("0123456789一二三四五六七八九十两零")
+# 犹豫/思考词结尾：取 partial 结尾 2 字符窗口做后缀匹配，兼容单字与双字。
+_SEMANTIC_HESITATION_WORDS = ("就是", "那个", "然后", "因为", "但是", "嗯", "呃", "啊")
+
+
+def _semantic_extend_ms(
+    text: str, digit_ms: int, hesitation_ms: int
+) -> tuple[int, str]:
+    """按最近 partial 的结尾判定语义延长量，返回 (延长毫秒, 原因)。
+
+    优先级：数字结尾 > 犹豫词结尾 > 其它（0）。犹豫词取结尾 2 字符窗口后缀匹配，
+    使单字（嗯/呃/啊）与双字（就是/那个…）用同一套规则命中。
+    """
+    stripped = text.strip()
+    if not stripped:
+        return 0, "none"
+    if stripped[-1] in _SEMANTIC_DIGIT_CHARS:
+        return max(0, digit_ms), "digit"
+    tail2 = stripped[-2:]
+    for word in _SEMANTIC_HESITATION_WORDS:
+        if tail2.endswith(word):
+            return max(0, hesitation_ms), "hesitation"
+    return 0, "none"
+
+
 class VoiceAgent:
     """语音对话主循环 - 与具体传输层解耦。
 
@@ -102,6 +129,10 @@ class VoiceAgent:
         barge_in_min_ms: int = 500,
         barge_in_rms_threshold: float = 0.08,
         barge_in_hangover_ms: int = 240,
+        vad_semantic_endpoint_enabled: bool = True,
+        vad_semantic_extend_digit_ms: int = 600,
+        vad_semantic_extend_hesitation_ms: int = 400,
+        vad_semantic_max_total_ms: int = 1600,
     ) -> None:
         # AI providers（共享实例）
         self._llm = llm
@@ -122,6 +153,14 @@ class VoiceAgent:
         self._vad_silence_confirm = vad_silence_confirm_frames
         self._vad_speech_confirm = vad_speech_confirm_frames
         self._vad_min_speech_ms = max(0, vad_min_speech_ms)
+
+        # 语义自适应端点检测（B-P1b）：partial 结尾为数字/犹豫词时延长静音窗，
+        # 让报号码/犹豫思考的自然停顿不被固定静音窗一刀切成整句结束。
+        # enabled=False 时 provider 恒返回 0 → 与固定静音窗零差异。
+        self._vad_semantic_enabled = vad_semantic_endpoint_enabled
+        self._vad_semantic_extend_digit_ms = max(0, vad_semantic_extend_digit_ms)
+        self._vad_semantic_extend_hesitation_ms = max(0, vad_semantic_extend_hesitation_ms)
+        self._vad_semantic_max_total_ms = max(0, vad_semantic_max_total_ms)
 
         # 对话循环配置
         self._max_turns = max_turns
@@ -151,6 +190,10 @@ class VoiceAgent:
         self._vads: dict[str, VoiceActivityDetector] = {}
         self._endpoint_waiters: dict[str, asyncio.Future[str]] = {}
         self._injected_text: dict[str, str] = {}
+        # 语义端点检测：每通话最近一次 ASR partial 文本（provider 据此计算延长量）。
+        self._recent_partial: dict[str, str] = {}
+        # 语义延长日志去重：provider 每帧被查询，仅在本 utterance 首次生效时打一行。
+        self._semantic_extend_logged: set[str] = set()
         self._speaking: dict[str, bool] = {}
         self._channels: dict[str, str] = {}  # call_id → 会话通道（freeswitch|web）
         self._asr_suppressed_until: dict[str, float] = {}
@@ -482,6 +525,8 @@ class VoiceAgent:
         if not self._speaking.get(call_id):
             return
         self._speaking[call_id] = False
+        # 打断 = 新用户回合开始：复位语义端点缓存（随后 partial 会写入本句最新文本）。
+        self._reset_semantic_partial(call_id)
         if self._tts is not None:
             self._tts.interrupt()
         if self._llm is not None:
@@ -533,6 +578,55 @@ class VoiceAgent:
         vad = self._vads.get(call_id)
         if vad is not None:
             vad.reset()
+
+    def _reset_semantic_partial(self, call_id: str) -> None:
+        """复位语义端点的 partial 缓存与日志去重（utterance 结束/打断/新 speech_start）。
+
+        不复位会把上一句结尾状态（如报号码的数字尾）带进下一句，误延长下一句端点。
+        """
+        self._recent_partial.pop(call_id, None)
+        self._semantic_extend_logged.discard(call_id)
+
+    def _semantic_extra_silence_frames(self, call_id: str) -> int:
+        """VAD 的 extra_silence_frames_provider：按最近 partial 结尾计算延长帧数。
+
+        - 关闭 / 无 partial / 结尾非数字非犹豫词 → 0（与固定静音窗零差异）。
+        - 数字/犹豫词结尾 → 对应延长毫秒，再以 VAD_SEMANTIC_MAX_TOTAL_MS 封顶
+          「基础窗 + 延长」的总窗，防止病态 partial 让端点永不判停。
+        provider 每帧被查询；仅在本 utterance 首次生效时打一行结构化日志（去重）。
+        """
+        if not self._vad_semantic_enabled:
+            return 0
+        text = self._recent_partial.get(call_id)
+        if not text:
+            return 0
+        extend_ms, reason = _semantic_extend_ms(
+            text,
+            self._vad_semantic_extend_digit_ms,
+            self._vad_semantic_extend_hesitation_ms,
+        )
+        if extend_ms <= 0:
+            return 0
+        frame_ms = self._vad_frame_ms or 20
+        base_ms = self._vad_silence_confirm * frame_ms
+        # 总窗封顶：延长量不得让「基础 + 延长」超过 max_total。
+        max_extra_ms = self._vad_semantic_max_total_ms - base_ms
+        if max_extra_ms <= 0:
+            return 0
+        extend_ms = min(extend_ms, max_extra_ms)
+        frames = extend_ms // frame_ms
+        if frames <= 0:
+            return 0
+        if call_id not in self._semantic_extend_logged:
+            self._semantic_extend_logged.add(call_id)
+            logger.info(
+                "[VAD/Semantic] call_id=%s extend_ms=%d reason=%s tail=%s",
+                call_id,
+                frames * frame_ms,
+                reason,
+                text[-4:],
+            )
+        return frames
 
     def _observe_barge_in_candidate(self, call_id: str, audio_bytes: bytes) -> bool:
         """TTS 播放时的轻量 barge-in 候选检测。
@@ -637,6 +731,9 @@ class VoiceAgent:
                 silence_confirm_frames=self._vad_silence_confirm,
                 pre_buffer_ms=self._vad_pre_buffer_ms,
                 min_speech_ms=self._vad_min_speech_ms,
+                extra_silence_frames_provider=(
+                    lambda cid=call_id: self._semantic_extra_silence_frames(cid)
+                ),
             )
 
         stt = self._stt_handles[call_id]
@@ -646,12 +743,16 @@ class VoiceAgent:
         for frame in audio.split_into_frames(audio_bytes, self._vad_frame_ms, 16000):
             state, frames_to_send = vad.feed(frame)
             if state == "speech_start":
+                # 新 utterance 起说：复位上一句遗留的 partial 结尾状态。
+                self._reset_semantic_partial(call_id)
                 logger.info(
                     "[VAD] call_id=%s speech_start flush_ms=%d",
                     call_id,
                     getattr(vad, "last_flush_ms", 0),
                 )
             elif state == "speech_end":
+                # utterance 结束：清掉本句 partial，避免带进下一句端点判定。
+                self._reset_semantic_partial(call_id)
                 logger.info(
                     "[VAD] call_id=%s speech_end segment_ms=%d",
                     call_id,
@@ -687,6 +788,9 @@ class VoiceAgent:
                     self._channels.get(call_id, "freeswitch"),
                 )
             self._interrupt_speaking(call_id)
+            # 记录本句最新 partial，供语义端点延长静音窗。必须在打断复位之后写，
+            # 否则触发 barge-in 的这条 partial 会被 _interrupt_speaking 的复位清掉。
+            self._recent_partial[call_id] = event.text
         elif event.type == "final":
             if event.text and _is_degenerate_transcript(event.text):
                 # 退化识别（回声/噪声幻觉）：既不落转写也不驱动对话，
@@ -744,6 +848,8 @@ class VoiceAgent:
             fut.set_result("")
 
         self._vads.pop(call_id, None)
+        self._recent_partial.pop(call_id, None)
+        self._semantic_extend_logged.discard(call_id)
         self._sessions.pop(call_id, None)
         self._scenario_configs.pop(call_id, None)
         self._callbacks.pop(call_id, None)

@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 from collections import deque
-from typing import Literal, Optional
+from typing import Callable, Literal, Optional
 
 import webrtcvad
 
@@ -39,6 +39,7 @@ class VoiceActivityDetector:
         silence_confirm_frames: int = 10,
         pre_buffer_ms: int = 300,
         min_speech_ms: int = 200,
+        extra_silence_frames_provider: Callable[[], int] = lambda: 0,
     ) -> None:
         if frame_ms not in (10, 20, 30):
             raise ValueError(f"WebRTC VAD only supports 10/20/30ms frames, got {frame_ms}")
@@ -58,6 +59,12 @@ class VoiceActivityDetector:
         self._speech_confirm = speech_confirm_frames
         self._silence_confirm = silence_confirm_frames
         self._min_speech_ms = max(0, min_speech_ms)
+
+        # 语义自适应端点检测（B-P1b）：端点判停的静音确认阈值可被动态延长。
+        # provider 每帧查询、返回「额外静音确认帧数」，默认 lambda:0（与固定
+        # 静音窗逐帧等价）。仅作用于 speech→silence 端点判停，不影响 pending
+        # 候选期的噪声丢弃阈值（那里没有 partial 文本可依据，延长它只会削弱噪声拒识）。
+        self._extra_silence_frames_provider = extra_silence_frames_provider
 
         self._state: VadState = "silence"
         self._speech_count = 0
@@ -196,7 +203,7 @@ class VoiceActivityDetector:
             return "speech", [frame]
 
         self._silence_count += 1
-        if self._silence_count >= self._silence_confirm:
+        if self._silence_count >= self._endpoint_silence_confirm():
             # speech → silence：本帧仍发送（可能含末尾语音），但 speech_end
             # 只是一次性事件；内部状态立即回到 silence，避免后续静音帧
             # 周期性重复触发 end_speech()。
@@ -208,6 +215,18 @@ class VoiceActivityDetector:
         # 静音帧但未达确认阈值：继续发送（防止短停顿误断句）
         self._segment_ms += self._frame_ms
         return "speech", [frame]
+
+    def _endpoint_silence_confirm(self) -> int:
+        """端点判停的有效静音确认帧数 = 基础阈值 + 语义延长（provider 动态查询）。
+
+        provider 默认返回 0（行为与固定静音窗完全一致）；返回负数按 0 处理。
+        provider 抛异常一律按 0 兜底——语义延长绝不能把 VAD 主循环带崩。
+        """
+        try:
+            extra = int(self._extra_silence_frames_provider())
+        except Exception:
+            extra = 0
+        return self._silence_confirm + max(0, extra)
 
     def _reset_to_silence(self) -> None:
         self._state = "silence"
