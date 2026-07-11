@@ -1,6 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- 内部 SIP Profile - 监听 5060，接受软电话注册 -->
 <profile name="internal">
+  <!-- 出局网关（如 Twilio SIP Trunk）。凭据经 vars.xml 变量注入，
+       真实值只存在于 gitignored 的 .runtime/freeswitch/vars.xml -->
+  <gateways>
+    <X-PRE-PROCESS cmd="include" data="internal/*.xml"/>
+  </gateways>
   <settings>
     <!-- 监听地址与端口 -->
     <!-- local_ip_v4 是 FreeSWITCH 运行时动态变量，直接在 param 中引用即可解析为容器 IP -->

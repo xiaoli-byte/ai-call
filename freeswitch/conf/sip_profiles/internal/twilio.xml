@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Twilio Elastic SIP Trunking（Termination，外呼落地 PSTN）。
+
+     凭据一律来自 vars.xml 变量（twilio_sip_realm / twilio_sip_username /
+     twilio_sip_password）：
+     - 提交的 freeswitch/conf/vars.xml 只有 .invalid 占位（网关加载但不可用）；
+     - 真实值由 gitignored 的 .runtime/freeswitch/vars.xml 注入
+       （生成逻辑见 scripts/lib/OutboundLocal.psm1 Write-FreeSwitchRuntimeVars，
+        取值来源为仓库根 .env 的 TWILIO_SIP_* 条目）。
+
+     使用：FREESWITCH_DIAL_STRING=sofia/gateway/twilio/{to}
+     注意：Twilio 要求被叫号码为 E.164 格式（+8613800138000），
+     且主叫（From/Caller ID）必须是你在 Twilio 购买/验证过的号码。 -->
+<include>
+  <gateway name="twilio">
+    <param name="realm" value="$${twilio_sip_realm}"/>
+    <param name="username" value="$${twilio_sip_username}"/>
+    <param name="password" value="$${twilio_sip_password}"/>
+    <!-- Twilio Trunking 不需要注册：凭据只用于应答 INVITE 的 407 质询 -->
+    <param name="register" value="false"/>
+    <!-- 主叫号码放进 From 头（Twilio 按 From 校验外显号码） -->
+    <param name="caller-id-in-from" value="true"/>
+  </gateway>
+</include>

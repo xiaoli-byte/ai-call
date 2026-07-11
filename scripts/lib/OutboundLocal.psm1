@@ -190,13 +190,35 @@ function Get-OrCreateOutboundSipSecret {
   return $secret
 }
 
+function Read-TwilioSipVarsFromEnvFile {
+  <# 从仓库根 .env 读取 TWILIO_SIP_REALM/USERNAME/PASSWORD。
+     三项齐全才返回对象，否则返回 $null（vars.xml 保持 conf 占位值）。 #>
+  param([Parameter(Mandatory = $true)][string]$EnvFilePath)
+  if (-not (Test-Path -LiteralPath $EnvFilePath)) { return $null }
+  $values = @{}
+  foreach ($line in [IO.File]::ReadAllLines($EnvFilePath)) {
+    $m = [regex]::Match($line, '^\s*(TWILIO_SIP_(?:REALM|USERNAME|PASSWORD))\s*=\s*(.+?)\s*$')
+    if ($m.Success) { $values[$m.Groups[1].Value] = $m.Groups[2].Value }
+  }
+  if ($values['TWILIO_SIP_REALM'] -and $values['TWILIO_SIP_USERNAME'] -and $values['TWILIO_SIP_PASSWORD']) {
+    return [pscustomobject]@{
+      Realm    = $values['TWILIO_SIP_REALM']
+      Username = $values['TWILIO_SIP_USERNAME']
+      Password = $values['TWILIO_SIP_PASSWORD']
+    }
+  }
+  return $null
+}
+
 function Write-FreeSwitchRuntimeVars {
   [CmdletBinding()]
   param(
     [Parameter(Mandatory = $true)][string]$Path,
     [Parameter(Mandatory = $true)][string]$HostIPv4,
     [Parameter(Mandatory = $true)][ValidatePattern('^[0-9a-fA-F]{64}$')][string]$SipPassword,
-    [string]$VoiceAgentUrl = 'ws://host.docker.internal:8090/audio-stream'
+    [string]$VoiceAgentUrl = 'ws://host.docker.internal:8090/audio-stream',
+    # 仓库根 .env 路径；配置了 TWILIO_SIP_* 时把 Twilio 网关凭据注入 runtime vars
+    [string]$TwilioEnvFile = ''
   )
 
   if (-not (Test-UsableOutboundIPv4 -Address $HostIPv4)) {
@@ -206,7 +228,7 @@ function Write-FreeSwitchRuntimeVars {
   $ip = $escape::Escape($HostIPv4)
   $password = $escape::Escape($SipPassword)
   $voiceUrl = $escape::Escape($VoiceAgentUrl)
-  $xml = @(
+  $lines = @(
     '<?xml version="1.0" encoding="utf-8"?>'
     '<!-- Generated locally by scripts/dev-outbound.ps1. Do not commit this file. -->'
     '<include>'
@@ -218,9 +240,16 @@ function Write-FreeSwitchRuntimeVars {
     '  <X-PRE-PROCESS cmd="set" data="rtp_end_port=16394"/>'
     "  <X-PRE-PROCESS cmd=`"set`" data=`"default_password=$password`"/>"
     "  <X-PRE-PROCESS cmd=`"set`" data=`"voice_agent_ws_url=$voiceUrl`"/>"
-    '</include>'
-    ''
-  ) -join "`r`n"
+  )
+  if ($TwilioEnvFile) {
+    $twilio = Read-TwilioSipVarsFromEnvFile -EnvFilePath $TwilioEnvFile
+    if ($null -ne $twilio) {
+      $lines += "  <X-PRE-PROCESS cmd=`"set`" data=`"twilio_sip_realm=$($escape::Escape($twilio.Realm))`"/>"
+      $lines += "  <X-PRE-PROCESS cmd=`"set`" data=`"twilio_sip_username=$($escape::Escape($twilio.Username))`"/>"
+      $lines += "  <X-PRE-PROCESS cmd=`"set`" data=`"twilio_sip_password=$($escape::Escape($twilio.Password))`"/>"
+    }
+  }
+  $xml = ($lines + @('</include>', '')) -join "`r`n"
   $bytes = (New-Object Text.UTF8Encoding($false)).GetBytes($xml)
   $changed = $true
   if (Test-Path -LiteralPath $Path) {

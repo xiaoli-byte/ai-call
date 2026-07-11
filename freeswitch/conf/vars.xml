@@ -27,4 +27,11 @@
 
   <!-- ==================== Voice Agent WebSocket ==================== -->
   <X-PRE-PROCESS cmd="set" data="voice_agent_ws_url=ws://host.docker.internal:8090/audio-stream"/>
+
+  <!-- ==================== Twilio SIP Trunk（安全占位） ==================== -->
+  <!-- 真实凭据只能由 gitignored 的 .runtime/freeswitch/vars.xml 注入（来源 .env TWILIO_SIP_*）。
+       .invalid 是保留 TLD，占位状态下网关不可用、误用即刻失败。 -->
+  <X-PRE-PROCESS cmd="set" data="twilio_sip_realm=twilio.invalid"/>
+  <X-PRE-PROCESS cmd="set" data="twilio_sip_username=placeholder"/>
+  <X-PRE-PROCESS cmd="set" data="twilio_sip_password=placeholder"/>
 </include>

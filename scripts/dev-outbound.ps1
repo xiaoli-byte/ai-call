@@ -245,7 +245,8 @@ try {
   if (-not (Test-Path -LiteralPath $funAsrPython)) { throw 'FunASR virtualenv is missing. Run pnpm dev:funasr:setup first.' }
 
   $sipPassword = Get-OrCreateOutboundSipSecret -Path $secretPath
-  $vars = Write-FreeSwitchRuntimeVars -Path $varsPath -HostIPv4 $resolvedHost -SipPassword $sipPassword
+  $vars = Write-FreeSwitchRuntimeVars -Path $varsPath -HostIPv4 $resolvedHost -SipPassword $sipPassword `
+    -TwilioEnvFile (Join-Path $repositoryRoot '.env')
   $env:FREESWITCH_VARS_FILE = $varsPath
 
   $containerInfo = @(& docker ps -a --filter 'name=^/ai-call-freeswitch$' --format '{{.Names}}|{{.Status}}')
