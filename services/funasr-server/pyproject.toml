@@ -16,6 +16,11 @@ dependencies = [
     "numpy>=1.24",
     "scipy>=1.10",
     "librosa>=0.10",
+    # modelscope.pipelines（/embed 句向量端点用）的隐式依赖：modelscope 声明为可选/懒加载，
+    # 但 modelscope.pipelines.base 在 import 时无条件需要它们，缺一即 ImportError。
+    "addict>=2.4",
+    "datasets>=2.0",
+    "pillow>=10.0",
     # Web 层（FastAPI 原生支持 WebSocket，无需裸 websockets 库）
     "fastapi>=0.110",
     "uvicorn[standard]>=0.27",

@@ -63,6 +63,11 @@ class Config:
     vad_model_revision: str = "v2.0.4"
     punc_model: str = "iic/punc_ct-transformer_zh-cn-common-vad_realtime-vocab272727"
     punc_model_revision: str = "v2.0.4"
+    # 句向量模型（意图 embedding 相似度层用，见 /embed 端点）。
+    # 懒加载，不在 lifespan 里预加载，不影响启动时间。
+    # 特殊值 "mock"：跳过真实模型，返回确定性伪向量（CI/无模型环境）。
+    embed_model: str = "iic/nlp_gte_sentence-embedding_chinese-small"
+    embed_model_revision: str = ""
 
     # SSL（空则禁用，使用明文 ws/http）
     certfile: str = ""
@@ -110,6 +115,8 @@ class Config:
             vad_model_revision=_env("VAD_MODEL_REVISION", cls.vad_model_revision),
             punc_model=_env("PUNC_MODEL", cls.punc_model),
             punc_model_revision=_env("PUNC_MODEL_REVISION", cls.punc_model_revision),
+            embed_model=_env("EMBED_MODEL", cls.embed_model),
+            embed_model_revision=_env("EMBED_MODEL_REVISION", cls.embed_model_revision),
             certfile=_env("CERTFILE", ""),
             keyfile=_env("KEYFILE", ""),
             worker_threads=_env_int("WORKER_THREADS", 4),
@@ -148,6 +155,8 @@ class Config:
         parser.add_argument("--vad_model_revision", type=str, default=None)
         parser.add_argument("--punc_model", type=str, default=None)
         parser.add_argument("--punc_model_revision", type=str, default=None)
+        parser.add_argument("--embed_model", type=str, default=None, help="句向量模型 ID，或 mock（确定性伪向量）")
+        parser.add_argument("--embed_model_revision", type=str, default=None)
         parser.add_argument("--certfile", type=str, default=None)
         parser.add_argument("--keyfile", type=str, default=None)
         parser.add_argument("--worker_threads", type=int, default=None)
@@ -187,6 +196,8 @@ class Config:
             "vad_model_revision": args.vad_model_revision,
             "punc_model": args.punc_model,
             "punc_model_revision": args.punc_model_revision,
+            "embed_model": args.embed_model,
+            "embed_model_revision": args.embed_model_revision,
             "certfile": args.certfile,
             "keyfile": args.keyfile,
             "worker_threads": args.worker_threads,

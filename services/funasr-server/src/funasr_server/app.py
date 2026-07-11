@@ -109,6 +109,7 @@ def create_app(config: Config) -> FastAPI:
         )
 
     # 注册路由（延迟 import 避免循环依赖）
+    from .api.embed import router as embed_router
     from .api.health import router as health_router
     from .api.http import router as http_router
     from .api.sse import router as sse_router
@@ -117,7 +118,11 @@ def create_app(config: Config) -> FastAPI:
     app.include_router(health_router)
     app.include_router(http_router)
     app.include_router(sse_router)
+    app.include_router(embed_router)
     register_ws_routes(app)  # WebSocket 路由单独注册（需要 app 实例）
 
-    logger.info("app.created", routes=["/health", "/recognize", "/recognize/stream", "/", "/ws"])
+    logger.info(
+        "app.created",
+        routes=["/health", "/recognize", "/recognize/stream", "/embed", "/", "/ws"],
+    )
     return app

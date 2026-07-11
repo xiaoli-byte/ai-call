@@ -28,6 +28,31 @@ logger = structlog.get_logger(__name__)
 SPEAKER_MODEL_ID = "iic/speech_campplus_sv_zh-cn_16k-common"
 SPEAKER_MATCH_THRESHOLD = 0.2
 
+# embed_model 配置为该值时跳过真实模型，使用确定性伪向量（CI/无模型环境）
+EMBED_MOCK_SENTINEL = "mock"
+_MOCK_EMBED_DIM = 64
+
+
+def _l2_normalize(vec: list[float]) -> list[float]:
+    """L2 归一化，零向量原样返回（避免除零）。"""
+    norm = sum(v * v for v in vec) ** 0.5
+    if norm == 0.0:
+        return vec
+    return [v / norm for v in vec]
+
+
+def _mock_embed_vector(text: str, dim: int = _MOCK_EMBED_DIM) -> list[float]:
+    """由文本 hash 派生确定性伪向量（mock 模式，无真实语义，仅测试/CI 用）。"""
+    import hashlib
+
+    raw = bytearray()
+    counter = 0
+    while len(raw) < dim:
+        raw += hashlib.sha256(f"{counter}:{text}".encode("utf-8")).digest()
+        counter += 1
+    vals = [(raw[i] / 255.0) * 2.0 - 1.0 for i in range(dim)]
+    return _l2_normalize(vals)
+
 
 @dataclass
 class SpeakerDB:
@@ -73,6 +98,11 @@ class ModelManager:
         self.model_vad: Any = None
         self.model_punc: Any = None  # 可能为 None（punc_model 为空时禁用）
         self.model_sv: Any = None
+
+        # 句向量模型：不在 load_all() 里预加载，首个 /embed 请求时懒加载（见 ensure_embed_model）
+        self.model_embed: Any = None
+        self.embed_load_error: Optional[str] = None
+        self._embed_lock = asyncio.Lock()
 
         # 声纹库
         speaker_db_path = os.path.join(
@@ -283,6 +313,61 @@ class ModelManager:
         if best_score > SPEAKER_MATCH_THRESHOLD:
             return best_name, best_score
         return "unknown", best_score
+
+    # ---------- 句向量（/embed，懒加载） ----------
+
+    def _load_embed_model_sync(self) -> None:
+        """加载句向量模型（executor 线程内同步执行，由 ensure_embed_model 触发）。
+
+        embed_model 配置为 "mock" 时跳过真实模型，改用确定性伪向量。
+        加载失败把错误信息缓存到 embed_load_error，后续请求直接快速失败，不反复重试。
+        """
+        if self.model_embed is not None or self.embed_load_error is not None:
+            return
+        if self.config.embed_model.strip().lower() == EMBED_MOCK_SENTINEL:
+            logger.info("models.embed_mock_mode")
+            self.model_embed = EMBED_MOCK_SENTINEL
+            return
+        try:
+            from modelscope.pipelines import pipeline
+            from modelscope.utils.constant import Tasks
+
+            logger.info(
+                "models.loading_embed",
+                model=self.config.embed_model,
+                revision=self.config.embed_model_revision or "(default)",
+            )
+            kwargs: dict[str, Any] = {}
+            if self.config.embed_model_revision:
+                kwargs["model_revision"] = self.config.embed_model_revision
+            self.model_embed = pipeline(
+                Tasks.sentence_embedding,
+                model=self.config.embed_model,
+                device="gpu" if self.config.device == "cuda" else "cpu",
+                **kwargs,
+            )
+            logger.info("models.loading_embed_done")
+        except Exception as err:
+            self.embed_load_error = str(err)
+            logger.error("models.loading_embed_failed", error=str(err))
+
+    async def ensure_embed_model(self) -> None:
+        """确保句向量模型已就绪（懒加载 + 并发去重，避免多个首发请求重复加载）。"""
+        if self.model_embed is not None or self.embed_load_error is not None:
+            return
+        async with self._embed_lock:
+            # 双重检查：拿到锁时可能已被其他协程加载完成
+            if self.model_embed is not None or self.embed_load_error is not None:
+                return
+            await self.run_blocking(self._load_embed_model_sync)
+
+    def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        """批量句向量推理（阻塞，需在线程池调用），返回 L2 归一化后的向量。"""
+        if self.model_embed == EMBED_MOCK_SENTINEL:
+            return [_mock_embed_vector(t) for t in texts]
+        result = self.model_embed(input={"source_sentence": texts})
+        vectors = result["text_embedding"]
+        return [_l2_normalize([float(x) for x in vec]) for vec in vectors]
 
     # ---------- 内部工具 ----------
 

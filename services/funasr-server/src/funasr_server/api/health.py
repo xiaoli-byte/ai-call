@@ -45,6 +45,8 @@ async def health(request: Request) -> JSONResponse:
             "vad": models.model_vad is not None,
             "punc": models.model_punc is not None,  # 可能为 None（禁用 punc）
             "sv": models.model_sv is not None,
+            # 懒加载，未收到过 /embed 请求时为 False；不影响整体 status=ok
+            "embed": models.model_embed is not None,
         }
 
     return JSONResponse(
@@ -61,6 +63,7 @@ async def health(request: Request) -> JSONResponse:
                 "POST /recognize",
                 "POST /recognition",
                 "POST /recognize/stream",
+                "POST /embed",
                 "WS /",
                 "WS /ws",
             ],
