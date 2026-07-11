@@ -31,8 +31,80 @@ describe('validateFlowDefinition', () => {
     });
     expect(issues.map((issue) => issue.code)).toEqual(expect.arrayContaining([
       'decision_branches',
-      'default_branch',
+      'missing_intent_fallback',
       'unreachable_node',
     ]));
+  });
+
+  it('rejects an intent-mode decision node without a fallback edge', () => {
+    const issues = validateFlowDefinition({
+      nodes: [
+        { id: 's', type: 'start', position: { x: 0, y: 0 }, data: {} },
+        { id: 'decision', type: 'decision', position: { x: 0, y: 100 }, data: { mode: 'intent', intents: ['感兴趣', '拒绝'] } },
+        { id: 'e1', type: 'end', position: { x: 0, y: 200 }, data: { mode: 'complete' } },
+        { id: 'e2', type: 'end', position: { x: 200, y: 200 }, data: { mode: 'complete' } },
+      ],
+      edges: [
+        { id: '1', source: 's', target: 'decision' },
+        { id: '2', source: 'decision', target: 'e1', label: '感兴趣' },
+        { id: '3', source: 'decision', target: 'e2', label: '拒绝' },
+      ],
+    });
+    expect(issues.map((issue) => issue.code)).toContain('missing_intent_fallback');
+  });
+
+  it('accepts an intent-mode decision node with an unlabeled fallback edge', () => {
+    const issues = validateFlowDefinition({
+      nodes: [
+        { id: 's', type: 'start', position: { x: 0, y: 0 }, data: {} },
+        { id: 'decision', type: 'decision', position: { x: 0, y: 100 }, data: { mode: 'intent', intents: ['感兴趣', '拒绝'] } },
+        { id: 'e1', type: 'end', position: { x: 0, y: 200 }, data: { mode: 'complete' } },
+        { id: 'e2', type: 'end', position: { x: 200, y: 200 }, data: { mode: 'complete' } },
+        { id: 'e3', type: 'end', position: { x: 400, y: 200 }, data: { mode: 'complete' } },
+      ],
+      edges: [
+        { id: '1', source: 's', target: 'decision' },
+        { id: '2', source: 'decision', target: 'e1', label: '感兴趣' },
+        { id: '3', source: 'decision', target: 'e2', label: '拒绝' },
+        { id: '4', source: 'decision', target: 'e3' },
+      ],
+    });
+    expect(issues.map((issue) => issue.code)).not.toContain('missing_intent_fallback');
+  });
+
+  it('accepts an intent-mode decision node with a "其他" fallback edge', () => {
+    const issues = validateFlowDefinition({
+      nodes: [
+        { id: 's', type: 'start', position: { x: 0, y: 0 }, data: {} },
+        { id: 'decision', type: 'decision', position: { x: 0, y: 100 }, data: { mode: 'intent', intents: ['感兴趣', '拒绝'] } },
+        { id: 'e1', type: 'end', position: { x: 0, y: 200 }, data: { mode: 'complete' } },
+        { id: 'e2', type: 'end', position: { x: 200, y: 200 }, data: { mode: 'complete' } },
+        { id: 'e3', type: 'end', position: { x: 400, y: 200 }, data: { mode: 'complete' } },
+      ],
+      edges: [
+        { id: '1', source: 's', target: 'decision' },
+        { id: '2', source: 'decision', target: 'e1', label: '感兴趣' },
+        { id: '3', source: 'decision', target: 'e2', label: '拒绝' },
+        { id: '4', source: 'decision', target: 'e3', label: '其他' },
+      ],
+    });
+    expect(issues).toEqual([]);
+  });
+
+  it('does not require a fallback edge for a condition-mode decision node', () => {
+    const issues = validateFlowDefinition({
+      nodes: [
+        { id: 's', type: 'start', position: { x: 0, y: 0 }, data: {} },
+        { id: 'decision', type: 'decision', position: { x: 0, y: 100 }, data: { mode: 'condition', expression: "response.includes('满意')" } },
+        { id: 'e1', type: 'end', position: { x: 0, y: 200 }, data: { mode: 'complete' } },
+        { id: 'e2', type: 'end', position: { x: 200, y: 200 }, data: { mode: 'complete' } },
+      ],
+      edges: [
+        { id: '1', source: 's', target: 'decision' },
+        { id: '2', source: 'decision', target: 'e1', label: 'true' },
+        { id: '3', source: 'decision', target: 'e2', label: 'false' },
+      ],
+    });
+    expect(issues.map((issue) => issue.code)).not.toContain('missing_intent_fallback');
   });
 });

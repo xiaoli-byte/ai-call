@@ -55,18 +55,29 @@ export function validateFlowDefinition(
       }
       const branchTokens = labels.flatMap((label) => label.split(/[\/|,，]/).map((item) => item.trim()));
       const nodeData = node.data as { mode?: string; intents?: string[] };
-      const uncoveredIntents = nodeData.mode === 'intent'
-        ? (nodeData.intents ?? []).filter((intent) => !branchTokens.includes(intent))
-        : [];
-      const hasDefault = labels.some((label) => DEFAULT_BRANCH_LABELS.has(label.toLowerCase()));
-      if (uncoveredIntents.length > 0) {
-        issues.push({
-          code: 'missing_intent_branch',
-          message: `判断节点 ${node.id} 缺少意图分支: ${uncoveredIntents.join('、')}`,
-          nodeId: node.id,
+      if (nodeData.mode === 'intent') {
+        const uncoveredIntents = (nodeData.intents ?? []).filter((intent) => !branchTokens.includes(intent));
+        if (uncoveredIntents.length > 0) {
+          issues.push({
+            code: 'missing_intent_branch',
+            message: `判断节点 ${node.id} 缺少意图分支: ${uncoveredIntents.join('、')}`,
+            nodeId: node.id,
+          });
+        }
+        // intent 模式必须有 fallback 出边（运行时用它承接分类为"其他"的用户意图，
+        // 判定口径与 flow_executor._select_decision_edge 保持一致：
+        // 未设置 label 的边，或 label 归一化后属于默认关键词集合）
+        const hasFallback = edges.some((edge) => {
+          const label = edge.label?.trim();
+          return !label || DEFAULT_BRANCH_LABELS.has(label.toLowerCase());
         });
-      } else if ((nodeData.intents?.length ?? 0) === 0 && !hasDefault) {
-        issues.push({ code: 'default_branch', message: `判断节点 ${node.id} 需要 default/默认 分支`, nodeId: node.id });
+        if (!hasFallback) {
+          issues.push({
+            code: 'missing_intent_fallback',
+            message: `判断节点 ${node.id} (意图模式) 缺少默认分支：请添加一条标签为"其他"或"默认"的出边，用于承接无法识别的用户意图`,
+            nodeId: node.id,
+          });
+        }
       }
     }
   }
