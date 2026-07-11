@@ -18,7 +18,16 @@ logger = structlog.get_logger(__name__)
 
 
 def main() -> None:
-    """主入口：解析配置 → 创建 app → 启动 uvicorn。"""
+    """主入口：加载 .env → 解析配置 → 创建 app → 启动 uvicorn。"""
+    # 加载服务目录下的 .env（FUNASR_SERVER_* 变量）。python-dotenv 一直在依赖里
+    # 但此前从未被调用，导致 services/funasr-server/.env 形同虚设。
+    # override=False：已存在的进程环境变量优先（部署编排注入的值不被文件覆盖）。
+    from pathlib import Path
+
+    from dotenv import load_dotenv
+
+    load_dotenv(Path(__file__).resolve().parents[2] / ".env", override=False)
+
     config = Config.from_args()
     setup_logging(config.log_level)
 
