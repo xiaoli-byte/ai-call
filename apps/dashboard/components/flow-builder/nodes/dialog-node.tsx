@@ -6,8 +6,8 @@ import { NodeShell } from './node-shell';
 
 const MODE_LABELS: Record<DialogNodeData['mode'], string> = {
   script: '固定话术',
-  question: '提问',
-  ai: 'AI 回复',
+  question: '固定话术',
+  ai: 'AI 生成',
 };
 
 function getSummary(data: DialogNodeData): string {

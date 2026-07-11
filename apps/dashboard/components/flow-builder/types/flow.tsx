@@ -87,7 +87,7 @@ export const NODE_META: Record<FlowNodeType, NodeMeta> = {
     type: 'dialog',
     icon: DialogIcon,
     title: '对话',
-    description: '固定话术/提问/AI',
+    description: '固定话术 / AI 生成回复',
     accent: 'success',
   },
   decision: {
@@ -116,7 +116,7 @@ export const NODE_META: Record<FlowNodeType, NodeMeta> = {
 /** 智能推荐规则：上游节点类型 → 推荐的下游节点类型 */
 export const RECOMMENDATIONS: Record<FlowNodeType, FlowNodeType[]> = {
   start: ['dialog'],
-  dialog: ['dialog', 'decision', 'action', 'end'],
+  dialog: ['dialog', 'action', 'end'],
   decision: ['dialog', 'action', 'end'],
   action: ['dialog', 'end'],
   end: [],
@@ -125,7 +125,6 @@ export const RECOMMENDATIONS: Record<FlowNodeType, FlowNodeType[]> = {
 /** AddMenu 可选的节点类型（不含 start，整个流程只能有一个）*/
 export const ADDABLE_NODE_TYPES: FlowNodeType[] = [
   'dialog',
-  'decision',
   'action',
   'end',
 ];

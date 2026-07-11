@@ -13,6 +13,7 @@ import { PropertyPanel } from './property-panel';
 import { FlowDebugPanel } from './flow-debug-panel';
 import { useFlowStorage } from './hooks/use-flow-storage';
 import { useFlowStore } from './store/flow-store';
+import { normalizeFlowForEditor } from './flow-migrations';
 import styles from './flow-builder.module.scss';
 
 interface FlowBuilderProps {
@@ -63,7 +64,8 @@ function FlowBuilderInner({
   const [debugOpen, setDebugOpen] = useState(false);
 
   useEffect(() => {
-    setFlow(initialNodes, initialEdges);
+    const normalized = normalizeFlowForEditor(initialNodes, initialEdges);
+    setFlow(normalized.nodes, normalized.edges);
   }, [initialNodes, initialEdges, setFlow]);
 
   async function handlePublish() {

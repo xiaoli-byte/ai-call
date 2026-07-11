@@ -45,6 +45,46 @@ export function validateFlowDefinition(
     if (node.type !== 'end' && edges.length === 0) {
       issues.push({ code: 'dead_end', message: `非结束节点 ${node.id} 没有出口`, nodeId: node.id });
     }
+    if (node.type !== 'decision' && edges.length > 1) {
+      const fallbackEdges = edges.filter((edge) => {
+        const label = edge.label?.trim();
+        return !label || DEFAULT_BRANCH_LABELS.has(label.toLowerCase());
+      });
+      const intentEdges = edges.filter((edge) => !fallbackEdges.includes(edge));
+
+      if (intentEdges.length === 0) {
+        issues.push({
+          code: 'missing_intent_branch',
+          message: `节点 ${node.id} 有多个出口，请至少配置一个意图分支`,
+          nodeId: node.id,
+        });
+      }
+      if (fallbackEdges.length === 0) {
+        issues.push({
+          code: 'missing_intent_fallback',
+          message: `节点 ${node.id} 缺少默认分支，请将一条出边的分支名称留空`,
+          nodeId: node.id,
+        });
+      }
+      if (fallbackEdges.length > 1) {
+        issues.push({
+          code: 'multiple_intent_fallbacks',
+          message: `节点 ${node.id} 只能有一条默认分支`,
+          nodeId: node.id,
+        });
+      }
+    }
+
+    for (const edge of edges) {
+      if ((edge.intentExamples?.length ?? 0) > 0 && !edge.label?.trim()) {
+        issues.push({
+          code: 'intent_examples_without_name',
+          message: `连线 ${edge.id} 配置了用户问法，但缺少分支名称`,
+          nodeId: node.id,
+          edgeId: edge.id,
+        });
+      }
+    }
     if (node.type === 'decision') {
       if (edges.length < 2) {
         issues.push({ code: 'decision_branches', message: `判断节点 ${node.id} 至少需要两个分支`, nodeId: node.id });

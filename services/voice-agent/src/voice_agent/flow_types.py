@@ -136,12 +136,13 @@ class FlowNode:
 
 @dataclass
 class FlowEdge:
-    """流程边。label 为分支条件（Decision 出口）。"""
+    """流程边。label 为意图分支名，留空时作为默认分支。"""
 
     id: str
     source: str
     target: str
     label: Optional[str] = None
+    intent_examples: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -250,4 +251,11 @@ def _parse_edge(e: dict[str, Any]) -> FlowEdge:
         source=str(e.get("source", "")),
         target=str(e.get("target", "")),
         label=e.get("label"),
+        intent_examples=_parse_example_list(e.get("intentExamples")),
     )
+
+
+def _parse_example_list(raw: Any) -> list[str]:
+    if not isinstance(raw, list):
+        return []
+    return [item.strip() for item in raw if isinstance(item, str) and item.strip()]

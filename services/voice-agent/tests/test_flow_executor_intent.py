@@ -203,3 +203,37 @@ async def test_select_edge_exact_match():
     selected = await ex._select_decision_edge("c1", edges, "不满意")
     assert selected is not None
     assert selected.target == "t_unsatisfied"
+
+
+async def test_dialog_routes_directly_by_edge_intent():
+    cb = FakeFlowCallbacks(user_reply="请帮我转人工客服")
+    nodes = [
+        FlowNode(id="start", type=NodeType.START, position={"x": 0, "y": 0}, data=StartNodeData()),
+        FlowNode(
+            id="dialog",
+            type=NodeType.DIALOG,
+            position={"x": 0, "y": 0},
+            data=DialogNodeData(
+                mode=DialogMode.SCRIPT,
+                text="请问需要什么帮助？",
+                wait_for_response=True,
+            ),
+        ),
+        FlowNode(id="end_help", type=NodeType.END, position={"x": 0, "y": 0}, data=EndNodeData()),
+        FlowNode(id="end_default", type=NodeType.END, position={"x": 0, "y": 0}, data=EndNodeData()),
+    ]
+    edges = [
+        FlowEdge(id="e1", source="start", target="dialog"),
+        FlowEdge(
+            id="e2",
+            source="dialog",
+            target="end_help",
+            label="转人工",
+            intent_examples=["帮我找人工客服"],
+        ),
+        FlowEdge(id="e3", source="dialog", target="end_default"),
+    ]
+
+    await FlowExecutor(TaskFlow(id="f", name="f", nodes=nodes, edges=edges), cb).run("c1")
+
+    assert cb.entered_nodes[-1] == "end_help"

@@ -4,18 +4,19 @@ import type { ScenarioConfig } from './scenarios.js';
  * 外呼任务流程配置共享类型。
  *
  * 采用现代 TypeScript 实践（string literal union types + discriminated unions），
- * 强类型可推断。节点系统遵循"极简 5 节点"原则：能力通过配置表达，而非增加节点数量。
+ * 强类型可推断。新版编辑器只允许新增 dialog/action/end 三类业务节点，
+ * decision 与 question 仅用于兼容历史快照，载入后会自动迁移。
  *
  * 节点类型：
  * - start：唯一入口节点，整个流程只能有一个
- * - dialog：统一所有对话能力（固定话术/提问/AI 回复）
- * - decision：统一所有分支判断（条件/意图）
+ * - dialog：统一所有对话能力（固定话术/AI 生成回复）
+ * - decision：历史判断节点（兼容读取，意图能力已下沉到 edge）
  * - action：统一业务动作（转人工/发短信/CRM/API）
  * - end：统一结束行为（正常结束/挂机）
  */
 
 // ============================================================
-// 节点类型（5 种极简节点系统）
+// 节点类型（decision 仅用于历史兼容）
 // ============================================================
 
 export type FlowNodeType = 'start' | 'dialog' | 'decision' | 'action' | 'end';
@@ -32,7 +33,8 @@ export interface StartNodeData {
   // 无字段，仅占位
 }
 
-// --- Dialog Node（统一所有对话能力：固定话术/提问/AI 回复）---
+// --- Dialog Node（统一所有对话能力：固定话术/AI 生成回复）---
+/** question 仅用于读取历史流程；新编辑器使用 script + waitForResponse 表达提问。 */
 export type DialogMode = 'script' | 'question' | 'ai';
 
 export interface DialogNodeData {
@@ -165,8 +167,13 @@ export interface FlowEdge {
   id: string;
   source: string;
   target: string;
-  /** 分支条件标签（Decision 节点出口边的 label 兼作分支条件）*/
+  /**
+   * 意图分支名称。留空表示默认分支；有多条出边时，运行时使用该名称做意图路由。
+   * 继续沿用 label 字段，以兼容已发布流程和 React Flow 的连线标签。
+   */
   label?: string;
+  /** 用户表达示例，用于提升该连线意图的相似度匹配效果。 */
+  intentExamples?: string[];
   sourceHandle?: string;
   targetHandle?: string;
 }

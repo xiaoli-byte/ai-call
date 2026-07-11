@@ -50,6 +50,9 @@ function toPersistedFlow(nodes: FlowNode[], edges: FlowEdge[]): PersistedFlow {
       source: edge.source,
       target: edge.target,
       ...(edge.label !== undefined ? { label: edge.label } : {}),
+      ...(edge.intentExamples !== undefined
+        ? { intentExamples: edge.intentExamples }
+        : {}),
       ...(edge.sourceHandle !== undefined
         ? { sourceHandle: edge.sourceHandle }
         : {}),

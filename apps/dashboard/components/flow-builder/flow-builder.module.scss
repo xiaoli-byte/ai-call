@@ -641,6 +641,13 @@
   margin-top: 4px;
 }
 
+.flowFieldCounter {
+  margin-top: 4px;
+  text-align: right;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
 .flowInput,
 .flowTextarea,
 .flowSelect {
@@ -1043,6 +1050,88 @@
   background: var(--primary-600);
   border-color: var(--primary-600);
   color: white;
+}
+
+.flowIntentNotice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 18px;
+  padding: 11px 12px;
+  border: 1px solid rgba(37, 99, 235, 0.18);
+  border-radius: var(--radius-md);
+  background: rgba(37, 99, 235, 0.05);
+  color: var(--primary-700);
+}
+
+.flowIntentNoticeIcon {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  border-radius: 50%;
+  color: white;
+  background: var(--primary-600);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.flowIntentNotice strong,
+.flowIntentNotice span {
+  display: block;
+}
+
+.flowIntentNotice strong {
+  margin-bottom: 2px;
+  font-size: 12.5px;
+}
+
+.flowIntentNotice span {
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.flowExampleList {
+  display: flex;
+  flex-direction: column;
+}
+
+.flowEdgeRoute {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 18px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  margin-top: 18px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--gray-50);
+  color: var(--text-muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.flowEdgeRoute span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.flowResponseSettings {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 12px;
+  border-radius: var(--radius);
+  background: var(--gray-50);
+  border: 1px solid var(--border);
+}
+
+.flowResponseSettings .flowField {
+  margin-bottom: 0;
 }
 
 /* ============================================================

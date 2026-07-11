@@ -1,8 +1,8 @@
 /**
  * 外呼流程内置模板（前后端共享）
  *
- * 3 个内置模板 + 1 个空白模板。每个模板使用新 5 节点系统，
- * 预设 start → dialog → decision → action → end 链。
+ * 3 个内置模板 + 1 个空白模板。编辑器仅暴露对话、动作、结束三类业务节点，
+ * 意图识别直接配置在对话/动作节点的出边上。
  */
 import type { FlowEdge, FlowNode } from './task-flows.js';
 
@@ -18,8 +18,19 @@ function nid(prefix: string, i: number): string {
   return `${prefix}_${i}`;
 }
 
-function edge(source: string, target: string, label?: string): FlowEdge {
-  return { id: `e_${source}_${target}`, source, target, label };
+function edge(
+  source: string,
+  target: string,
+  label?: string,
+  intentExamples?: string[],
+): FlowEdge {
+  return {
+    id: `e_${source}_${target}`,
+    source,
+    target,
+    ...(label !== undefined ? { label } : {}),
+    ...(intentExamples?.length ? { intentExamples } : {}),
+  };
 }
 
 /** 空白模板：仅 1 个 Start 节点 */
@@ -53,19 +64,10 @@ function collectionTemplate(): { nodes: FlowNode[]; edges: FlowEdge[] } {
       timeoutSeconds: 10,
     },
   };
-  const decide: FlowNode = {
-    id: nid('decision', 3),
-    type: 'decision',
-    position: { x: 260, y: 380 },
-    data: {
-      mode: 'intent',
-      intents: ['同意还款', '拒绝还款', '经济困难', '非本人'],
-    },
-  };
   const transfer: FlowNode = {
     id: nid('action', 4),
     type: 'action',
-    position: { x: 260, y: 560 },
+    position: { x: 100, y: 380 },
     data: {
       actionType: 'transfer',
       config: { extension: '9000', reason: '客户要求人工服务' },
@@ -74,7 +76,7 @@ function collectionTemplate(): { nodes: FlowNode[]; edges: FlowEdge[] } {
   const end: FlowNode = {
     id: nid('end', 5),
     type: 'end',
-    position: { x: 260, y: 740 },
+    position: { x: 420, y: 560 },
     data: {
       mode: 'hangup',
       reason: '催收流程结束',
@@ -82,12 +84,11 @@ function collectionTemplate(): { nodes: FlowNode[]; edges: FlowEdge[] } {
     },
   };
   return {
-    nodes: [start, greet, decide, transfer, end],
+    nodes: [start, greet, transfer, end],
     edges: [
       edge(start.id, greet.id),
-      edge(greet.id, decide.id),
-      edge(decide.id, transfer.id, '拒绝还款/非本人'),
-      edge(decide.id, end.id, '同意还款/经济困难'),
+      edge(greet.id, transfer.id, '拒绝还款/非本人', ['我不打算还', '这不是我的账单', '你们找错人了']),
+      edge(greet.id, end.id),
       edge(transfer.id, end.id),
     ],
   };
@@ -113,19 +114,10 @@ function ecommerceTemplate(): { nodes: FlowNode[]; edges: FlowEdge[] } {
       timeoutSeconds: 10,
     },
   };
-  const decide: FlowNode = {
-    id: nid('decision', 3),
-    type: 'decision',
-    position: { x: 260, y: 380 },
-    data: {
-      mode: 'intent',
-      intents: ['满意', '不满意', '未收到'],
-    },
-  };
   const afterSale: FlowNode = {
     id: nid('action', 4),
     type: 'action',
-    position: { x: 260, y: 560 },
+    position: { x: 100, y: 380 },
     data: {
       actionType: 'crm',
       config: {
@@ -138,7 +130,7 @@ function ecommerceTemplate(): { nodes: FlowNode[]; edges: FlowEdge[] } {
   const end: FlowNode = {
     id: nid('end', 5),
     type: 'end',
-    position: { x: 260, y: 740 },
+    position: { x: 420, y: 560 },
     data: {
       mode: 'complete',
       reason: '电商回访结束',
@@ -146,12 +138,11 @@ function ecommerceTemplate(): { nodes: FlowNode[]; edges: FlowEdge[] } {
     },
   };
   return {
-    nodes: [start, greet, decide, afterSale, end],
+    nodes: [start, greet, afterSale, end],
     edges: [
       edge(start.id, greet.id),
-      edge(greet.id, decide.id),
-      edge(decide.id, afterSale.id, '不满意/未收到'),
-      edge(decide.id, end.id, '满意'),
+      edge(greet.id, afterSale.id, '不满意/未收到', ['商品有问题', '我还没有收到货', '体验不太好']),
+      edge(greet.id, end.id),
       edge(afterSale.id, end.id),
     ],
   };
@@ -180,19 +171,10 @@ function presaleTemplate(): { nodes: FlowNode[]; edges: FlowEdge[] } {
       timeoutSeconds: 180,
     },
   };
-  const decide: FlowNode = {
-    id: nid('decision', 3),
-    type: 'decision',
-    position: { x: 260, y: 380 },
-    data: {
-      mode: 'intent',
-      intents: ['有意向试驾', '需要考虑', '无意向'],
-    },
-  };
   const book: FlowNode = {
     id: nid('action', 4),
     type: 'action',
-    position: { x: 260, y: 560 },
+    position: { x: 100, y: 380 },
     data: {
       actionType: 'crm',
       config: {
@@ -204,7 +186,7 @@ function presaleTemplate(): { nodes: FlowNode[]; edges: FlowEdge[] } {
   const end: FlowNode = {
     id: nid('end', 5),
     type: 'end',
-    position: { x: 260, y: 740 },
+    position: { x: 420, y: 560 },
     data: {
       mode: 'complete',
       reason: '售前咨询结束',
@@ -212,12 +194,11 @@ function presaleTemplate(): { nodes: FlowNode[]; edges: FlowEdge[] } {
     },
   };
   return {
-    nodes: [start, greet, decide, book, end],
+    nodes: [start, greet, book, end],
     edges: [
       edge(start.id, greet.id),
-      edge(greet.id, decide.id),
-      edge(decide.id, book.id, '有意向试驾/需要考虑'),
-      edge(decide.id, end.id, '无意向'),
+      edge(greet.id, book.id, '有意向试驾/需要考虑', ['我想预约试驾', '可以去店里看看', '我再考虑一下']),
+      edge(greet.id, end.id),
       edge(book.id, end.id),
     ],
   };
@@ -234,7 +215,7 @@ export const TASK_FLOW_TEMPLATES: TaskFlowTemplate[] = [
   {
     id: 'collection',
     name: '贷后催收模板',
-    description: '逾期账单催收：问候 → 意图识别 → 转人工/结束',
+    description: '逾期账单催收：问候 → 连线意图分支 → 转人工/结束',
     ...collectionTemplate(),
   },
   {
@@ -246,7 +227,7 @@ export const TASK_FLOW_TEMPLATES: TaskFlowTemplate[] = [
   {
     id: 'presale',
     name: '售前咨询模板',
-    description: '售前咨询：AI 对话 → 意向判断 → 试驾预约/结束',
+    description: '售前咨询：AI 对话 → 连线意图分支 → 试驾预约/结束',
     ...presaleTemplate(),
   },
 ];

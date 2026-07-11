@@ -179,11 +179,16 @@ class FlowExecutor:
             if not candidates:
                 raise ValueError(f"flow node {current_id} has no outgoing edge")
 
-            selected = (
-                await self._select_decision_edge(call_id, candidates, last_response)
-                if node.type == NodeType.DECISION
-                else candidates[0]
-            )
+            if node.type == NodeType.DECISION:
+                selected = await self._select_decision_edge(
+                    call_id, candidates, last_response
+                )
+            elif len(candidates) > 1:
+                selected = await self._select_intent_edge(
+                    call_id, node.id, candidates, last_response
+                )
+            else:
+                selected = candidates[0]
             if not selected:
                 raise ValueError(f"flow node {current_id} has no matching outgoing edge")
             current_id = selected.target
@@ -504,6 +509,76 @@ class FlowExecutor:
             if token in normalized:
                 return edge
         return fallback
+
+    async def _select_intent_edge(
+        self,
+        call_id: str,
+        node_id: str,
+        edges: list[FlowEdge],
+        response: str,
+    ) -> Optional[FlowEdge]:
+        """Select an outgoing edge whose intent is configured directly on the edge."""
+        fallback = next((edge for edge in edges if _is_fallback_edge(edge)), None)
+        intents: list[str] = []
+        intent_examples: dict[str, list[str]] = {}
+
+        for edge in edges:
+            if _is_fallback_edge(edge) or not edge.label:
+                continue
+            tokens = [
+                token.strip()
+                for token in re.split(r"[/|,，、]+", edge.label)
+                if token.strip()
+            ]
+            for token in tokens:
+                if token not in intents:
+                    intents.append(token)
+                if edge.intent_examples:
+                    intent_examples[token] = edge.intent_examples
+
+        if not intents or not response.strip():
+            return fallback or edges[0]
+
+        matched = self._match_intent_by_keyword(intents, response)
+        tier = "keyword"
+
+        if not matched and self._embed is not None and intent_examples:
+            data = DecisionNodeData(
+                mode=DecisionMode.INTENT,
+                intents=intents,
+                intent_examples=intent_examples,
+            )
+            matched, detail = await self._classify_intent_embedding(
+                call_id, node_id, data, response
+            )
+            if matched:
+                tier = "embed"
+                self._log_intent(call_id, node_id, tier, response, matched, detail)
+
+        if not matched:
+            matched = await self._classify_intent_llm(
+                call_id, intents, response, fallback is not None
+            )
+            tier = "llm"
+
+        if matched:
+            if tier != "embed":
+                self._log_intent(call_id, node_id, tier, response, matched)
+            selected = await self._select_decision_edge(call_id, edges, matched)
+            if selected:
+                return selected
+
+        if fallback:
+            self._log_intent(call_id, node_id, "fallback", response, "其他")
+            return fallback
+
+        logger.warning(
+            "[FlowExecutor] edge intent unmatched; using first edge: call=%s node=%s text=%s",
+            call_id,
+            node_id,
+            (response or "")[:50],
+        )
+        return edges[0]
 
     async def _exec_action(self, call_id: str, node: FlowNode) -> None:
         data = node.as_action()

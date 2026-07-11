@@ -20,8 +20,14 @@ function node(
   return { id, type, position: { x, y }, data };
 }
 
-function edge(source: string, target: string, label?: string): FlowEdge {
-  return { id: `e_${source}_${target}`, source, target, label };
+function edge(source: string, target: string, label?: string, intentExamples?: string[]): FlowEdge {
+  return {
+    id: `e_${source}_${target}`,
+    source,
+    target,
+    ...(label !== undefined ? { label } : {}),
+    ...(intentExamples?.length ? { intentExamples } : {}),
+  };
 }
 
 function templateFlow(kind: 'collection' | 'ecommerce' | 'appointment' | 'insurance'): { nodes: FlowNode[]; edges: FlowEdge[] } {
@@ -39,34 +45,27 @@ function templateFlow(kind: 'collection' | 'ecommerce' | 'appointment' | 'insura
     waitForResponse: true,
     timeoutSeconds: 12,
   });
-  const decision = node('decision_3', 'decision', 260, 380, {
-    mode: 'intent',
-    intents: kind === 'collection'
-      ? ['同意处理', '需要延期', '明确拒绝', '转人工']
-      : ['满意/确认', '有疑问', '需要人工', '明确拒绝'],
-  });
-  const action = node('action_4', 'action', 100, 560, {
+  const action = node('action_4', 'action', 100, 380, {
     actionType: kind === 'appointment' ? 'sms' : 'crm',
     config: kind === 'appointment'
       ? { template: 'appointment_confirm', params: { time: '{{appointmentTime}}' } }
       : { action: `${kind}_follow_up`, priority: 'normal' },
   });
-  const handoff = node('action_5', 'action', 420, 560, {
+  const handoff = node('action_5', 'action', 420, 380, {
     actionType: 'transfer',
     config: { extension: '9000', reason: '用户需要人工协助或存在高风险意图' },
   });
-  const end = node('end_6', 'end', 260, 740, {
+  const end = node('end_6', 'end', 260, 560, {
     mode: 'complete',
     reason: '模板流程结束',
     farewell: '感谢您的时间，祝您生活愉快，再见。',
   });
   return {
-    nodes: [start, greet, decision, action, handoff, end],
+    nodes: [start, greet, action, handoff, end],
     edges: [
       edge(start.id, greet.id),
-      edge(greet.id, decision.id),
-      edge(decision.id, action.id, '确认/可继续'),
-      edge(decision.id, handoff.id, '有疑问/转人工/高风险'),
+      edge(greet.id, action.id),
+      edge(greet.id, handoff.id, '有疑问/转人工/高风险', ['我有问题想咨询', '帮我转人工', '我不同意']),
       edge(action.id, end.id),
       edge(handoff.id, end.id),
     ],

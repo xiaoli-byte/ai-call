@@ -57,7 +57,7 @@ export function PropertyPanel() {
               </svg>
             </div>
             <div>
-              <div className={styles.flowPropertyPanelTitle}>连线配置</div>
+              <div className={styles.flowPropertyPanelTitle}>意图分支配置</div>
               <div className={styles.flowPropertyPanelSubtitle}>
                 {sourceNode ? NODE_META[sourceNode.type].title : '?'} →{' '}
                 {targetNode ? NODE_META[targetNode.type].title : '?'}

@@ -16,6 +16,43 @@ describe('validateFlowDefinition', () => {
     })).toEqual([]);
   });
 
+  it('accepts intent branches directly on a dialog node', () => {
+    const issues = validateFlowDefinition({
+      nodes: [
+        { id: 's', type: 'start', position: { x: 0, y: 0 }, data: {} },
+        { id: 'd', type: 'dialog', position: { x: 0, y: 100 }, data: { mode: 'script', text: '需要帮助吗？', interruptible: true, waitForResponse: true } },
+        { id: 'a', type: 'action', position: { x: -100, y: 200 }, data: { actionType: 'transfer', config: {} } },
+        { id: 'e', type: 'end', position: { x: 100, y: 200 }, data: { mode: 'complete' } },
+      ],
+      edges: [
+        { id: '1', source: 's', target: 'd' },
+        { id: '2', source: 'd', target: 'a', label: '需要人工', intentExamples: ['帮我转人工'] },
+        { id: '3', source: 'd', target: 'e' },
+        { id: '4', source: 'a', target: 'e' },
+      ],
+    });
+
+    expect(issues).toEqual([]);
+  });
+
+  it('requires one default edge when a regular node has multiple branches', () => {
+    const issues = validateFlowDefinition({
+      nodes: [
+        { id: 's', type: 'start', position: { x: 0, y: 0 }, data: {} },
+        { id: 'd', type: 'dialog', position: { x: 0, y: 100 }, data: { mode: 'script', text: '请选择', interruptible: true, waitForResponse: true } },
+        { id: 'e1', type: 'end', position: { x: -100, y: 200 }, data: { mode: 'complete' } },
+        { id: 'e2', type: 'end', position: { x: 100, y: 200 }, data: { mode: 'complete' } },
+      ],
+      edges: [
+        { id: '1', source: 's', target: 'd' },
+        { id: '2', source: 'd', target: 'e1', label: '同意' },
+        { id: '3', source: 'd', target: 'e2', label: '拒绝' },
+      ],
+    });
+
+    expect(issues.map((issue) => issue.code)).toContain('missing_intent_fallback');
+  });
+
   it('rejects unreachable and incomplete decision graphs', () => {
     const issues = validateFlowDefinition({
       nodes: [

@@ -12,21 +12,27 @@ interface DialogFormProps {
   onUpdate: (data: Partial<DialogNodeData>) => void;
 }
 
-const MODE_OPTIONS: { value: DialogMode; label: string }[] = [
+type EditableDialogMode = Extract<DialogMode, 'script' | 'ai'>;
+
+const MODE_OPTIONS: { value: EditableDialogMode; label: string }[] = [
   { value: 'script', label: '固定话术' },
-  { value: 'question', label: '提问' },
-  { value: 'ai', label: 'AI 回复' },
+  { value: 'ai', label: 'AI 生成回复' },
 ];
+
+function editableMode(data: DialogNodeData): EditableDialogMode {
+  return data.mode === 'ai' ? 'ai' : 'script';
+}
 
 export function DialogForm({ node, onUpdate }: DialogFormProps) {
   const { data: globalConfig } = useGlobalConfig();
   const data = node.data as DialogNodeData;
   const variables = globalConfig?.globalVariables ?? [];
-  const [mode, setMode] = useState<DialogMode>(data.mode);
-  const [text, setText] = useState(data.text ?? '');
+  const [mode, setMode] = useState<EditableDialogMode>(editableMode(data));
+  const [text, setText] = useState(
+    data.text ?? (data.mode === 'question' ? data.prompt ?? '' : ''),
+  );
   const [prompt, setPrompt] = useState(data.prompt ?? '');
   const [systemPrompt, setSystemPrompt] = useState(data.systemPrompt ?? '');
-  const [temperature, setTemperature] = useState(data.temperature ?? 0.7);
   const [timeoutSeconds, setTimeoutSeconds] = useState(
     data.timeoutSeconds ?? 10,
   );
@@ -38,11 +44,10 @@ export function DialogForm({ node, onUpdate }: DialogFormProps) {
 
   // 节点切换时重置
   useEffect(() => {
-    setMode(data.mode);
-    setText(data.text ?? '');
+    setMode(editableMode(data));
+    setText(data.text ?? (data.mode === 'question' ? data.prompt ?? '' : ''));
     setPrompt(data.prompt ?? '');
     setSystemPrompt(data.systemPrompt ?? '');
-    setTemperature(data.temperature ?? 0.7);
     setTimeoutSeconds(data.timeoutSeconds ?? 10);
     setRetryCount(data.retryCount ?? 2);
     setInterruptible(data.interruptible);
@@ -60,7 +65,7 @@ export function DialogForm({ node, onUpdate }: DialogFormProps) {
         <Select
           value={mode}
           onChange={(e) => {
-            const newMode = e.target.value as DialogMode;
+            const newMode = e.target.value as EditableDialogMode;
             setMode(newMode);
             emit({ mode: newMode });
           }}
@@ -87,48 +92,6 @@ export function DialogForm({ node, onUpdate }: DialogFormProps) {
         </Field>
       )}
 
-      {mode === 'question' && (
-        <>
-          <Field label="提问">
-            <VariableTextArea
-              value={prompt}
-              variables={variables}
-              onValueChange={(value) => {
-                setPrompt(value);
-                emit({ prompt: value });
-              }}
-              placeholder="请问您收到货了吗？"
-            />
-          </Field>
-          <Field label="超时（秒）">
-            <TextInput
-              type="number"
-              min={1}
-              max={120}
-              value={timeoutSeconds}
-              onChange={(e) => {
-                const v = Number(e.target.value);
-                setTimeoutSeconds(v);
-                emit({ timeoutSeconds: v });
-              }}
-            />
-          </Field>
-          <Field label="重试次数">
-            <TextInput
-              type="number"
-              min={0}
-              max={5}
-              value={retryCount}
-              onChange={(e) => {
-                const v = Number(e.target.value);
-                setRetryCount(v);
-                emit({ retryCount: v });
-              }}
-            />
-          </Field>
-        </>
-      )}
-
       {mode === 'ai' && (
         <>
           <Field label="系统提示词">
@@ -143,7 +106,7 @@ export function DialogForm({ node, onUpdate }: DialogFormProps) {
               placeholder="你是客服专员，专业且礼貌..."
             />
           </Field>
-          <Field label="提示语">
+          <Field label="回复目标" hint="描述这一节点要如何结合上下文生成回复">
             <VariableTextArea
               value={prompt}
               variables={variables}
@@ -151,21 +114,7 @@ export function DialogForm({ node, onUpdate }: DialogFormProps) {
                 setPrompt(value);
                 emit({ prompt: value });
               }}
-              placeholder="您好，这里是..."
-            />
-          </Field>
-          <Field label="温度" hint="控制回复随机性，0 = 精准，2 = 发散">
-            <TextInput
-              type="number"
-              step={0.1}
-              min={0}
-              max={2}
-              value={temperature}
-              onChange={(e) => {
-                const v = Number(e.target.value);
-                setTemperature(v);
-                emit({ temperature: v });
-              }}
+              placeholder="例如：确认客户是否收到商品，并自然询问使用体验"
             />
           </Field>
         </>
@@ -192,6 +141,37 @@ export function DialogForm({ node, onUpdate }: DialogFormProps) {
           emit({ waitForResponse: v });
         }}
       />
+
+      {waitForResponse && (
+        <div className={styles.flowResponseSettings}>
+          <Field label="等待超时（秒）">
+            <TextInput
+              type="number"
+              min={1}
+              max={120}
+              value={timeoutSeconds}
+              onChange={(e) => {
+                const v = Number(e.target.value);
+                setTimeoutSeconds(v);
+                emit({ timeoutSeconds: v });
+              }}
+            />
+          </Field>
+          <Field label="无响应重试次数">
+            <TextInput
+              type="number"
+              min={0}
+              max={5}
+              value={retryCount}
+              onChange={(e) => {
+                const v = Number(e.target.value);
+                setRetryCount(v);
+                emit({ retryCount: v });
+              }}
+            />
+          </Field>
+        </div>
+      )}
     </div>
   );
 }

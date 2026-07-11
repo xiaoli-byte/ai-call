@@ -44,7 +44,13 @@ export function FlowCanvas() {
   const redo = useFlowStore((s) => s.redo);
 
   const rfNodes = useMemo(() => nodes as unknown as Node[], [nodes]);
-  const rfEdges = useMemo(() => edges as unknown as Edge[], [edges]);
+  const rfEdges = useMemo(
+    () => edges.map((edge) => ({
+      ...edge,
+      label: edge.label?.trim() || '默认',
+    })) as unknown as Edge[],
+    [edges],
+  );
 
   const onNodesChange = useCallback(
     (changes: NodeChange[]) => {
@@ -58,11 +64,11 @@ export function FlowCanvas() {
     (changes: EdgeChange[]) => {
       const next = applyEdgeChanges(
         changes,
-        rfEdges,
+        edges as unknown as Edge[],
       ) as unknown as typeof edges;
       useFlowStore.setState({ edges: next });
     },
-    [rfEdges],
+    [edges],
   );
 
   // 拖拽连线：从节点 source handle 拖到 target handle

@@ -31,7 +31,10 @@ interface FlowState {
 
   connectEdge: (source: string, target: string) => void;
   deleteEdge: (edgeId: string) => void;
-  updateEdgeLabel: (edgeId: string, label: string) => void;
+  updateEdgeIntent: (
+    edgeId: string,
+    intent: { label?: string; intentExamples?: string[] },
+  ) => void;
   organizeLayout: () => void;
 
   undo: () => void;
@@ -91,7 +94,17 @@ export const useFlowStore = create<FlowState>((set, get) => ({
 
     const downstreamEdge = state.edges.find((e) => e.source === afterNodeId);
     const newEdges: FlowEdge[] = [
-      { id: genId(), source: afterNodeId, target: newNode.id },
+      {
+        id: genId(),
+        source: afterNodeId,
+        target: newNode.id,
+        ...(downstreamEdge?.label !== undefined
+          ? { label: downstreamEdge.label }
+          : {}),
+        ...(downstreamEdge?.intentExamples !== undefined
+          ? { intentExamples: downstreamEdge.intentExamples }
+          : {}),
+      },
     ];
 
     if (downstreamEdge) {
@@ -99,7 +112,6 @@ export const useFlowStore = create<FlowState>((set, get) => ({
         id: genId(),
         source: newNode.id,
         target: downstreamEdge.target,
-        label: downstreamEdge.label,
       });
     }
 
@@ -149,7 +161,16 @@ export const useFlowStore = create<FlowState>((set, get) => ({
             id: genId(),
             source: removed.source,
             target: downstream.target,
-            label: downstream.label,
+            ...(removed.label !== undefined
+              ? { label: removed.label }
+              : downstream.label !== undefined
+                ? { label: downstream.label }
+                : {}),
+            ...(removed.intentExamples !== undefined
+              ? { intentExamples: removed.intentExamples }
+              : downstream.intentExamples !== undefined
+                ? { intentExamples: downstream.intentExamples }
+                : {}),
           });
         }
       }
@@ -210,10 +231,10 @@ export const useFlowStore = create<FlowState>((set, get) => ({
     });
   },
 
-  updateEdgeLabel: (edgeId, label) => {
+  updateEdgeIntent: (edgeId, intent) => {
     const state = get();
     const edges = state.edges.map((e) =>
-      e.id === edgeId ? { ...e, label } : e,
+      e.id === edgeId ? { ...e, ...intent } : e,
     );
     set({
       edges,
