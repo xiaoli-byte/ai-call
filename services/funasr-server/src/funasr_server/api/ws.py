@@ -16,6 +16,11 @@
    - {mode:"2pass-offline", text:"...", is_final:true, ...} 为 final（离线整句）
 
 2pass 去重：online is_final=True 时不发送，由 offline 兜底（原 L699-700）。
+
+服务端 VAD 开关（config.vad_enabled / FUNASR_SERVER_VAD_ENABLED）：
+关闭时跳过 fsmn-vad 推理，整段上游音频按语音处理，走 finalize_offline 既有的
+fallback 路径（frames_asr 为空时退回 frames 全部音频），由上游 {is_speaking:false}
+信号驱动整句触发。
 """
 
 from __future__ import annotations
@@ -522,10 +527,19 @@ async def ws_handler(websocket: WebSocket) -> None:
                 frames_asr.append(pcm)
 
             # ---- VAD 在线检测 ----
-            try:
-                speech_start_i, speech_end_i = await _async_vad(state, models, semaphores, pcm)
-            except Exception:
-                logger.exception("ws.vad_error")
+            if config.vad_enabled:
+                try:
+                    speech_start_i, speech_end_i = await _async_vad(state, models, semaphores, pcm)
+                except Exception:
+                    logger.exception("ws.vad_error")
+                    speech_start_i, speech_end_i = -1, -1
+            else:
+                # 服务端 VAD 关闭（FUNASR_SERVER_VAD_ENABLED=false）：跳过 fsmn-vad
+                # 推理，不产生 speech_start/speech_end 事件。上游 voice-agent 已用
+                # WebRTC VAD 门控，靠 {is_speaking:false} 信号驱动 finalize_offline；
+                # speech_start 始终为 False → frames_asr 始终为空 → finalize_offline
+                # 走既有 fallback（audio_in = frames_asr or frames），整段接收到的
+                # 音频当一句话送 ASR，不新增分支路径。
                 speech_start_i, speech_end_i = -1, -1
 
             if speech_start_i != -1:

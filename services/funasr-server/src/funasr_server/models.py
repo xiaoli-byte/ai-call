@@ -152,13 +152,17 @@ class ModelManager:
             **common_kwargs,
         )
 
-        # 3. VAD
-        logger.info("models.loading_vad", model=config.vad_model, revision=config.vad_model_revision)
-        manager.model_vad = AutoModel(
-            model=config.vad_model,
-            model_revision=config.vad_model_revision,
-            **common_kwargs,
-        )
+        # 3. VAD（vad_enabled=False 时跳过加载，省显存；见 config.py 的 vad_enabled 注释：
+        #    上游 voice-agent 已用 WebRTC VAD 门控，服务端 fsmn-vad 属重复推理）
+        if config.vad_enabled:
+            logger.info("models.loading_vad", model=config.vad_model, revision=config.vad_model_revision)
+            manager.model_vad = AutoModel(
+                model=config.vad_model,
+                model_revision=config.vad_model_revision,
+                **common_kwargs,
+            )
+        else:
+            logger.info("models.vad_disabled", reason="config.vad_enabled=False")
 
         # 4. Punc（可选，punc_model 为空则跳过）
         if config.punc_model and config.punc_model.strip():

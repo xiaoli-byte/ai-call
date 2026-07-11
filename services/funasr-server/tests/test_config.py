@@ -29,6 +29,7 @@ def test_config_defaults():
     assert cfg.concurrent_asr_offline == 2
     assert cfg.max_upload_mb == 100
     assert cfg.save_offline_segments is False
+    assert cfg.vad_enabled is True  # 默认开启，保持现状零行为变化
 
 
 # ===================== 环境变量测试 =====================
@@ -51,6 +52,19 @@ def test_config_from_env(monkeypatch):
     assert cfg.ngpu == 0
     assert cfg.max_upload_mb == 50
     assert cfg.save_offline_segments is True
+
+
+def test_config_from_env_vad_enabled_false(monkeypatch):
+    """FUNASR_SERVER_VAD_ENABLED=false 应关闭服务端 VAD。"""
+    monkeypatch.setenv("FUNASR_SERVER_VAD_ENABLED", "false")
+    cfg = Config.from_env()
+    assert cfg.vad_enabled is False
+
+
+def test_config_from_env_vad_enabled_default_true(monkeypatch):
+    """未设置 FUNASR_SERVER_VAD_ENABLED 时默认开启。"""
+    cfg = Config.from_env()
+    assert cfg.vad_enabled is True
 
 
 def test_config_from_env_bad_int(monkeypatch):
@@ -100,6 +114,20 @@ def test_config_from_args_partial_override(monkeypatch):
     cfg = Config.from_args(["--port", "3000"])
     assert cfg.port == 3000
     assert cfg.host == "0.0.0.0"  # 来自 env
+
+
+def test_config_from_args_no_vad_enabled_overrides_env(monkeypatch):
+    """--no-vad_enabled 应覆盖 env（BooleanOptionalAction 支持显式关闭）。"""
+    monkeypatch.setenv("FUNASR_SERVER_VAD_ENABLED", "true")
+    cfg = Config.from_args(["--no-vad_enabled"])
+    assert cfg.vad_enabled is False
+
+
+def test_config_from_args_vad_enabled_unset_falls_back_to_env(monkeypatch):
+    """未传 --vad_enabled / --no-vad_enabled 时应沿用 env 值。"""
+    monkeypatch.setenv("FUNASR_SERVER_VAD_ENABLED", "false")
+    cfg = Config.from_args([])
+    assert cfg.vad_enabled is False
 
 
 # ===================== GPU 降级测试 =====================

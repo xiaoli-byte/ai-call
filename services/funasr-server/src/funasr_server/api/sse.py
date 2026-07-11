@@ -133,6 +133,23 @@ async def _event_generator(audio: UploadFile, request: Request) -> AsyncIterator
             return
 
         # 5) VAD 切分
+        # 本接口依赖服务端 VAD 对长音频做分句，与 ws.py 实时链路的"重复推理"场景不同
+        # （此处没有上游 VAD 兜底，音频来自一次性上传的文件）。若通过
+        # FUNASR_SERVER_VAD_ENABLED=false 关闭了服务端 VAD（vad 模型未加载），
+        # 本接口无法分句，直接返回明确的 error 事件，而不是让 model_vad=None
+        # 触发一个含糊的 AttributeError。
+        if not config.vad_enabled or models.model_vad is None:
+            yield _sse(
+                "error",
+                {
+                    "msg": (
+                        "server-side VAD is disabled (FUNASR_SERVER_VAD_ENABLED=false); "
+                        "/recognize/stream requires VAD segmentation"
+                    )
+                },
+            )
+            return
+
         yield _sse("status", {"stage": "vad"})
         try:
             vad_out = await models.run_blocking(

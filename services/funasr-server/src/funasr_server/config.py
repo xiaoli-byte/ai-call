@@ -61,6 +61,13 @@ class Config:
     asr_model_online_revision: str = "v2.0.4"
     vad_model: str = "iic/speech_fsmn_vad_zh-cn-16k-common-pytorch"
     vad_model_revision: str = "v2.0.4"
+    # 服务端 VAD（fsmn-vad 神经网络推理）开关。上游 voice-agent 已用 WebRTC VAD
+    # 做门控（只放行语音帧，且靠"说完了"信号驱动 2pass 整句触发），服务端再跑一遍
+    # fsmn-vad 属重复推理。关闭后：不加载 vad 模型（省显存/CONCURRENT_VAD 资源），
+    # ws.py 2pass 流水线整段按语音处理，复用 finalize_offline 现有 fallback
+    # （frames_asr 为空时退回 frames 全部音频），不新增分支路径。
+    # 默认 true：保持现状零行为变化，何时可关见 .env.example 注释。
+    vad_enabled: bool = True
     punc_model: str = "iic/punc_ct-transformer_zh-cn-common-vad_realtime-vocab272727"
     punc_model_revision: str = "v2.0.4"
     # 句向量模型（意图 embedding 相似度层用，见 /embed 端点）。
@@ -113,6 +120,7 @@ class Config:
             asr_model_online_revision=_env("ASR_MODEL_ONLINE_REVISION", cls.asr_model_online_revision),
             vad_model=_env("VAD_MODEL", cls.vad_model),
             vad_model_revision=_env("VAD_MODEL_REVISION", cls.vad_model_revision),
+            vad_enabled=_env_bool("VAD_ENABLED", True),
             punc_model=_env("PUNC_MODEL", cls.punc_model),
             punc_model_revision=_env("PUNC_MODEL_REVISION", cls.punc_model_revision),
             embed_model=_env("EMBED_MODEL", cls.embed_model),
@@ -153,6 +161,12 @@ class Config:
         parser.add_argument("--asr_model_online_revision", type=str, default=None)
         parser.add_argument("--vad_model", type=str, default=None)
         parser.add_argument("--vad_model_revision", type=str, default=None)
+        parser.add_argument(
+            "--vad_enabled",
+            action=argparse.BooleanOptionalAction,
+            default=None,
+            help="服务端 fsmn-vad 推理开关，默认开启；--no-vad_enabled 可关闭（配合上游 VAD 门控省显存）",
+        )
         parser.add_argument("--punc_model", type=str, default=None)
         parser.add_argument("--punc_model_revision", type=str, default=None)
         parser.add_argument("--embed_model", type=str, default=None, help="句向量模型 ID，或 mock（确定性伪向量）")
@@ -194,6 +208,7 @@ class Config:
             "asr_model_online_revision": args.asr_model_online_revision,
             "vad_model": args.vad_model,
             "vad_model_revision": args.vad_model_revision,
+            "vad_enabled": args.vad_enabled,
             "punc_model": args.punc_model,
             "punc_model_revision": args.punc_model_revision,
             "embed_model": args.embed_model,
