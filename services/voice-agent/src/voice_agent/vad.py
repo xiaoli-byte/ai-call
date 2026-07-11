@@ -16,12 +16,181 @@
 
 from __future__ import annotations
 
+import logging
 from collections import deque
-from typing import Callable, Literal, Optional
+from typing import Callable, Literal, Optional, Protocol, runtime_checkable
 
 import webrtcvad
 
+logger = logging.getLogger(__name__)
+
 VadState = Literal["silence", "pending", "speech_start", "speech", "speech_end"]
+
+
+# ---------------------------------------------------------------------------
+# 帧级语音检测器抽象（B-P2a）
+#
+# VoiceActivityDetector 的状态机与「单帧是否为语音」的判定解耦：状态机负责
+# 滞后确认 / 预缓冲 / 候选丢弃 / 端点判停，帧级检测器只回答「这一帧是不是语音」。
+# 这样底层模型（webrtcvad / Silero VAD / …）可插拔，且主链路绝不依赖某个模型
+# 的可用性——silero 装不上或运行中抛异常都能无缝回退到 webrtc，通话不断。
+# ---------------------------------------------------------------------------
+
+
+@runtime_checkable
+class FrameSpeechDetector(Protocol):
+    """帧级语音检测器协议：输入单帧 PCM16 字节，返回是否为语音。
+
+    - is_speech(frame) 必须**永不抛异常**（内部自行兜底），否则会把 VAD 主循环带崩。
+    - reset() 可选（barge-in / 新一句时清模型内部状态）；未实现时调用方应跳过。
+    """
+
+    def is_speech(self, frame: bytes) -> bool:  # pragma: no cover - 协议声明
+        ...
+
+    def reset(self) -> None:  # pragma: no cover - 协议声明（可选实现）
+        ...
+
+
+class WebRtcFrameDetector:
+    """webrtcvad 帧级封装——与旧内联调用逐帧等价。
+
+    行为对齐现有 VoiceActivityDetector 内联路径：调用 webrtcvad.Vad.is_speech，
+    对全零帧等偶发异常一律按静音（False）兜底。webrtcvad 无可重置的外部状态
+    （历史上 reset 也从不重建它），故 reset() 为空实现。
+    """
+
+    def __init__(self, aggressiveness: int = 3, sample_rate: int = 16000) -> None:
+        if aggressiveness not in (0, 1, 2, 3):
+            raise ValueError(f"aggressiveness must be 0-3, got {aggressiveness}")
+        if sample_rate not in (8000, 16000, 32000, 48000):
+            raise ValueError(f"sample_rate must be 8/16/32/48kHz, got {sample_rate}")
+        self._vad = webrtcvad.Vad(aggressiveness)
+        self._sample_rate = sample_rate
+
+    def is_speech(self, frame: bytes) -> bool:
+        # webrtcvad 偶尔对全零帧抛异常，静音判定即可（与旧行为一致）
+        try:
+            return bool(self._vad.is_speech(frame, self._sample_rate))
+        except Exception:
+            return False
+
+    def reset(self) -> None:
+        # webrtcvad 无外部可重置状态，空实现（历史行为：reset 从不重建它）。
+        pass
+
+
+class SileroFrameDetector:
+    """Silero VAD（pysilero-vad，onnx/ggml 后端，无 torch）帧级封装。
+
+    Silero 模型窗口固定为 512 样本 @16kHz s16le（= 1024 字节），而 VAD 主循环
+    喂入的是 10/20/30ms 帧（如 20ms = 320 样本 = 640 字节）。二者对不齐，故内部
+    以字节缓冲累积逐帧 append，凑够 1024 字节即取一窗跑一次推理（hop=1024，消费掉），
+    缓存最近一次概率；is_speech 返回「最近概率 >= threshold」。
+
+    - 模型尚未出过概率前（首 1~2 帧，样本不足一窗）返回 False：宁可迟判 speech_start
+      约 32ms，也不误触发。
+    - 推理抛异常：告警一次并**永久降级**为 webrtc 检测器（运行中回退，通话不断）。
+    - reset() 清缓冲 + 模型内部状态（新一句 / barge-in）。
+    """
+
+    _CHUNK_BYTES = 1024  # Silero 固定窗口：512 样本 @16kHz s16le
+
+    def __init__(
+        self,
+        threshold: float = 0.5,
+        aggressiveness: int = 3,
+        sample_rate: int = 16000,
+        model: Optional[Callable[[bytes], float]] = None,
+    ) -> None:
+        # model 注入点：默认真模型；测试可注入 fake 概率函数隔离缓冲数学。
+        if model is None:
+            from pysilero_vad import SileroVoiceActivityDetector
+
+            model = SileroVoiceActivityDetector()
+        self._model = model
+        self._threshold = threshold
+        self._aggressiveness = aggressiveness
+        self._sample_rate = sample_rate
+
+        self._buf = bytearray()
+        self._last_prob = 0.0
+        self._have_prob = False  # 是否已出过至少一次概率（首帧前为 False）
+
+        # 运行中降级：一旦推理抛异常，永久切到 webrtc 兜底检测器。
+        self._degraded = False
+        self._fallback: Optional[WebRtcFrameDetector] = None
+
+    def is_speech(self, frame: bytes) -> bool:
+        if self._degraded and self._fallback is not None:
+            return self._fallback.is_speech(frame)
+
+        self._buf += frame
+        try:
+            # while 而非 if：即使一帧凑出多窗（如大帧/补齐）也全部消费，
+            # 循环末次即「最新」窗口的概率。
+            while len(self._buf) >= self._CHUNK_BYTES:
+                chunk = bytes(self._buf[: self._CHUNK_BYTES])
+                del self._buf[: self._CHUNK_BYTES]
+                self._last_prob = float(self._model(chunk))
+                self._have_prob = True
+        except Exception as err:  # 推理异常 → 永久降级 webrtc
+            self._degrade(err)
+            return self._fallback.is_speech(frame) if self._fallback else False
+
+        return self._have_prob and self._last_prob >= self._threshold
+
+    def _degrade(self, err: Exception) -> None:
+        logger.warning("[VAD] silero degraded to webrtc: %s", err)
+        self._degraded = True
+        self._fallback = WebRtcFrameDetector(self._aggressiveness, self._sample_rate)
+
+    def reset(self) -> None:
+        self._buf.clear()
+        self._last_prob = 0.0
+        self._have_prob = False
+        reset_fn = getattr(self._model, "reset", None)
+        if callable(reset_fn):
+            try:
+                reset_fn()
+            except Exception:
+                pass
+        if self._degraded and self._fallback is not None:
+            self._fallback.reset()
+
+
+def make_frame_detector_factory(
+    provider: Optional[str],
+    aggressiveness: int = 3,
+    sample_rate: int = 16000,
+    silero_threshold: float = 0.5,
+) -> Callable[[], Optional[FrameSpeechDetector]]:
+    """按 provider 返回一个零参工厂：每次调用产出一个**新的**帧级检测器实例。
+
+    - 返回 None 表示用 VoiceActivityDetector 内建 webrtc（默认路径，零改动）。
+    - provider=silero：启动时探针加载一次模型；成功则工厂产出 SileroFrameDetector，
+      并打印 `[VAD] provider=silero threshold=0.50`。
+    - provider=silero 但 import/初始化失败 → 告警 + 回退 webrtc（返回 lambda: None），
+      启动不炸。
+    - 每通电话新建独立实例：Silero 有逐句内部状态，绝不跨通话复用。
+    """
+    name = (provider or "webrtc").strip().lower()
+    if name == "silero":
+        try:
+            from pysilero_vad import SileroVoiceActivityDetector
+
+            SileroVoiceActivityDetector()  # 探针：确认模型可加载（早失败早回退）
+        except Exception as err:
+            logger.warning("[VAD] provider=silero 不可用，回退 webrtc: %s", err)
+            return lambda: None
+        logger.info("[VAD] provider=silero threshold=%.2f", silero_threshold)
+        return lambda: SileroFrameDetector(
+            threshold=silero_threshold,
+            aggressiveness=aggressiveness,
+            sample_rate=sample_rate,
+        )
+    logger.info("[VAD] provider=webrtc")
+    return lambda: None
 
 
 class VoiceActivityDetector:
@@ -40,6 +209,7 @@ class VoiceActivityDetector:
         pre_buffer_ms: int = 300,
         min_speech_ms: int = 200,
         extra_silence_frames_provider: Callable[[], int] = lambda: 0,
+        detector: Optional[FrameSpeechDetector] = None,
     ) -> None:
         if frame_ms not in (10, 20, 30):
             raise ValueError(f"WebRTC VAD only supports 10/20/30ms frames, got {frame_ms}")
@@ -48,6 +218,10 @@ class VoiceActivityDetector:
         if sample_rate not in (8000, 16000, 32000, 48000):
             raise ValueError(f"sample_rate must be 8/16/32/48kHz, got {sample_rate}")
 
+        # 帧级检测器（B-P2a）：默认 None → 走内建 webrtcvad 内联路径（与旧行为
+        # 逐字节等价，且保留 `_vad` 属性供既有测试 monkeypatch）；注入 detector
+        # （如 SileroFrameDetector）时改走 detector.is_speech。
+        self._detector = detector
         self._vad = webrtcvad.Vad(aggressiveness)
         self._frame_ms = frame_ms
         self._sample_rate = sample_rate
@@ -125,11 +299,15 @@ class VoiceActivityDetector:
                 f"got {len(pcm_frame)}"
             )
 
-        # WebRTC VAD 偶尔对全零帧抛异常，静音判定即可
-        try:
-            is_voice = self._vad.is_speech(pcm_frame, self._sample_rate)
-        except Exception:
-            is_voice = False
+        # 帧级判定：注入 detector 时走它（自身兜底，永不抛）；否则走内建
+        # webrtcvad 内联路径（全零帧偶发异常按静音兜底，与旧行为一致）。
+        if self._detector is not None:
+            is_voice = self._detector.is_speech(pcm_frame)
+        else:
+            try:
+                is_voice = self._vad.is_speech(pcm_frame, self._sample_rate)
+            except Exception:
+                is_voice = False
 
         if self._state == "silence":
             return self._handle_silence_state(is_voice, pcm_frame)
@@ -241,3 +419,11 @@ class VoiceActivityDetector:
         """重置状态机（用于 barge-in 后重新开始检测）。"""
         self._reset_to_silence()
         self._discarded_ms = None
+        # 同步重置帧级检测器的模型内部状态（如 Silero 的逐句状态）。
+        if self._detector is not None:
+            reset_fn = getattr(self._detector, "reset", None)
+            if callable(reset_fn):
+                try:
+                    reset_fn()
+                except Exception:
+                    pass

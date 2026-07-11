@@ -38,7 +38,7 @@ from .types import (
     ToolDefinition,
     ToolResult,
 )
-from .vad import VoiceActivityDetector
+from .vad import VoiceActivityDetector, make_frame_detector_factory
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +120,8 @@ class VoiceAgent:
         vad_silence_confirm_frames: int = 10,
         vad_speech_confirm_frames: int = 3,
         vad_min_speech_ms: int = 200,
+        vad_provider: str = "webrtc",
+        vad_silero_threshold: float = 0.5,
         max_turns: int = 30,
         turn_timeout_s: int = 30,
         asr_tts_gate_enabled: bool = True,
@@ -153,6 +155,17 @@ class VoiceAgent:
         self._vad_silence_confirm = vad_silence_confirm_frames
         self._vad_speech_confirm = vad_speech_confirm_frames
         self._vad_min_speech_ms = max(0, vad_min_speech_ms)
+
+        # 帧级检测器工厂（B-P2a）：VAD_PROVIDER=webrtc|silero。启动时解析一次
+        # （silero 探针加载模型 / 不可用即回退 webrtc 并打日志），每通电话调用
+        # 工厂产出一个新实例（Silero 有逐句内部状态，不跨通话复用）。
+        # 工厂返回 None → VoiceActivityDetector 走内建 webrtc（默认，零改动）。
+        self._vad_detector_factory = make_frame_detector_factory(
+            vad_provider,
+            aggressiveness=vad_aggressiveness,
+            sample_rate=16000,
+            silero_threshold=vad_silero_threshold,
+        )
 
         # 语义自适应端点检测（B-P1b）：partial 结尾为数字/犹豫词时延长静音窗，
         # 让报号码/犹豫思考的自然停顿不被固定静音窗一刀切成整句结束。
@@ -734,6 +747,7 @@ class VoiceAgent:
                 extra_silence_frames_provider=(
                     lambda cid=call_id: self._semantic_extra_silence_frames(cid)
                 ),
+                detector=self._vad_detector_factory(),
             )
 
         stt = self._stt_handles[call_id]

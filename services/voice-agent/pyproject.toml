@@ -10,6 +10,9 @@ requires-python = ">=3.11"
 dependencies = [
     "websockets>=12.0",
     "webrtcvad>=2.0.5",
+    # Silero VAD（onnxruntime 后端，无 torch）；VAD_PROVIDER=silero 时使用，
+    # 装不上/加载失败会在运行时自动回退 webrtc，不阻塞主链路
+    "pysilero-vad>=2.0",
     "httpx>=0.27.0",
     "numpy>=1.26",
     "scipy>=1.13",

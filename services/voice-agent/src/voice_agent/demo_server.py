@@ -22,7 +22,7 @@ from websockets.protocol import State
 from . import audio
 from .stt import FunASRClient
 from .types import STTEvent, TTSChunk
-from .vad import VoiceActivityDetector
+from .vad import VoiceActivityDetector, make_frame_detector_factory
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +51,8 @@ class DemoServer:
         vad_silence_confirm_frames: int,
         vad_speech_confirm_frames: int,
         tts: Any,
+        vad_provider: str = "webrtc",
+        vad_silero_threshold: float = 0.5,
     ) -> None:
         self._funasr_ws_url = funasr_ws_url
         self._funasr_mode = funasr_mode
@@ -61,6 +63,13 @@ class DemoServer:
         self._vad_silence_confirm = vad_silence_confirm_frames
         self._vad_speech_confirm = vad_speech_confirm_frames
         self._tts = tts
+        # 帧级检测器工厂（B-P2a）：与 agent 一致，默认 webrtc，可切 silero。
+        self._vad_detector_factory = make_frame_detector_factory(
+            vad_provider,
+            aggressiveness=vad_aggressiveness,
+            sample_rate=16000,
+            silero_threshold=vad_silero_threshold,
+        )
 
     # ------------------------------------------------------------------
     # /asr-stream — 纯 VAD + FunASR 转写
@@ -143,6 +152,7 @@ class DemoServer:
                         speech_confirm_frames=self._vad_speech_confirm,
                         silence_confirm_frames=self._vad_silence_confirm,
                         pre_buffer_ms=self._vad_pre_buffer_ms,
+                        detector=self._vad_detector_factory(),
                     )
                     logger.info(
                         "[DemoServer/asr] call_id=%s ready (mode=%s)", call_id, mode

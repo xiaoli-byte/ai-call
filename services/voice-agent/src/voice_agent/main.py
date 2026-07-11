@@ -61,6 +61,18 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _env_float(name: str, default: float) -> float:
+    """安全读取浮点环境变量：未设置/空/非法一律回默认并告警。"""
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        logger.warning("[VoiceAgent] %s=%r 非法（非浮点），用默认 %s", name, raw, default)
+        return default
+
+
 def _build_agent() -> tuple[VoiceAgent, TaskClient, Any]:
     """根据环境变量构造 VoiceAgent 实例。
 
@@ -90,6 +102,9 @@ def _build_agent() -> tuple[VoiceAgent, TaskClient, Any]:
     vad_silence_confirm = int(os.getenv("VAD_SILENCE_CONFIRM_FRAMES", "28"))
     vad_speech_confirm = int(os.getenv("VAD_SPEECH_CONFIRM_FRAMES", "3"))
     vad_min_speech_ms = int(os.getenv("VAD_MIN_SPEECH_MS", "200"))
+    # 帧级 VAD provider（B-P2a）：webrtc（默认）| silero。silero 不可用自动回退 webrtc。
+    vad_provider = os.getenv("VAD_PROVIDER", "webrtc")
+    vad_silero_threshold = _env_float("VAD_SILERO_THRESHOLD", 0.5)
     asr_tts_gate_enabled = _env_bool("ASR_TTS_GATE_ENABLED", True)
     asr_tts_gate_web_enabled = _env_bool("ASR_TTS_GATE_WEB_ENABLED", False)
     asr_tts_tail_guard_ms = int(os.getenv("ASR_TTS_TAIL_GUARD_MS", "500"))
@@ -118,6 +133,8 @@ def _build_agent() -> tuple[VoiceAgent, TaskClient, Any]:
         vad_silence_confirm_frames=vad_silence_confirm,
         vad_speech_confirm_frames=vad_speech_confirm,
         vad_min_speech_ms=vad_min_speech_ms,
+        vad_provider=vad_provider,
+        vad_silero_threshold=vad_silero_threshold,
         max_turns=int(os.getenv("MAX_TURNS", "30")),
         turn_timeout_s=int(os.getenv("TURN_TIMEOUT_S", "30")),
         asr_tts_gate_enabled=asr_tts_gate_enabled,
@@ -146,6 +163,8 @@ def _build_agent() -> tuple[VoiceAgent, TaskClient, Any]:
         vad_silence_confirm_frames=vad_silence_confirm,
         vad_speech_confirm_frames=vad_speech_confirm,
         tts=tts,
+        vad_provider=vad_provider,
+        vad_silero_threshold=vad_silero_threshold,
     )
 
     return agent, tasks, demo
