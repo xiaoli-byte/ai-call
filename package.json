@@ -37,7 +37,9 @@
     "freeswitch:local:start": "powershell -ExecutionPolicy Bypass -File freeswitch/local/start.ps1",
     "freeswitch:local:check": "powershell -ExecutionPolicy Bypass -File freeswitch/local/check.ps1",
     "freeswitch:local:call": "powershell -ExecutionPolicy Bypass -File freeswitch/local/call.ps1",
-    "freeswitch:docker:call-audio": "powershell -ExecutionPolicy Bypass -File freeswitch/local/call-audio.ps1"
+    "freeswitch:docker:call-audio": "powershell -ExecutionPolicy Bypass -File freeswitch/local/call-audio.ps1",
+    "pm2:start": "pm2 start ecosystem.config.js",
+    "pm2:stop": "pm2 stop ecosystem.config.js"
   },
   "devDependencies": {
     "turbo": "^2.1.0",

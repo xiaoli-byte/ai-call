@@ -132,6 +132,9 @@ voice-agent 单进程多路通话未压测;做一次 5-10 路并发 smoke,确认
 ### D7 · [建议] 录音/转写数据合规
 面向真实客户前确认:通话录音告知义务、转写保留期限、租户数据隔离(RAG tenantId 过滤已做)。
 
+### D8 · [建议] API 补真正的健康检查端点
+2026-07-11 部署文档梳理时发现::3001 的 API 没有自身健康端点(platform/health-checks.service.ts 只是反向探测其它服务的聚合器);event-worker/voice-agent/funasr 都有 /health 而主 API 没有。临时用 `@Public()` 的 `/api/internal/metrics` 作存活代理(已写进 docs/deployment.md);建议补 `/api/health`(含 DB ping)。outbox/scheduler worker 无 HTTP 监听,只能靠 PM2 进程态,可选加同款轻量健康端口。
+
 ---
 
 ## 已交付(供追溯,勿重做)
