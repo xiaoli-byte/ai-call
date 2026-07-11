@@ -2,12 +2,20 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Important
+请用中文回答和撰写文档、代码注释
+
 ## Orchestration workflow  
-You (Fable/Opus) are the orchestrator. Plan, decompose, synthesize.  
+You (Fable/Opus) are the orchestrator. Delegate independent subtasks to subagents and keep working while they run. Intervene
+if a subagent goes off track or is missing relevant context.
+
+Plan, decompose, synthesize.  
 Reasoning-heavy phases → deep-reasoner  
-Mechanical work → fast-worker  
+Mechanical work / Reading work → fast-worker  
 Codex (/codex:rescue --background) is a cracked engineer on par with deep-reasoner, from a different perspective. Treat as a peer, not a reviewer.  
 High-stakes decisions: task Opus + Codex on the same problem in parallel, synthesize the best of both, without showing either the other's answer. Keep your own context lean.   
+
+Let the "fast-worker" agent handle tasks like `git commit` and `read code`.
 
 ## What this is
 
