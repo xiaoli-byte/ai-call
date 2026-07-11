@@ -537,21 +537,37 @@ export class TasksService {
           // #4 NORMAL_CLEARING∈NO_ANSWER 集合。若 CHANNEL_ANSWER 丢失,answeredAt/calledAt 为空,
           // 单看它们会把已应答的挂断误判 NO_ANSWER。补充挂断事件自身的应答证据
           // (billsec/answer_epoch/Answer-State=answered)作为兜底。
-          const answered = Boolean(
-            currentAttempt.answeredAt ||
-            (isLatestAttempt && currentTask.calledAt) ||
-            answerEvidenceFromRaw(event.raw),
+          const hasDirectAnswerEvidence = Boolean(
+            currentAttempt.answeredAt || (isLatestAttempt && currentTask.calledAt),
           );
+          const answered = hasDirectAnswerEvidence || answerEvidenceFromRaw(event.raw);
           const nextStatus = deriveTerminalStatus(effectiveHangupCause, answered);
           terminalHistoryStatus = nextStatus;
           attemptUpdate.status = nextStatus;
           attemptUpdate.endedAt = currentAttempt.endedAt ?? occurredAt;
-          attemptUpdate.duration = durationSeconds(currentAttempt.answeredAt, occurredAt);
+
+          // A5:evidence-only(仅凭 raw 应答证据判 COMPLETED,没有真实 answeredAt)时,
+          // 若挂断事件携带合法的 variable_answer_epoch,回填 answeredAt 以便算出 duration;
+          // 缺失/不合法(早于开始或晚于结束等)则宁缺勿假,answeredAt/duration 继续留空。
+          const backfilledAnsweredAt = !hasDirectAnswerEvidence && answered
+            ? answerEpochFromRaw(event.raw, currentAttempt.startedAt, occurredAt)
+            : undefined;
+          if (backfilledAnsweredAt) {
+            attemptUpdate.answeredAt = backfilledAnsweredAt;
+            if (isLatestAttempt && !currentTask.calledAt) {
+              taskUpdate.calledAt = backfilledAnsweredAt;
+            }
+          }
+
+          attemptUpdate.duration = durationSeconds(backfilledAnsweredAt ?? currentAttempt.answeredAt, occurredAt);
           if (effectiveHangupCause) attemptUpdate.hangupCause = effectiveHangupCause;
           if (isLatestAttempt && !TERMINAL_STATUSES.has(taskStatus)) {
             taskUpdate.status = nextStatus;
             taskUpdate.endedAt = currentTask.endedAt ?? occurredAt;
-            taskUpdate.duration = durationSeconds(currentTask.calledAt, occurredAt);
+            taskUpdate.duration = durationSeconds(
+              backfilledAnsweredAt ?? currentTask.calledAt,
+              occurredAt,
+            );
           }
         }
 
@@ -1730,9 +1746,9 @@ function cleanString(value: unknown): string | undefined {
  *  - variable_billsec / billsec > 0(计费秒数,只有接通才 > 0)
  *  - variable_answer_epoch / answer_epoch > 0(应答的 unix 时刻)
  *  - Answer-State = answered
- * 注:billsec / answer_epoch 目前不在 freeswitch-event-parser 的 SAFE_RAW_HEADERS 白名单内,
- * 需主线放行后才会出现在 raw 里(见报告跟进项);Answer-State 在 CHANNEL_HANGUP_COMPLETE
- * 时通常已是 "hangup",可靠性有限,故三者取并集兜底。
+ * 注:billsec / variable_answer_epoch 已在 freeswitch-event-parser 的 SAFE_RAW_HEADERS
+ * 白名单内(见 A6),会随 raw 一并传入;Answer-State 在 CHANNEL_HANGUP_COMPLETE 时通常
+ * 已是 "hangup",可靠性有限,故三者取并集兜底。
  */
 function answerEvidenceFromRaw(raw: Record<string, unknown> | undefined): boolean {
   if (!raw) return false;
@@ -1750,6 +1766,26 @@ function rawNumber(raw: Record<string, unknown> | undefined, keys: string[]): nu
   if (value === undefined) return undefined;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+/**
+ * A5:从挂断事件原始头解析真实应答时刻(variable_answer_epoch,单位为 unix 秒),
+ * 用于回填 evidence-only COMPLETED 场景下缺失的 answeredAt/duration。
+ * 校验:必须是正整数,且不早于 attempt 开始时刻、不晚于本次挂断结束时刻——
+ * 任一不满足即视为不可信,返回 undefined(宁缺勿假,绝不用臆造时间戳)。
+ */
+function answerEpochFromRaw(
+  raw: Record<string, unknown> | undefined,
+  startedAt: Date,
+  endedAt: Date,
+): Date | undefined {
+  const epoch = rawNumber(raw, ['variable_answer_epoch', 'answer_epoch']);
+  if (epoch === undefined || !Number.isInteger(epoch) || epoch <= 0) return undefined;
+  const answeredAt = new Date(epoch * 1000);
+  if (Number.isNaN(answeredAt.getTime())) return undefined;
+  if (answeredAt.getTime() < startedAt.getTime()) return undefined;
+  if (answeredAt.getTime() > endedAt.getTime()) return undefined;
+  return answeredAt;
 }
 
 function hashPhone(phoneNumber: string): string {

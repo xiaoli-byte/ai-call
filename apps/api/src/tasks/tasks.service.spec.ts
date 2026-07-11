@@ -675,6 +675,116 @@ describe('TasksService', () => {
     assert.equal(calls[1][1].data.status, TaskStatus.COMPLETED);
   });
 
+  it('A5 evidence-only COMPLETED backfills answeredAt/duration from a valid variable_answer_epoch', async () => {
+    const calls: Call[] = [];
+    const answeredAtIso = '2026-07-02T00:01:30.000Z';
+    const answerEpoch = Math.floor(new Date(answeredAtIso).getTime() / 1000);
+    const occurredAt = '2026-07-02T00:02:00.000Z';
+    const prisma = providerEventPrisma(calls, {
+      task: taskRecord({ status: TaskStatus.CALLING, calledAt: null }),
+      attempt: attemptRecord({ status: TaskStatus.CALLING, answeredAt: null, startedAt: now }),
+    });
+    const service = new TasksService(prisma as never, {} as never, scenarios as never, {} as never);
+
+    await service.recordProviderCallEvent({
+      provider: 'freeswitch',
+      providerEventId: 'event-hangup-answer-epoch-valid',
+      eventType: 'CHANNEL_HANGUP_COMPLETE',
+      providerCallId: 'provider-1',
+      occurredAt,
+      hangupCause: 'NORMAL_CLEARING',
+      raw: { 'Hangup-Cause': 'NORMAL_CLEARING', variable_billsec: '17', variable_answer_epoch: String(answerEpoch) },
+    });
+
+    assert.equal(calls[0][1].data.status, TaskStatus.COMPLETED);
+    assert.deepEqual(calls[0][1].data.calledAt, new Date(answeredAtIso));
+    assert.equal(calls[0][1].data.duration, 30);
+    assert.equal(calls[1][1].data.status, TaskStatus.COMPLETED);
+    assert.deepEqual(calls[1][1].data.answeredAt, new Date(answeredAtIso));
+    assert.equal(calls[1][1].data.duration, 30);
+  });
+
+  it('A5 evidence-only COMPLETED leaves answeredAt/duration empty when variable_answer_epoch is missing', async () => {
+    const calls: Call[] = [];
+    const occurredAt = '2026-07-02T00:02:00.000Z';
+    const prisma = providerEventPrisma(calls, {
+      task: taskRecord({ status: TaskStatus.CALLING, calledAt: null }),
+      attempt: attemptRecord({ status: TaskStatus.CALLING, answeredAt: null, startedAt: now }),
+    });
+    const service = new TasksService(prisma as never, {} as never, scenarios as never, {} as never);
+
+    await service.recordProviderCallEvent({
+      provider: 'freeswitch',
+      providerEventId: 'event-hangup-answer-epoch-missing',
+      eventType: 'CHANNEL_HANGUP_COMPLETE',
+      providerCallId: 'provider-1',
+      occurredAt,
+      hangupCause: 'NORMAL_CLEARING',
+      raw: { 'Hangup-Cause': 'NORMAL_CLEARING', variable_billsec: '17' },
+    });
+
+    assert.equal(calls[0][1].data.status, TaskStatus.COMPLETED);
+    assert.equal(calls[0][1].data.calledAt, undefined);
+    assert.equal(calls[0][1].data.duration, undefined);
+    assert.equal(calls[1][1].data.status, TaskStatus.COMPLETED);
+    assert.equal(calls[1][1].data.answeredAt, undefined);
+    assert.equal(calls[1][1].data.duration, undefined);
+  });
+
+  it('A5 evidence-only COMPLETED leaves answeredAt/duration empty when variable_answer_epoch is out of range', async () => {
+    const calls: Call[] = [];
+    const occurredAt = '2026-07-02T00:02:00.000Z';
+    // 早于 attempt 开始时刻的 answer_epoch 不可信,不予回填(宁缺勿假)。
+    const bogusEpoch = Math.floor(new Date('2026-07-01T23:00:00.000Z').getTime() / 1000);
+    const prisma = providerEventPrisma(calls, {
+      task: taskRecord({ status: TaskStatus.CALLING, calledAt: null }),
+      attempt: attemptRecord({ status: TaskStatus.CALLING, answeredAt: null, startedAt: now }),
+    });
+    const service = new TasksService(prisma as never, {} as never, scenarios as never, {} as never);
+
+    await service.recordProviderCallEvent({
+      provider: 'freeswitch',
+      providerEventId: 'event-hangup-answer-epoch-out-of-range',
+      eventType: 'CHANNEL_HANGUP_COMPLETE',
+      providerCallId: 'provider-1',
+      occurredAt,
+      hangupCause: 'NORMAL_CLEARING',
+      raw: { 'Hangup-Cause': 'NORMAL_CLEARING', variable_billsec: '17', variable_answer_epoch: String(bogusEpoch) },
+    });
+
+    assert.equal(calls[0][1].data.status, TaskStatus.COMPLETED);
+    assert.equal(calls[0][1].data.calledAt, undefined);
+    assert.equal(calls[0][1].data.duration, undefined);
+    assert.equal(calls[1][1].data.status, TaskStatus.COMPLETED);
+    assert.equal(calls[1][1].data.answeredAt, undefined);
+    assert.equal(calls[1][1].data.duration, undefined);
+  });
+
+  it('A5 does not override an existing real answeredAt even if raw carries a variable_answer_epoch', async () => {
+    const calls: Call[] = [];
+    const realAnsweredAt = new Date('2026-07-02T00:00:10.000Z');
+    const occurredAt = '2026-07-02T00:02:00.000Z';
+    const otherEpoch = Math.floor(new Date('2026-07-02T00:01:30.000Z').getTime() / 1000);
+    const prisma = providerEventPrisma(calls, {
+      task: taskRecord({ status: TaskStatus.IN_CALL, calledAt: realAnsweredAt }),
+      attempt: attemptRecord({ status: TaskStatus.IN_CALL, answeredAt: realAnsweredAt, startedAt: now }),
+    });
+    const service = new TasksService(prisma as never, {} as never, scenarios as never, {} as never);
+
+    await service.recordProviderCallEvent({
+      provider: 'freeswitch',
+      providerEventId: 'event-hangup-answer-epoch-existing-answered',
+      eventType: 'CHANNEL_HANGUP_COMPLETE',
+      providerCallId: 'provider-1',
+      occurredAt,
+      hangupCause: 'NORMAL_CLEARING',
+      raw: { 'Hangup-Cause': 'NORMAL_CLEARING', variable_answer_epoch: String(otherEpoch) },
+    });
+
+    assert.equal(calls[1][1].data.answeredAt, undefined);
+    assert.equal(calls[1][1].data.duration, 110);
+  });
+
   it('#3 reconcile skips attempts not yet dialed (providerJobId null)', async () => {
     const calls: Call[] = [];
     const observedAt = new Date('2026-07-02T01:00:00.000Z');
