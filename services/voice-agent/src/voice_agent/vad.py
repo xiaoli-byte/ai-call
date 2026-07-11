@@ -117,6 +117,10 @@ class SileroFrameDetector:
         self._last_prob = 0.0
         self._have_prob = False  # 是否已出过至少一次概率（首帧前为 False）
 
+        # 概率探针（调参/排障）：每 ~100 窗（≈3.2s 音频）汇总一次 max/mean。
+        # 电话窄带（8k 上采样）音频概率整体偏低时靠它定阈值（参考 [BargeIn/Probe]）
+        self._probe_probs: list[float] = []
+
         # 运行中降级：一旦推理抛异常，永久切到 webrtc 兜底检测器。
         self._degraded = False
         self._fallback: Optional[WebRtcFrameDetector] = None
@@ -134,6 +138,14 @@ class SileroFrameDetector:
                 del self._buf[: self._CHUNK_BYTES]
                 self._last_prob = float(self._model(chunk))
                 self._have_prob = True
+                self._probe_probs.append(self._last_prob)
+                if len(self._probe_probs) >= 100:
+                    probs = self._probe_probs
+                    logger.info(
+                        "[VAD/SileroProbe] windows=%d max=%.3f mean=%.3f threshold=%.2f",
+                        len(probs), max(probs), sum(probs) / len(probs), self._threshold,
+                    )
+                    self._probe_probs = []
         except Exception as err:  # 推理异常 → 永久降级 webrtc
             self._degrade(err)
             return self._fallback.is_speech(frame) if self._fallback else False

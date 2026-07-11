@@ -501,8 +501,10 @@ class VoiceAgentServer:
                 channel=channel,
             )
         except asyncio.CancelledError:
+            # 正常路径是连接关闭后媒体 finally 取消会话任务；但取消也可能来自
+            # 其他调用链，这里只陈述事实，不猜原因（曾误导过僵尸会话排障）
             logger.info(
-                "[VoiceAgentServer] callId=%s session cancelled (connection closed)",
+                "[VoiceAgentServer] callId=%s session task cancelled",
                 call_id,
             )
             raise

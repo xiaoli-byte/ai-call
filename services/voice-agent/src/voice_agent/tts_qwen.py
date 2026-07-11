@@ -54,7 +54,11 @@ class QwenTTS:
         self._url = url
         self._target_sr = target_sample_rate
         self._timeout = timeout
-        self._current_task: Optional[asyncio.Task[None]] = None
+        # 当前合成「子任务」。interrupt() 只取消它，绝不取消调用方任务——
+        # 否则 barge-in 会给会话任务的取消计数 +1，上层 _speak 用
+        # task.cancelling() 区分「打断/挂断」的判别器会把打断误判成挂断，
+        # 把整个会话协程拆掉（真机僵尸通话根因，2026-07-12）。
+        self._synthesis_task: Optional[asyncio.Task[None]] = None
         self._cancel_event: Optional[threading.Event] = None
         self._closed = False
 
@@ -71,19 +75,55 @@ class QwenTTS:
     ) -> None:
         """流式合成语音。
 
-        将合成任务包装为 asyncio.Task 以支持 interrupt()。
+        实际工作跑在独立子任务里：interrupt()（barge-in）只取消子任务，
+        调用方任务的取消计数保持不变，上层得以用 task.cancelling() 区分
+        「打断（吞掉继续）」与「挂断（上抛拆会话）」。
         on_chunk 在每个 PCM 块（已重采样到 target_sample_rate）到达时被调用。
         """
         if self._closed:
             raise RuntimeError("QwenTTS 已关闭")
-        if self._current_task is not None and not self._current_task.done():
+        if self._synthesis_task is not None and not self._synthesis_task.done():
             raise RuntimeError("已有合成任务进行中，请先调用 interrupt()")
 
-        self._current_task = asyncio.current_task()
+        cancel_event = threading.Event()
+        child = asyncio.create_task(
+            self._run_synthesis(text, on_chunk, speaker, instruct_text, cancel_event)
+        )
+        self._synthesis_task = child
+        self._cancel_event = cancel_event
+        try:
+            await child
+        except asyncio.CancelledError:
+            # 两种来源：interrupt() 取消了 child（调用方计数为 0，上层按
+            # barge-in 吞掉）；或调用方被外部取消（挂断）→ 级联停掉 child。
+            cancel_event.set()
+            if not child.done():
+                child.cancel()
+            raise
+        finally:
+            if not child.done():
+                # 等 child 完全收尾（含 executor 线程 join），不留泄漏
+                try:
+                    await child
+                except BaseException:
+                    pass
+            # 身份守卫：只清理本轮登记，防止旧任务的 finally 清掉新一轮状态
+            if self._synthesis_task is child:
+                self._synthesis_task = None
+            if self._cancel_event is cancel_event:
+                self._cancel_event = None
+
+    async def _run_synthesis(
+        self,
+        text: str,
+        on_chunk: Callable[[TTSChunk], Awaitable[None]],
+        speaker: Optional[str],
+        instruct_text: Optional[str],
+        cancel_event: threading.Event,
+    ) -> None:
+        """合成子任务主体：dashscope 线程桥 + 队列消费。"""
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue[tuple[str, Optional[bytes]]] = asyncio.Queue()
-        cancel_event = threading.Event()
-        self._cancel_event = cancel_event
 
         def push(item: tuple[str, Optional[bytes]]) -> None:
             """SDK 回调线程 → asyncio 队列（线程安全）。"""
@@ -172,7 +212,14 @@ class QwenTTS:
                 url=self._url,
             )
             try:
+                if cancel_event.is_set():
+                    return
                 synth.connect()
+                # connect() 是阻塞调用、cancel 打不断；期间若已被打断，
+                # 立即收场，不再 update_session/append_text 白合成一遍
+                if cancel_event.is_set():
+                    logger.info("[QwenTTS] synthesis cancelled (barge-in)")
+                    return
                 session_kwargs: dict = {
                     "voice": speaker or self._voice,
                     "response_format": AudioFormat.PCM_24000HZ_MONO_16BIT,
@@ -249,17 +296,22 @@ class QwenTTS:
                 await asyncio.wrap_future(sync_future)
             except Exception:
                 pass
-            self._current_task = None
-            self._cancel_event = None
 
     def interrupt(self) -> None:
-        """中断当前合成任务（barge-in）。"""
+        """中断当前合成（barge-in）：只取消合成子任务，不动调用方任务。"""
         if self._cancel_event is not None:
             self._cancel_event.set()
-        if self._current_task and not self._current_task.done():
-            self._current_task.cancel()
+        task = self._synthesis_task
+        if task is not None and not task.done():
+            task.cancel()
 
     async def close(self) -> None:
-        """关闭客户端（应用退出时调用）。"""
+        """关闭客户端（应用退出时调用）：中断并等在途合成完全收尾。"""
         self._closed = True
         self.interrupt()
+        task = self._synthesis_task
+        if task is not None:
+            try:
+                await task
+            except BaseException:
+                pass

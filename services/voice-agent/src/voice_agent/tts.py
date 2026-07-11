@@ -41,7 +41,10 @@ class CosyVoiceTTS:
         self._source_sr = source_sample_rate
         self._target_sr = target_sample_rate
         self._client = httpx.AsyncClient(timeout=timeout)
-        self._current_task: Optional[asyncio.Task[None]] = None
+        # 当前合成「子任务」。interrupt() 只取消它，绝不取消调用方任务——
+        # 否则 barge-in 会污染会话任务的取消计数，上层无法区分打断/挂断
+        # （真机僵尸通话根因，2026-07-12，与 QwenTTS 同款修复）。
+        self._synthesis_task: Optional[asyncio.Task[None]] = None
 
     @property
     def name(self) -> str:
@@ -56,20 +59,33 @@ class CosyVoiceTTS:
     ) -> None:
         """流式合成语音。
 
-        将合成任务包装为 asyncio.Task 以支持 interrupt()。
+        实际工作跑在独立子任务里：interrupt()（barge-in）只取消子任务，
+        调用方任务的取消计数保持不变，上层得以用 task.cancelling() 区分
+        「打断（吞掉继续）」与「挂断（上抛拆会话）」。
         on_chunk 在每个 PCM 块（已重采样到 16kHz）到达时被调用。
         """
-        if self._current_task is not None and not self._current_task.done():
+        if self._synthesis_task is not None and not self._synthesis_task.done():
             raise RuntimeError("已有合成任务进行中，请先调用 interrupt()")
 
-        self._current_task = asyncio.current_task()
+        child = asyncio.create_task(
+            self._do_synthesize(text, on_chunk, speaker, instruct_text)
+        )
+        self._synthesis_task = child
         try:
-            await self._do_synthesize(text, on_chunk, speaker, instruct_text)
+            await child
         except asyncio.CancelledError:
             logger.info("[CosyVoice] synthesis cancelled (barge-in)")
+            if not child.done():
+                child.cancel()  # 外部（挂断）取消 → 级联停掉子任务
             raise
         finally:
-            self._current_task = None
+            if not child.done():
+                try:
+                    await child
+                except BaseException:
+                    pass
+            if self._synthesis_task is child:
+                self._synthesis_task = None
 
     async def _do_synthesize(
         self,
@@ -114,12 +130,20 @@ class CosyVoiceTTS:
         await on_chunk(TTSChunk(audio=b"", sample_rate=self._target_sr, is_final=True))
 
     def interrupt(self) -> None:
-        """中断当前合成任务（barge-in）。"""
-        if self._current_task and not self._current_task.done():
-            self._current_task.cancel()
+        """中断当前合成（barge-in）：只取消合成子任务，不动调用方任务。"""
+        task = self._synthesis_task
+        if task is not None and not task.done():
+            task.cancel()
 
     async def close(self) -> None:
-        """关闭底层 HTTP 客户端。"""
+        """关闭底层 HTTP 客户端（先停掉在途合成再关连接池）。"""
+        self.interrupt()
+        task = self._synthesis_task
+        if task is not None:
+            try:
+                await task
+            except BaseException:
+                pass
         await self._client.aclose()
 
 
@@ -130,7 +154,7 @@ class MockTTS:
     """
 
     def __init__(self, *_args: object, **_kwargs: object) -> None:
-        self._current_task: Optional[asyncio.Task[None]] = None
+        self._synthesis_task: Optional[asyncio.Task[None]] = None
 
     @property
     def name(self) -> str:
@@ -143,16 +167,37 @@ class MockTTS:
         speaker: Optional[str] = None,
         instruct_text: Optional[str] = None,
     ) -> None:
-        self._current_task = asyncio.current_task()
+        # 与真实 provider 同款子任务契约：Mock 虽快，但 on_chunk 是异步回调
+        # （下游 ws/节拍泵可能挂起），interrupt() 同样不能误取消调用方任务。
+        child = asyncio.create_task(self._do_synthesize(text, on_chunk))
+        self._synthesis_task = child
         try:
-            logger.warning("[MockTTS] 真实 TTS 未启用，跳过音频合成: %s", text[:50])
-            await on_chunk(TTSChunk(audio=b"", sample_rate=16000, is_final=True))
+            await child
+        except asyncio.CancelledError:
+            if not child.done():
+                child.cancel()
+            raise
         finally:
-            self._current_task = None
+            if not child.done():
+                try:
+                    await child
+                except BaseException:
+                    pass
+            if self._synthesis_task is child:
+                self._synthesis_task = None
+
+    async def _do_synthesize(
+        self,
+        text: str,
+        on_chunk: Callable[[TTSChunk], Awaitable[None]],
+    ) -> None:
+        logger.warning("[MockTTS] 真实 TTS 未启用，跳过音频合成: %s", text[:50])
+        await on_chunk(TTSChunk(audio=b"", sample_rate=16000, is_final=True))
 
     def interrupt(self) -> None:
-        if self._current_task and not self._current_task.done():
-            self._current_task.cancel()
+        task = self._synthesis_task
+        if task is not None and not task.done():
+            task.cancel()
 
     async def close(self) -> None:
         pass
