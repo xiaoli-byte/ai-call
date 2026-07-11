@@ -75,6 +75,9 @@ class DecisionNodeData:
     mode: DecisionMode = DecisionMode.INTENT
     expression: Optional[str] = None
     intents: list[str] = field(default_factory=list)
+    # intent 模式：每个意图的例句（键=意图名，值=例句数组），供 embedding 相似度层使用。
+    # 例句随 node.data 进快照，任务锁版本执行；运行时忽略键不在 intents 里的例句。
+    intent_examples: dict[str, list[str]] = field(default_factory=dict)
 
 
 @dataclass
@@ -208,6 +211,7 @@ def _parse_node_data(node_type: NodeType, raw: dict[str, Any]) -> Any:
             mode=DecisionMode(str(raw.get("mode", "intent"))),
             expression=raw.get("expression"),
             intents=list(raw.get("intents", [])),
+            intent_examples=_parse_intent_examples(raw.get("intentExamples")),
         )
     if node_type == NodeType.ACTION:
         return ActionNodeData(
@@ -221,6 +225,23 @@ def _parse_node_data(node_type: NodeType, raw: dict[str, Any]) -> Any:
             farewell=raw.get("farewell"),
         )
     return None
+
+
+def _parse_intent_examples(raw: Any) -> dict[str, list[str]]:
+    """防御性解析 intentExamples：脏数据（非 dict/非 list/非 str）静默丢弃。
+
+    仅保留 键=str、值=非空 str 列表 的条目；空白例句过滤后为空则丢弃该键。
+    """
+    if not isinstance(raw, dict):
+        return {}
+    result: dict[str, list[str]] = {}
+    for key, value in raw.items():
+        if not isinstance(key, str) or not isinstance(value, list):
+            continue
+        examples = [s.strip() for s in value if isinstance(s, str) and s.strip()]
+        if examples:
+            result[key] = examples
+    return result
 
 
 def _parse_edge(e: dict[str, Any]) -> FlowEdge:

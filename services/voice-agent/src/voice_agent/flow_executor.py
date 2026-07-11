@@ -12,9 +12,11 @@ import re
 from typing import Any, Optional, Protocol
 from uuid import uuid4
 
+from . import intent_embed
 from .flow_types import (
     ActionType,
     DecisionMode,
+    DecisionNodeData,
     DialogMode,
     EndMode,
     FlowEdge,
@@ -22,6 +24,7 @@ from .flow_types import (
     NodeType,
     TaskFlow,
 )
+from .intent_embed import IntentEmbedProvider
 from .types import ChatMessage, ToolCall
 
 logger = logging.getLogger(__name__)
@@ -34,6 +37,9 @@ _FALLBACK_LABELS = {"default", "else", "默认", "其他"}
 # 否定词：意图关键字紧邻其后时，keyword 层不足以判定语义（如"不满意"含"满意"），
 # 交由 LLM 层裁决。
 _NEGATION_CHARS = "不没别未非"
+
+# 构造参数哨兵：区分"未传 embed_provider（从环境创建）"与"显式传 None（禁用本层）"。
+_UNSET = object()
 
 
 def _is_fallback_edge(edge: "FlowEdge") -> bool:
@@ -87,9 +93,21 @@ def render_template(text: str, variables: dict[str, str]) -> str:
 class FlowExecutor:
     """Walk a task-flow graph and execute nodes by type."""
 
-    def __init__(self, flow: TaskFlow, callbacks: FlowExecutorCallbacks) -> None:
+    def __init__(
+        self,
+        flow: TaskFlow,
+        callbacks: FlowExecutorCallbacks,
+        embed_provider: Any = _UNSET,
+    ) -> None:
         self._flow = flow
         self._cb = callbacks
+        # 未显式传参 → 按环境创建（默认 off 时为 None，运行时跳过 embedding 层）；
+        # 测试可显式注入 fake provider，显式优于 monkeypatch。
+        self._embed: Optional[IntentEmbedProvider] = (
+            intent_embed.create_embed_provider_from_env()
+            if embed_provider is _UNSET
+            else embed_provider
+        )
 
     def _node_label(self, node: FlowNode) -> str:
         """计算节点的中文显示名称（用于调试信息展示）。"""
@@ -116,16 +134,20 @@ class FlowExecutor:
         return str(node.type)
 
     def _log_intent(
-        self, call_id: str, node_id: str, tier: str, text: str, intent: str
+        self, call_id: str, node_id: str, tier: str, text: str, intent: str, detail: str = ""
     ) -> None:
-        """结构化输出每次意图判定，供调参与后续训练数据采集。"""
+        """结构化输出每次意图判定，供调参与后续训练数据采集。
+
+        detail 为可选后缀（如 embed 层的 " (top=0.810 margin=0.120)"）。
+        """
         logger.info(
-            "[Intent] call_id=%s node=%s tier=%s text=%s -> intent=%s",
+            "[Intent] call_id=%s node=%s tier=%s text=%s -> intent=%s%s",
             call_id,
             node_id,
             tier,
             (text or "")[:50],
             intent,
+            detail,
         )
 
     async def run(self, call_id: str) -> None:
@@ -273,6 +295,16 @@ class FlowExecutor:
         if not data.intents or not last_response.strip():
             return last_response
 
+        # embedding 相似度层：keyword 未命中后、LLM 前。仅当 provider 已配置且节点配了例句
+        # 时才尝试；任何失败/未命中都 fail-open 落到下方 LLM 层，逻辑零改动。
+        if self._embed is not None and data.intent_examples:
+            intent, detail = await self._classify_intent_embedding(
+                call_id, node.id, data, last_response
+            )
+            if intent:
+                self._log_intent(call_id, node.id, "embed", last_response, intent, detail)
+                return intent
+
         # 有无兜底边决定 LLM 是否提供"其他"逃生口，以及最终兜底策略。
         has_fallback = any(
             _is_fallback_edge(e) for e in self._flow.outgoing_edges(node.id)
@@ -339,6 +371,68 @@ class FlowExecutor:
                     continue
                 return intent
         return ""
+
+    async def _classify_intent_embedding(
+        self, call_id: str, node_id: str, data: DecisionNodeData, response: str
+    ) -> tuple[str, str]:
+        """embedding 相似度意图匹配。
+
+        每个意图得分 = 用户话术向量与该意图各例句向量的最大余弦；
+        top >= THRESHOLD 且 (top - second) >= MARGIN 才命中（单意图时 second=0）。
+        只做正向命中，不由 embedding 判"其他"（远离所有意图仍落 LLM 裁决）。
+
+        返回 (命中意图, 日志后缀)；未命中/失败返回 ("", "")。任何异常 fail-open 落 LLM。
+        """
+        provider = self._embed
+        if provider is None:
+            return "", ""
+
+        # 只保留 intents 列表内、且配了非空例句的意图（忽略脏键/空例句）。
+        usable = [
+            (intent, data.intent_examples.get(intent) or [])
+            for intent in data.intents
+        ]
+        usable = [(intent, exs) for intent, exs in usable if exs]
+        if not usable:
+            return "", ""
+
+        try:
+            user_vec = (await provider.embed([response]))[0]
+            scores: list[tuple[str, float]] = []
+            for intent, exs in usable:
+                ex_vecs = await intent_embed.get_example_vectors(provider, exs)
+                best = max(intent_embed.cosine(user_vec, ev) for ev in ex_vecs)
+                scores.append((intent, best))
+        except Exception as err:
+            logger.warning(
+                "[Intent/Embed] 相似度计算失败,fail-open 落 LLM: call=%s node=%s err=%s",
+                call_id,
+                node_id,
+                err,
+            )
+            return "", ""
+
+        scores.sort(key=lambda s: s[1], reverse=True)
+        top_intent, top = scores[0]
+        second_intent, second = scores[1] if len(scores) > 1 else ("", 0.0)
+        margin = top - second
+
+        threshold = intent_embed.read_threshold()
+        margin_min = intent_embed.read_margin()
+        if top >= threshold and margin >= margin_min:
+            return top_intent, f" (top={top:.3f} margin={margin:.3f})"
+
+        # 未命中：对齐 RMS 调参模式打探针日志，便于线上观测阈值是否合适。
+        logger.info(
+            "[Intent/Embed] call_id=%s node=%s top=%.3f(%s) second=%.3f(%s) below_threshold",
+            call_id,
+            node_id,
+            top,
+            top_intent,
+            second,
+            second_intent,
+        )
+        return "", ""
 
     async def _classify_intent_llm(
         self, call_id: str, intents: list[str], response: str, has_fallback: bool
