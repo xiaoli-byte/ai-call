@@ -64,7 +64,10 @@ export default function WebCallPanel() {
     setFlowsError(null);
     try {
       const list = await apiClient.taskFlows.list();
-      const published = list.filter((flow) => flow.status === 'published');
+      // 下拉边界（A8）：不能只认 status==='published'——编辑已发布流程会把状态打回
+      // draft，但 version>0（仅在 publish 时自增，见 task-flows.service.ts）说明
+      // 该流程仍有可执行的已发布快照，任务创建时会解析到该快照，应继续可选。
+      const published = list.filter((flow) => flow.status === 'published' || flow.version > 0);
       setFlows(published);
       const preferred =
         published.find(
@@ -185,6 +188,7 @@ export default function WebCallPanel() {
                   {flows.map((flow) => (
                     <option key={flow.id} value={flow.id}>
                       {flow.name}
+                      {flow.status !== 'published' ? '（草稿修改中，执行已发布版本）' : ''}
                     </option>
                   ))}
                 </select>

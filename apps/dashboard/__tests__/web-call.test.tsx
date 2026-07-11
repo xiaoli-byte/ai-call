@@ -337,4 +337,23 @@ describe('useWebCall / WebCallPanel', () => {
     // 被叫号默认 1001
     expect((screen.getByLabelText('被叫号码（仅作任务记录）') as HTMLInputElement).value).toBe('1001');
   });
+
+  it('A8：编辑已发布流程打回 draft 后（version>0）仍进下拉，并带草稿提示后缀', async () => {
+    apiMocks.listFlows.mockResolvedValue([
+      { id: 'flow-b', name: '电商回访流程', status: 'published', version: 1, scenarioConfig: { scenario: 'ecommerce' } },
+      { id: 'flow-d', name: '编辑中的已发布流程', status: 'draft', version: 2 },
+      { id: 'flow-c', name: '从未发布的草稿', status: 'draft', version: 0 },
+    ]);
+
+    render(<WebCallPanel />);
+    fireEvent.click(screen.getByRole('button', { name: '发起模拟外呼' }));
+
+    const select = (await screen.findByLabelText('已发布流程')) as HTMLSelectElement;
+    await waitFor(() => {
+      expect(select.value).toBe('flow-b');
+    });
+    const options = Array.from(select.options).map((o) => o.textContent);
+    expect(options).toContain('编辑中的已发布流程（草稿修改中，执行已发布版本）');
+    expect(options).not.toContain('从未发布的草稿');
+  });
 });
