@@ -26,6 +26,22 @@ from .types import ChatMessage, ToolCall
 
 logger = logging.getLogger(__name__)
 
+# fallback（兜底/默认）边的 label 判定：无 label 或 label 属于下列关键字。
+# 抽成模块级常量+helper，让 _exec_decision 的 has_fallback 判定与
+# _select_decision_edge 的 fallback 边选择共用同一份逻辑，防止两处漂移。
+_FALLBACK_LABELS = {"default", "else", "默认", "其他"}
+
+# 否定词：意图关键字紧邻其后时，keyword 层不足以判定语义（如"不满意"含"满意"），
+# 交由 LLM 层裁决。
+_NEGATION_CHARS = "不没别未非"
+
+
+def _is_fallback_edge(edge: "FlowEdge") -> bool:
+    """判断一条边是否为兜底/默认出口。"""
+    if not edge.label:
+        return True
+    return edge.label.strip().casefold() in _FALLBACK_LABELS
+
 
 class FlowExecutorCallbacks(Protocol):
     """Callbacks implemented by VoiceAgent."""
@@ -98,6 +114,19 @@ class FlowExecutor:
             data = node.as_end()
             return f"结束({data.mode.value})"
         return str(node.type)
+
+    def _log_intent(
+        self, call_id: str, node_id: str, tier: str, text: str, intent: str
+    ) -> None:
+        """结构化输出每次意图判定，供调参与后续训练数据采集。"""
+        logger.info(
+            "[Intent] call_id=%s node=%s tier=%s text=%s -> intent=%s",
+            call_id,
+            node_id,
+            tier,
+            (text or "")[:50],
+            intent,
+        )
 
     async def run(self, call_id: str) -> None:
         entry = self._flow.find_entry()
@@ -237,13 +266,38 @@ class FlowExecutor:
 
         matched = self._match_intent_by_keyword(data.intents, last_response)
         if matched:
+            self._log_intent(call_id, node.id, "keyword", last_response, matched)
             return matched
 
-        if data.intents and last_response.strip():
-            classified = await self._classify_intent_llm(call_id, data.intents, last_response)
-            return classified or last_response
+        # intents 为空或用户无有效输入：保持原早退语义，交给边匹配/兜底。
+        if not data.intents or not last_response.strip():
+            return last_response
 
-        return last_response
+        # 有无兜底边决定 LLM 是否提供"其他"逃生口，以及最终兜底策略。
+        has_fallback = any(
+            _is_fallback_edge(e) for e in self._flow.outgoing_edges(node.id)
+        )
+
+        classified = await self._classify_intent_llm(
+            call_id, data.intents, last_response, has_fallback
+        )
+        if classified:
+            self._log_intent(call_id, node.id, "llm", last_response, classified)
+            return classified
+
+        # keyword 与 LLM 均无结果：电话进行中，错分支比抛异常炸掉整通电话轻。
+        if has_fallback:
+            self._log_intent(call_id, node.id, "fallback", last_response, "其他")
+            return "其他"
+        forced = data.intents[0]
+        logger.warning(
+            "[FlowExecutor] intent 无法分类，强制走首个意图分支: call=%s node=%s text=%s",
+            call_id,
+            node.id,
+            (last_response or "")[:50],
+        )
+        self._log_intent(call_id, node.id, "forced", last_response, forced)
+        return forced
 
     def _eval_condition(self, expression: str, response: str) -> str:
         expr = expression.strip()
@@ -264,21 +318,44 @@ class FlowExecutor:
 
     def _match_intent_by_keyword(self, intents: list[str], response: str) -> str:
         normalized = response.casefold()
-        for intent in intents:
-            if intent.casefold() in normalized:
+        # 最长优先：先匹配更长的意图，避免"满意"抢先命中"不满意"。
+        intents_cf = {i.casefold() for i in intents}
+        for intent in sorted(intents, key=len, reverse=True):
+            needle = intent.casefold()
+            if not needle:
+                continue
+            start = 0
+            while True:
+                idx = normalized.find(needle, start)
+                if idx < 0:
+                    break
+                if idx == 0:
+                    return intent
+                prev = normalized[idx - 1]
+                # 否定守卫：命中处紧邻否定字，且"否定字+意图"不是列表里的另一个意图
+                # （若是另一个意图，最长优先已让它先命中），本层无法定性 → 让 LLM 层裁决。
+                if prev in _NEGATION_CHARS and (prev + needle) not in intents_cf:
+                    start = idx + 1
+                    continue
                 return intent
         return ""
 
     async def _classify_intent_llm(
-        self, call_id: str, intents: list[str], response: str
+        self, call_id: str, intents: list[str], response: str, has_fallback: bool
     ) -> str:
-        intent_list = "/".join(intents)
+        # 有兜底边时额外给"其他"逃生口，避免用户说无关内容被强行 N 选一。
+        options = list(intents) + (["其他"] if has_fallback else [])
+        escape_hint = (
+            "若用户所说与所有意图都不相关，请选择“其他”。\n" if has_fallback else ""
+        )
         prompt_msg = ChatMessage(
             role="system",
             content=(
-                "你是意图分类器。请从下列意图中选择最匹配的一项，"
-                "只输出意图名，不要输出其它内容。\n"
-                f"意图列表：{intent_list}\n用户说：{response}"
+                "你是意图分类器。请从下列选项中选择最匹配的一项，"
+                "只输出选项名，不要输出其它内容。\n"
+                f"选项：{'/'.join(options)}\n"
+                f"{escape_hint}"
+                f"用户说：{response}"
             ),
         )
         try:
@@ -286,9 +363,18 @@ class FlowExecutor:
                 call_id, [prompt_msg], {"temperature": 0}
             )
             result = result.strip()
+            # 精确匹配优先，彻底绕开子串误命中。
             for intent in intents:
-                if intent in result:
+                if result == intent:
                     return intent
+            # 再按意图长度降序做子串匹配（LLM 输出带额外解释时的兜底）。
+            for intent in sorted(intents, key=len, reverse=True):
+                if intent and intent in result:
+                    return intent
+            if has_fallback and (
+                "其他" in result or "无法判断" in result or "都不" in result
+            ):
+                return "其他"
         except Exception as err:
             logger.warning("[FlowExecutor] LLM intent classify failed: %s", err)
         return ""
@@ -296,18 +382,32 @@ class FlowExecutor:
     async def _select_decision_edge(
         self, call_id: str, edges: list[FlowEdge], response: str
     ) -> Optional[FlowEdge]:
-        normalized = response.casefold()
         fallback: Optional[FlowEdge] = None
+        resp_norm = response.strip().casefold()
+
+        # 第一遍：label 与 response 精确相等的边直接返回。
+        # 分类后的意图名走这条，彻底绕开子串问题（"不满意" 不会误命中 "满意" 边）。
         for edge in edges:
-            if not edge.label:
+            if _is_fallback_edge(edge):
                 fallback = edge
                 continue
-            label = edge.label.strip()
-            if label.casefold() in {"default", "else", "默认", "其他"}:
-                fallback = edge
+            if edge.label.strip().casefold() == resp_norm:
+                return edge
+
+        # 第二遍：兼容原始文本路径。收集所有 (token, edge)，token 按长度降序，
+        # 第一个被 response 包含的 token 胜出，避免短 token 抢先。
+        normalized = response.casefold()
+        token_edges: list[tuple[str, FlowEdge]] = []
+        for edge in edges:
+            if _is_fallback_edge(edge):
                 continue
-            tokens = [t.strip().casefold() for t in re.split(r"[/|,，、\s]+", label)]
-            if any(token and token in normalized for token in tokens):
+            for raw in re.split(r"[/|,，、\s]+", edge.label):
+                token = raw.strip().casefold()
+                if token:
+                    token_edges.append((token, edge))
+        token_edges.sort(key=lambda te: len(te[0]), reverse=True)
+        for token, edge in token_edges:
+            if token in normalized:
                 return edge
         return fallback
 
