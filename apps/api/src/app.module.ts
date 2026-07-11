@@ -21,6 +21,7 @@ import { TenantsModule } from './tenants/tenants.module.js';
 import { JWT_SECRET } from './auth/auth.config.js';
 import { getRolePermissionMap } from './auth/role-permission-map.store.js';
 import { MetricsModule } from './metrics/metrics.module.js';
+import { HealthModule } from './health/health.module.js';
 import { IntegrationsModule } from './integrations/integrations.module.js';
 import { HandoffsModule } from './handoffs/handoffs.module.js';
 import { ScenarioTestsModule } from './scenario-tests/scenario-tests.module.js';
@@ -58,6 +59,7 @@ import { PlatformModule } from './platform/platform.module.js';
     ComplianceModule,
     TenantsModule,
     MetricsModule,
+    HealthModule,
     IntegrationsModule,
     HandoffsModule,
     ScenarioTestsModule,

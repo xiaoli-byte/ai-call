@@ -102,9 +102,9 @@ pm2 start ecosystem.config.js --only outbox-worker,scheduler-worker
 | freeswitch-event-worker | `FREESWITCH_EVENT_HEALTH_HOST:FREESWITCH_EVENT_HEALTH_PORT`（默认 `127.0.0.1:3012`） | `GET /health`、`/health/live`、`/health/ready` | `apps/api/src/freeswitch/freeswitch-event-worker-health.controller.ts`（无 `/api` 前缀，独立 Nest 应用，见 `freeswitch-event-worker.main.ts`） |
 | voice-agent | `VOICE_AGENT_WS_HOST:VOICE_AGENT_WS_PORT`（默认 `127.0.0.1:8090`） | `GET /health`、`/health/live`、`/health/ready` | `services/voice-agent/src/voice_agent/server.py`（与 WebSocket 同端口，走 HTTP upgrade 前的 `process_request` 拦截） |
 | funasr-server | `FUNASR_SERVER_HOST:FUNASR_SERVER_PORT`（默认端口 `10095`） | `GET /health` | `services/funasr-server/src/funasr_server/api/health.py` |
-| api（主控制面，`:3001`） | — | **没有独立的 `/api/health` 端点** | grep `apps/api/src` 未发现任何 `@Controller('health')` 或 Terminus 用法；`apps/api/src/platform/health-checks.service.ts` 是 api **反向探测其它三个服务**（event-worker/voice-agent/funasr）的健康聚合器，不是 api 自身的健康端点 |
+| api（主控制面，`:3001`） | — | `GET /api/health` | `apps/api/src/health/health.controller.ts`（`@Public()`，无需登录、无需 `X-Service-Token`；内部对 Prisma 做 `SELECT 1`，2s 超时，DB 不通时回 503 + `db:'down'`，正常回 200 + `{status:'ok',db:'up',uptime_s}`） |
 
-**已知缺口**：api 进程本身没有健康检查路由。短期用 TCP 连通性代替（PM2 的 `autorestart` 已经覆盖进程崩溃场景，外部探活可以简单地 `curl -sf http://127.0.0.1:3001/api/internal/metrics`——这是一个已存在的 `@Public()` 端点，可作为「进程活着且能应答 HTTP」的廉价替代，但它不是语义上的健康检查）。若要做严格意义的 liveness/readiness，需要新开一个 `@Public() @Controller('health')`，这不在本次任务范围内，建议补进 `docs/backlog.md`。
+D8 已交付：探活脚本/负载均衡器应改用 `curl -sf http://127.0.0.1:3001/api/health`（HTTP 状态码即语义健康态，不再是单纯「进程活着」的代理）。`GET /api/internal/metrics`（`@Public()` + `ServiceAuthGuard`）仍然存在，可继续用于取指标快照，但不建议再当健康检查用。
 
 outbox-worker / scheduler-worker 是 `NestFactory.createApplicationContext`（无 HTTP 监听），**没有健康检查端点**，只能靠 PM2 的进程存活状态（`pm2 status` / `pm2 describe <name>`）判断。
 
@@ -166,6 +166,6 @@ services/funasr-server/.venv/bin/python
 
 ## 7. 已知限制 / 未覆盖
 
-- api 主进程无独立健康检查端点（见第 4 节）；PM2 层面只能靠进程存活判断，无法判断「进程活着但已无法处理请求」。
+- api 主进程已有 `GET /api/health`（见第 4 节，D8 已交付）；outbox-worker/scheduler-worker 仍是 `NestFactory.createApplicationContext`（无 HTTP 监听），无独立健康检查端点，只能靠 PM2 进程存活判断。
 - `ecosystem.config.js` 不做依赖编排，`pm2 start ecosystem.config.js` 会近乎同时拉起全部 7 个进程；若要严格顺序启动，用第 3 节的分批命令。
 - dashboard 条目默认包含在 `ecosystem.config.js` 里；如果还没 `next build` 过就整体 `pm2 start`，dashboard 会持续崩溃重启（`max_restarts: 10` 后停止重试）。首次部署记得先 build 或用 `--only` 排除它。
