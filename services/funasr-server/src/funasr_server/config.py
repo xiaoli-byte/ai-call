@@ -66,7 +66,7 @@ class Config:
     # 句向量模型（意图 embedding 相似度层用，见 /embed 端点）。
     # 懒加载，不在 lifespan 里预加载，不影响启动时间。
     # 特殊值 "mock"：跳过真实模型，返回确定性伪向量（CI/无模型环境）。
-    embed_model: str = "iic/nlp_gte_sentence-embedding_chinese-small"
+    embed_model: str = "AI-ModelScope/bge-small-zh-v1.5"
     embed_model_revision: str = ""
 
     # SSL（空则禁用，使用明文 ws/http）

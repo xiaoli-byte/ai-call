@@ -21,6 +21,8 @@ dependencies = [
     "addict>=2.4",
     "datasets>=2.0",
     "pillow>=10.0",
+    "simplejson>=3.19",
+    "sortedcontainers>=2.4",
     # Web 层（FastAPI 原生支持 WebSocket，无需裸 websockets 库）
     "fastapi>=0.110",
     "uvicorn[standard]>=0.27",

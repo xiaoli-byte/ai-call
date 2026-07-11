@@ -329,8 +329,12 @@ class ModelManager:
             self.model_embed = EMBED_MOCK_SENTINEL
             return
         try:
-            from modelscope.pipelines import pipeline
-            from modelscope.utils.constant import Tasks
+            # 不走 modelscope 的 SentenceEmbeddingPipeline（其内置 BertForSentenceEmbedding
+            # 与新版 transformers 的 BertConfig 不兼容）；只用 modelscope 下载权重，
+            # 推理用 transformers 直载（bge 系模型即标准 BERT，CLS 池化 + L2 归一化）。
+            import torch
+            from modelscope.hub.snapshot_download import snapshot_download
+            from transformers import AutoModel, AutoTokenizer
 
             logger.info(
                 "models.loading_embed",
@@ -339,13 +343,12 @@ class ModelManager:
             )
             kwargs: dict[str, Any] = {}
             if self.config.embed_model_revision:
-                kwargs["model_revision"] = self.config.embed_model_revision
-            self.model_embed = pipeline(
-                Tasks.sentence_embedding,
-                model=self.config.embed_model,
-                device="gpu" if self.config.device == "cuda" else "cpu",
-                **kwargs,
-            )
+                kwargs["revision"] = self.config.embed_model_revision
+            model_dir = snapshot_download(self.config.embed_model, **kwargs)
+            tokenizer = AutoTokenizer.from_pretrained(model_dir)
+            model = AutoModel.from_pretrained(model_dir)
+            model = model.to(self.config.device).eval()
+            self.model_embed = (tokenizer, model)
             logger.info("models.loading_embed_done")
         except Exception as err:
             self.embed_load_error = str(err)
@@ -365,8 +368,16 @@ class ModelManager:
         """批量句向量推理（阻塞，需在线程池调用），返回 L2 归一化后的向量。"""
         if self.model_embed == EMBED_MOCK_SENTINEL:
             return [_mock_embed_vector(t) for t in texts]
-        result = self.model_embed(input={"source_sentence": texts})
-        vectors = result["text_embedding"]
+        import torch
+
+        tokenizer, model = self.model_embed
+        encoded = tokenizer(
+            texts, padding=True, truncation=True, max_length=256, return_tensors="pt"
+        ).to(self.config.device)
+        with torch.no_grad():
+            output = model(**encoded)
+        # bge 系模型约定 CLS 池化
+        vectors = output.last_hidden_state[:, 0].cpu().tolist()
         return [_l2_normalize([float(x) for x in vec]) for vec in vectors]
 
     # ---------- 内部工具 ----------
