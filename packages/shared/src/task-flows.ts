@@ -64,6 +64,11 @@ export interface DecisionNodeData {
   expression?: string;
   /** intent 模式：意图列表（如 ["感兴趣", "拒绝", "忙", "稍后联系"]）*/
   intents?: string[];
+  /**
+   * intent 模式：每个意图的例句（键=意图名，值=例句数组），供运行时 embedding 相似度层使用。
+   * 可选字段，不配置时行为与现状等价（回退到 LLM 判定）。运行时忽略键不在 intents 里的例句。
+   */
+  intentExamples?: Record<string, string[]>;
 }
 
 // --- Action Node（统一业务动作：转人工/发短信/CRM/API）---
