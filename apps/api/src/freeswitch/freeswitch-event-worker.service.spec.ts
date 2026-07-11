@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, describe, it } from 'node:test';
 import type { ProviderCallEventDto } from '../tasks/dto/provider-call-event.dto.js';
 import type { EslFrame } from './esl-frame-parser.js';
@@ -158,6 +161,32 @@ describe('FreeSwitchEventWorkerService', () => {
     assert.equal(deadLetters[0].status, 503);
     assert.equal(worker.health().queueDepth, 0);
     assert.equal(worker.health().deadLetterCount, 1);
+  });
+
+  it('creates the dead-letter parent directory on first write when it does not exist yet', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'ai-call-dead-letter-'));
+    const deadLetterPath = join(root, 'nested', 'deep', 'dead-letter.jsonl');
+    try {
+      process.env.FREESWITCH_EVENT_DEAD_LETTER_PATH = deadLetterPath;
+      const worker = makeWorker({
+        postProviderEvent: async () => {
+          throw new FreeSwitchBridgeError('provider-event', false, 400, 'bad schema');
+        },
+      });
+      // 不覆盖 appendDeadLetter，走真实的 mkdir + appendFile 路径。
+      (worker as any).state = 'subscribed';
+      (worker as any).lastHeartbeatAt = Date.now();
+
+      (worker as any).handleFrame(managedProgressEvent());
+      await wait(30);
+
+      const content = await readFile(deadLetterPath, 'utf8');
+      const record = JSON.parse(content.trim());
+      assert.equal(record.reason, 'rejected');
+      assert.equal(worker.health().deadLetterCount, 1);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it('keeps ready true when a frame fails to parse (parse failure ≠ delivery health)', () => {

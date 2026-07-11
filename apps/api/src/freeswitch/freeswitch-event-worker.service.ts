@@ -6,9 +6,9 @@ import {
   Optional,
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
-import { appendFile } from 'node:fs/promises';
+import { appendFile, mkdir } from 'node:fs/promises';
 import { Socket } from 'node:net';
-import { resolve as resolvePath } from 'node:path';
+import { dirname, resolve as resolvePath } from 'node:path';
 import type { ProviderCallEventDto } from '../tasks/dto/provider-call-event.dto.js';
 import { exponentialBackoffMs } from '../common/backoff.js';
 import { MetricsService } from '../metrics/metrics.service.js';
@@ -150,6 +150,8 @@ implements OnModuleInit, OnModuleDestroy {
   private deadLetterCount = 0;
   private queue: QueuedEvent[] = [];
   private draining = false;
+  // 目录确保只做一次；mkdir 失败仅记录一次告警，不阻塞事件处理。
+  private deadLetterDirReady?: Promise<void>;
 
   constructor(
     private readonly bridge: FreeSwitchEventBridgeService,
@@ -169,6 +171,8 @@ implements OnModuleInit, OnModuleDestroy {
         : ' (default, CWD-relative — set FREESWITCH_EVENT_DEAD_LETTER_PATH to a'
           + ' durable volume in production so replays survive restarts)'),
     );
+    // 提前触发父目录创建，避免真正死信发生时才第一次尝试建目录。
+    void this.ensureDeadLetterDir();
     this.connect();
     this.snapshotTimer = setInterval(
       () => void this.publishActiveSnapshot(),
@@ -509,7 +513,30 @@ implements OnModuleInit, OnModuleDestroy {
 
   /** Seam over the filesystem append so tests can capture dead letters. */
   private async appendDeadLetter(line: string): Promise<void> {
+    await this.ensureDeadLetterDir();
     await appendFile(this.deadLetterPath, line, 'utf8');
+  }
+
+  /**
+   * 确保死信文件的父目录存在（首次调用时 mkdir -p，之后复用同一个 Promise，
+   * 避免每条死信都打一次 fs 调用）。mkdir 失败只记一条告警日志——appendFile
+   * 随后大概率也会失败，但那已经被 writeDeadLetter 的 try/catch 兜底为日志
+   * 打印，不会导致 worker 崩溃。
+   */
+  private ensureDeadLetterDir(): Promise<void> {
+    if (!this.deadLetterDirReady) {
+      this.deadLetterDirReady = mkdir(dirname(this.deadLetterPath), {
+        recursive: true,
+      })
+        .then(() => undefined)
+        .catch((error: unknown) => {
+          this.logger.warn(
+            'FreeSWITCH event dead-letter directory could not be created ('
+            + (error as Error).message + '); writes will fail until it exists.',
+          );
+        });
+    }
+    return this.deadLetterDirReady;
   }
 
   private write(value: string): void {
