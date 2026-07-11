@@ -1,0 +1,157 @@
+.console {
+  position: relative;
+  min-height: 560px;
+  overflow: hidden;
+  border: 1px solid #d8e4f5;
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: 0 28px 70px rgba(39, 83, 155, 0.13);
+  color: #17243b;
+}
+
+.console::before {
+  position: absolute;
+  top: 42px;
+  right: 0;
+  left: 0;
+  height: 290px;
+  background: radial-gradient(circle at 50% 45%, rgba(37, 99, 235, 0.1), transparent 62%);
+  content: "";
+  pointer-events: none;
+}
+
+.topbar {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  height: 56px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 18px;
+  border-bottom: 1px solid #e7edf6;
+  background: rgba(250, 252, 255, 0.88);
+}
+
+.lineStatus { display: flex; align-items: center; gap: 8px; }
+.lineStatus > span { width: 6px; height: 6px; border-radius: 50%; background: #2563eb; box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.1); }
+.lineStatus strong { color: #34435d; font-family: Consolas, monospace; font-size: 9px; letter-spacing: 0.09em; }
+.lineStatus small { padding-left: 8px; border-left: 1px solid #dbe3ef; color: #8996a9; font-size: 9px; }
+.securityStatus { display: flex; align-items: center; gap: 6px; color: #8190a6; font-size: 8px; }
+.securityStatus svg { width: 12px; height: 12px; color: #2563eb; }
+
+.stage { position: relative; z-index: 1; min-height: 416px; padding: 18px 22px 10px; }
+.closeButton { position: absolute; z-index: 4; top: 15px; right: 16px; display: grid; width: 28px; height: 28px; place-items: center; border: 1px solid #dce5f1; border-radius: 50%; background: #fff; color: #718097; cursor: pointer; }
+.closeButton svg { width: 14px; height: 14px; }
+.elapsed { position: absolute; top: 14px; right: 18px; color: #a1adbd; font-family: Consolas, monospace; font-size: 9px; }
+.signalField { position: relative; display: flex; width: 246px; height: 222px; align-items: center; justify-content: center; margin: 0 auto; }
+.orbit { position: absolute; width: 180px; height: 180px; border: 1px solid rgba(37, 99, 235, 0.14); border-radius: 50%; }
+.orbit::before { position: absolute; top: 20px; right: 15px; width: 5px; height: 5px; border-radius: 50%; background: #2563eb; box-shadow: 0 0 10px rgba(37,99,235,.6); content: ""; }
+.orbit:nth-child(2) { width: 216px; height: 216px; border-style: dashed; opacity: .65; animation: orbitSpin 24s linear infinite reverse; }
+.orbit:nth-child(2)::before { top: auto; right: auto; bottom: 29px; left: 19px; background: #60a5fa; }
+
+.waveform { position: absolute; display: flex; width: 218px; height: 94px; align-items: center; justify-content: space-between; gap: 3px; }
+.waveform i { width: 3px; height: var(--height); min-height: 8px; border-radius: 99px; background: linear-gradient(180deg, #7bb2ff, #2563eb); opacity: .34; transform: scaleY(.45); transition: height 85ms linear, opacity 150ms ease; }
+.voiceCore { position: relative; z-index: 2; display: flex; width: 72px; height: 72px; align-items: center; justify-content: center; border: 1px solid rgba(255,255,255,.75); border-radius: 50%; background: linear-gradient(145deg, #cfe2ff, #4f8df7 55%, #2563eb); box-shadow: 0 0 0 9px rgba(37,99,235,.05), 0 18px 42px rgba(37,99,235,.24); color: #fff; transition: 250ms ease; }
+.voiceCore svg { width: 25px; height: 25px; }
+
+.stageCopy { margin-top: 0; text-align: center; }
+.stageCopy > div { display: flex; align-items: center; justify-content: center; gap: 7px; color: #283953; font-size: 13px; font-weight: 650; }
+.stageCopy > div span { width: 5px; height: 5px; border-radius: 50%; background: #2563eb; }
+.stageCopy p { margin: 6px 0 0; color: #8b98aa; font-size: 9px; }
+
+.promptArea { margin-top: 18px; text-align: center; }
+.promptArea > span { color: #9aa6b6; font-size: 8px; }
+.promptArea > div { display: flex; justify-content: center; gap: 7px; margin-top: 9px; }
+.promptArea button { min-height: 30px; padding: 0 10px; border: 1px solid #dce6f5; border-radius: 6px; background: #f8faff; color: #667691; cursor: pointer; font-family: inherit; font-size: 8px; transition: 150ms ease; }
+.promptArea button:hover { border-color: #a9c4f8; background: #eef4ff; color: #2563eb; }
+
+.callForm { display: grid; max-width: 350px; margin: 16px auto 0; gap: 9px; }
+.callForm label { display: grid; gap: 5px; color: #5d6d87; font-size: 9px; }
+.callForm label > span { display: flex; align-items: center; justify-content: space-between; }
+.callForm em { color: #9aa7b9; font-style: normal; }
+.callForm input,
+.callForm select { width: 100%; height: 34px; padding: 0 10px; border: 1px solid #dce6f4; border-radius: 6px; outline: none; background: #f9fbff; color: #23334d; font-family: inherit; font-size: 10px; }
+.callForm input:focus,
+.callForm select:focus { border-color: #82aaf3; box-shadow: 0 0 0 3px rgba(37, 99, 235, .08); }
+.selectWrap { position: relative; }
+.selectWrap select { appearance: none; padding-right: 30px; }
+.selectWrap svg { position: absolute; top: 10px; right: 10px; width: 13px; height: 13px; color: #8696ad; pointer-events: none; }
+.callButton { display: inline-flex; min-height: 38px; align-items: center; justify-content: center; gap: 7px; margin-top: 2px; border: 0; border-radius: 7px; background: #2563eb; color: #fff; cursor: pointer; font-family: inherit; font-size: 10px; font-weight: 700; }
+.callButton:disabled { cursor: not-allowed; opacity: .55; }
+.callButton svg { width: 14px; height: 14px; }
+
+.errorBox { display: flex; max-width: 350px; align-items: flex-start; gap: 7px; margin: 17px auto 0; padding: 10px; border: 1px solid #f7cdd2; border-radius: 7px; background: #fff7f8; color: #b94653; font-size: 9px; line-height: 1.5; }
+.errorBox svg { width: 14px; height: 14px; flex: 0 0 auto; }
+.errorBox button { margin-left: auto; border: 0; background: transparent; color: #a23845; cursor: pointer; font: inherit; font-weight: 700; }
+
+.transcript { max-height: 112px; margin-top: 15px; overflow: auto; padding: 0 5px; scrollbar-width: thin; }
+.transcript p { display: grid; margin: 7px 0; grid-template-columns: 25px 1fr; gap: 8px; color: #687891; font-size: 9px; line-height: 1.5; }
+.transcript p span { display: flex; width: 22px; height: 22px; align-items: center; justify-content: center; border-radius: 50%; background: #eaf1fb; color: #65758c; font-size: 7px; }
+.transcript .agentLine { color: #34445d; }
+.transcript .agentLine span { background: #2563eb; color: #fff; font-weight: 800; }
+.emptyLine { display: block !important; margin: 20px 0 !important; color: #9ba8b9 !important; text-align: center; }
+.resultBox { display: flex; max-width: 350px; align-items: center; justify-content: space-between; gap: 10px; margin: 14px auto 0; padding: 9px 10px; border: 1px solid #cfe0ff; border-radius: 7px; background: #f5f8ff; color: #5d6d87; font-size: 9px; }
+.resultBox span { display: flex; align-items: center; gap: 5px; }
+.resultBox span::before { width: 6px; height: 6px; border-radius: 50%; background: #2563eb; content: ""; }
+.resultBox a { color: #2563eb; font-weight: 700; text-decoration: none; }
+.thinkingLine { display: flex; gap: 4px; margin: 10px 0 0 33px; }
+.thinkingLine i { width: 4px; height: 4px; border-radius: 50%; background: #2563eb; animation: thinking 800ms ease-in-out infinite; }
+.thinkingLine i:nth-child(2) { animation-delay: 120ms; }
+.thinkingLine i:nth-child(3) { animation-delay: 240ms; }
+
+.controls { position: relative; z-index: 3; display: grid; min-height: 58px; grid-template-columns: 40px minmax(150px, 190px) 40px; align-items: center; justify-content: center; gap: 12px; padding: 6px 14px 12px; }
+.setupHint { color: #8794a7; font-size: 9px; text-align: center; }
+.mainControl { display: inline-flex; min-height: 44px; align-items: center; justify-content: center; gap: 8px; border: 0; border-radius: 8px; background: #2563eb; box-shadow: 0 8px 22px rgba(37,99,235,.18); color: #fff; cursor: pointer; font-family: inherit; font-size: 11px; font-weight: 700; transition: 150ms ease; }
+.mainControl:hover:not(:disabled) { background: #1746b7; transform: translateY(-1px); }
+.mainControl:disabled { cursor: wait; opacity: .7; }
+.mainControl svg { width: 16px; height: 16px; }
+.endButton,
+.resetButton { display: flex; width: 38px; height: 38px; align-items: center; justify-content: center; border: 1px solid #dde6f2; border-radius: 50%; background: #fff; color: #7c899d; cursor: pointer; transition: 150ms ease; }
+.endButton:hover { border-color: #f1b7bc; background: #fff5f6; color: #d34d5a; }
+.resetButton:hover { border-color: #a9c4f8; background: #f2f6ff; color: #2563eb; }
+.endButton svg, .resetButton svg { width: 15px; height: 15px; }
+.controlSpacer { width: 38px; }
+
+.footer { position: relative; z-index: 2; display: flex; min-height: 30px; align-items: center; justify-content: space-between; padding: 0 17px; border-top: 1px solid #e9eef6; background: #fbfcfe; color: #a1acbb; font-family: Consolas, monospace; font-size: 7px; letter-spacing: .04em; text-transform: uppercase; }
+.footer span { display: flex; align-items: center; gap: 5px; }
+.footer svg { width: 10px; height: 10px; }
+
+.stage-listening .waveform i,
+.stage-speaking .waveform i { opacity: .9; transform: scaleY(1); }
+.stage-idle .waveform i,
+.stage-error .waveform i { animation: idleWave 1.65s ease-in-out infinite; animation-delay: var(--delay); }
+.stage-requesting .voiceCore svg,
+.stage-thinking .voiceCore svg,
+.spinner { animation: spin 950ms linear infinite; }
+.stage-listening .voiceCore { background: linear-gradient(145deg, #d9e8ff, #3b82f6); box-shadow: 0 0 0 13px rgba(37,99,235,.06), 0 0 48px rgba(37,99,235,.25); }
+.stage-thinking .voiceCore { background: linear-gradient(145deg, #cddaff, #4f46e5); }
+.stage-speaking .voiceCore { background: linear-gradient(145deg, #b9d8ff, #2563eb 60%, #4f46e5); }
+.stage-complete .voiceCore { background: linear-gradient(145deg, #cfe2ff, #2563eb); }
+.stage-error .voiceCore { background: linear-gradient(145deg, #f4d4d8, #db6671); box-shadow: 0 0 0 9px rgba(219,102,113,.05); }
+
+.mainControl:focus-visible,
+.endButton:focus-visible,
+.resetButton:focus-visible,
+.promptArea button:focus-visible { outline: 2px solid #1746b7; outline-offset: 3px; }
+
+@keyframes orbitSpin { to { transform: rotate(360deg); } }
+@keyframes idleWave { 0%, 100% { transform: scaleY(.35); opacity: .22; } 50% { transform: scaleY(.78); opacity: .65; } }
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes thinking { 0%, 100% { opacity: .25; transform: translateY(0); } 50% { opacity: 1; transform: translateY(-3px); } }
+
+@media (max-width: 520px) {
+  .console { min-height: 548px; border-radius: 14px; }
+  .stage { min-height: 408px; padding-right: 12px; padding-left: 12px; }
+  .signalField { width: 220px; height: 210px; }
+  .promptArea > div { align-items: stretch; flex-direction: column; padding: 0 20px; }
+  .transcript { max-height: 118px; }
+  .securityStatus { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .orbit,
+  .waveform i,
+  .voiceCore svg,
+  .thinkingLine i,
+  .spinner { animation: none; }
+}

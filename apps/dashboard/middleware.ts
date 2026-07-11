@@ -19,7 +19,7 @@ function isTokenExpired(token: string): boolean {
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
-  const isPublicHome = pathname === '/';
+  const isPublicHome = pathname === '/' || pathname === '/home';
   const isLoginPage = pathname === '/login';
   const accessToken = request.cookies.get('access_token')?.value;
   const hasValidToken = !!accessToken && !isTokenExpired(accessToken);

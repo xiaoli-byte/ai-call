@@ -21,6 +21,12 @@ describe('public homepage middleware behavior', () => {
     expect(response.headers.get('location')).toBeNull();
   });
 
+  it('allows the enterprise homepage without an access token', () => {
+    const response = middleware(request('/home'));
+
+    expect(response.headers.get('location')).toBeNull();
+  });
+
   it('redirects logged-out console routes to login with the original path', () => {
     const response = middleware(request('/campaigns'));
 

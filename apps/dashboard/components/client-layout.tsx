@@ -325,7 +325,7 @@ export function ClientLayout({
 }) {
   const pathname = usePathname();
   const { user } = useAuthStore();
-  const isPublicPage = pathname === '/' || pathname === '/login';
+  const isPublicPage = pathname === '/' || pathname === '/home' || pathname === '/login';
 
   const [collapsed, setCollapsed] = useState(false);
   const toggleSidebar = () => setCollapsed((prev) => !prev);
