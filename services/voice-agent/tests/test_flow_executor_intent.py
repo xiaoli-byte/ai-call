@@ -39,6 +39,7 @@ class FakeFlowCallbacks:
         self._messages: list[ChatMessage] = []
         self.entered_nodes: list[str] = []
         self.hung_up = False
+        self.llm_calls = 0
 
     async def speak(self, call_id: str, text: str) -> None:
         pass
@@ -50,6 +51,7 @@ class FakeFlowCallbacks:
         return ""
 
     async def generate_llm_text(self, call_id, messages, options=None) -> str:
+        self.llm_calls += 1
         return self.llm_reply
 
     async def on_caller_speech(self, call_id: str, text: str) -> None:
@@ -150,6 +152,44 @@ def _build_decision_flow(intents: list[str], with_fallback: bool) -> TaskFlow:
     return TaskFlow(id="f", name="f", nodes=nodes, edges=edges)
 
 
+def _build_edge_intent_flow() -> TaskFlow:
+    nodes = [
+        FlowNode(id="start", type=NodeType.START, position={"x": 0, "y": 0}, data=StartNodeData()),
+        FlowNode(
+            id="dialog",
+            type=NodeType.DIALOG,
+            position={"x": 0, "y": 0},
+            data=DialogNodeData(
+                mode=DialogMode.SCRIPT,
+                text="请问商品收到了吗？",
+                wait_for_response=True,
+            ),
+        ),
+        FlowNode(id="end_missing", type=NodeType.END, position={"x": 0, "y": 0}, data=EndNodeData()),
+        FlowNode(id="end_received", type=NodeType.END, position={"x": 0, "y": 0}, data=EndNodeData()),
+        FlowNode(id="end_default", type=NodeType.END, position={"x": 0, "y": 0}, data=EndNodeData()),
+    ]
+    edges = [
+        FlowEdge(id="e1", source="start", target="dialog"),
+        FlowEdge(
+            id="e_missing",
+            source="dialog",
+            target="end_missing",
+            label="未收到",
+            intent_examples=["还没到", "没看到快递", "还没有收到货", "一直没送来"],
+        ),
+        FlowEdge(
+            id="e_received",
+            source="dialog",
+            target="end_received",
+            label="收到了",
+            intent_examples=["已经收到了", "货到了", "我拿到了"],
+        ),
+        FlowEdge(id="e_default", source="dialog", target="end_default"),
+    ]
+    return TaskFlow(id="edge-intent", name="edge-intent", nodes=nodes, edges=edges)
+
+
 # --- 1. keyword 最长优先 ---
 def test_keyword_longest_first_picks_negative_intent():
     ex = FlowExecutor(_dummy_flow(), FakeFlowCallbacks())
@@ -237,3 +277,28 @@ async def test_dialog_routes_directly_by_edge_intent():
     await FlowExecutor(TaskFlow(id="f", name="f", nodes=nodes, edges=edges), cb).run("c1")
 
     assert cb.entered_nodes[-1] == "end_help"
+
+
+async def test_edge_intent_matches_colloquial_particle_omission_before_llm():
+    cb = FakeFlowCallbacks(user_reply="收到", llm_reply="未收到")
+
+    await FlowExecutor(_build_edge_intent_flow(), cb, embed_provider=None).run("c1")
+
+    assert cb.entered_nodes[-1] == "end_received"
+    assert cb.llm_calls == 0
+
+
+async def test_edge_intent_uses_configured_user_examples_without_embedding():
+    cb = FakeFlowCallbacks(user_reply="快递一直没送来", llm_reply="收到了")
+
+    await FlowExecutor(_build_edge_intent_flow(), cb, embed_provider=None).run("c1")
+
+    assert cb.entered_nodes[-1] == "end_missing"
+    assert cb.llm_calls == 0
+
+
+def test_phrase_match_preserves_negative_intent_polarity():
+    ex = FlowExecutor(_dummy_flow(), FakeFlowCallbacks(), embed_provider=None)
+
+    assert ex._match_intent_by_phrase(["满意", "不满意"], "我不太满意") == "不满意"
+    assert ex._match_intent_by_phrase(["未收到", "收到了"], "我没有收到") == "未收到"

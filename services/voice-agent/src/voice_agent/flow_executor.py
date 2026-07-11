@@ -36,7 +36,8 @@ _FALLBACK_LABELS = {"default", "else", "默认", "其他"}
 
 # 否定词：意图关键字紧邻其后时，keyword 层不足以判定语义（如"不满意"含"满意"），
 # 交由 LLM 层裁决。
-_NEGATION_CHARS = "不没别未非"
+_NEGATION_CHARS = "不没别未非无"
+_TRAILING_SPEECH_PARTICLES = "了啦呀啊呢吧嘛哦哈"
 
 # 构造参数哨兵：区分"未传 embed_provider（从环境创建）"与"显式传 None（禁用本层）"。
 _UNSET = object()
@@ -47,6 +48,23 @@ def _is_fallback_edge(edge: "FlowEdge") -> bool:
     if not edge.label:
         return True
     return edge.label.strip().casefold() in _FALLBACK_LABELS
+
+
+def _normalize_utterance(text: str) -> str:
+    """Normalize punctuation and sentence-final particles for short spoken intents."""
+    normalized = re.sub(r"[\s，。！？、,.!?；;：:'\"“”‘’]", "", text.casefold())
+    while len(normalized) > 1 and normalized[-1] in _TRAILING_SPEECH_PARTICLES:
+        normalized = normalized[:-1]
+    return normalized
+
+
+def _intent_polarity(text: str) -> tuple[str, bool]:
+    """Return (semantic core, is_negative) for common Chinese intent labels."""
+    normalized = _normalize_utterance(text)
+    for prefix in ("还没有", "没有", "没", "未", "不", "非", "别", "无"):
+        if normalized.startswith(prefix) and len(normalized) > len(prefix):
+            return normalized[len(prefix):], True
+    return normalized, False
 
 
 class FlowExecutorCallbacks(Protocol):
@@ -291,7 +309,13 @@ class FlowExecutor:
         if data.mode == DecisionMode.CONDITION:
             return self._eval_condition(data.expression or "", last_response)
 
-        matched = self._match_intent_by_keyword(data.intents, last_response)
+        matched = (
+            self._match_intent_by_keyword(data.intents, last_response)
+            or self._match_intent_by_phrase(data.intents, last_response)
+            or self._match_intent_by_examples(
+                data.intents, data.intent_examples, last_response
+            )
+        )
         if matched:
             self._log_intent(call_id, node.id, "keyword", last_response, matched)
             return matched
@@ -316,7 +340,11 @@ class FlowExecutor:
         )
 
         classified = await self._classify_intent_llm(
-            call_id, data.intents, last_response, has_fallback
+            call_id,
+            data.intents,
+            last_response,
+            has_fallback,
+            data.intent_examples,
         )
         if classified:
             self._log_intent(call_id, node.id, "llm", last_response, classified)
@@ -368,14 +396,76 @@ class FlowExecutor:
                     break
                 if idx == 0:
                     return intent
-                prev = normalized[idx - 1]
                 # 否定守卫：命中处紧邻否定字，且"否定字+意图"不是列表里的另一个意图
                 # （若是另一个意图，最长优先已让它先命中），本层无法定性 → 让 LLM 层裁决。
-                if prev in _NEGATION_CHARS and (prev + needle) not in intents_cf:
+                prefix = normalized[max(0, idx - 3):idx]
+                negation = next((char for char in reversed(prefix) if char in _NEGATION_CHARS), "")
+                if negation and (negation + needle) not in intents_cf:
                     start = idx + 1
                     continue
                 return intent
         return ""
+
+    def _match_intent_by_phrase(self, intents: list[str], response: str) -> str:
+        """Match short spoken variants such as "收到" → "收到了" deterministically."""
+        normalized_response = _normalize_utterance(response)
+        if not normalized_response:
+            return ""
+
+        exact = {
+            _normalize_utterance(intent): intent
+            for intent in intents
+            if _normalize_utterance(intent)
+        }
+        if normalized_response in exact:
+            return exact[normalized_response]
+
+        candidates: list[tuple[int, int, str]] = []
+        for intent in intents:
+            core, expected_negative = _intent_polarity(intent)
+            if len(core) < 2:
+                continue
+            start = 0
+            while True:
+                idx = normalized_response.find(core, start)
+                if idx < 0:
+                    break
+                prefix = normalized_response[max(0, idx - 3):idx]
+                actual_negative = any(char in _NEGATION_CHARS for char in prefix)
+                if actual_negative == expected_negative:
+                    candidates.append((len(core), len(_normalize_utterance(intent)), intent))
+                    break
+                start = idx + 1
+
+        if not candidates:
+            return ""
+        candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        return candidates[0][2]
+
+    def _match_intent_by_examples(
+        self,
+        intents: list[str],
+        intent_examples: dict[str, list[str]],
+        response: str,
+    ) -> str:
+        """Use configured user utterances even when the embedding service is disabled."""
+        normalized_response = _normalize_utterance(response)
+        if not normalized_response:
+            return ""
+
+        candidates: list[tuple[int, str]] = []
+        for intent in intents:
+            for example in intent_examples.get(intent, []):
+                normalized_example = _normalize_utterance(example)
+                if not normalized_example:
+                    continue
+                if normalized_example == normalized_response or normalized_example in normalized_response:
+                    candidates.append((len(normalized_example), intent))
+
+        if not candidates:
+            return ""
+        candidates.sort(key=lambda item: item[0], reverse=True)
+        return candidates[0][1]
 
     async def _classify_intent_embedding(
         self, call_id: str, node_id: str, data: DecisionNodeData, response: str
@@ -440,19 +530,34 @@ class FlowExecutor:
         return "", ""
 
     async def _classify_intent_llm(
-        self, call_id: str, intents: list[str], response: str, has_fallback: bool
+        self,
+        call_id: str,
+        intents: list[str],
+        response: str,
+        has_fallback: bool,
+        intent_examples: Optional[dict[str, list[str]]] = None,
     ) -> str:
         # 有兜底边时额外给"其他"逃生口，避免用户说无关内容被强行 N 选一。
         options = list(intents) + (["其他"] if has_fallback else [])
         escape_hint = (
             "若用户所说与所有意图都不相关，请选择“其他”。\n" if has_fallback else ""
         )
+        examples_hint = ""
+        if intent_examples:
+            rows = []
+            for intent in intents:
+                examples = [item for item in intent_examples.get(intent, []) if item][:5]
+                if examples:
+                    rows.append(f"- {intent}：{'；'.join(examples)}")
+            if rows:
+                examples_hint = "参考表达：\n" + "\n".join(rows) + "\n"
         prompt_msg = ChatMessage(
             role="system",
             content=(
                 "你是意图分类器。请从下列选项中选择最匹配的一项，"
                 "只输出选项名，不要输出其它内容。\n"
                 f"选项：{'/'.join(options)}\n"
+                f"{examples_hint}"
                 f"{escape_hint}"
                 f"用户说：{response}"
             ),
@@ -539,7 +644,11 @@ class FlowExecutor:
         if not intents or not response.strip():
             return fallback or edges[0]
 
-        matched = self._match_intent_by_keyword(intents, response)
+        matched = (
+            self._match_intent_by_keyword(intents, response)
+            or self._match_intent_by_phrase(intents, response)
+            or self._match_intent_by_examples(intents, intent_examples, response)
+        )
         tier = "keyword"
 
         if not matched and self._embed is not None and intent_examples:
@@ -557,7 +666,11 @@ class FlowExecutor:
 
         if not matched:
             matched = await self._classify_intent_llm(
-                call_id, intents, response, fallback is not None
+                call_id,
+                intents,
+                response,
+                fallback is not None,
+                intent_examples,
             )
             tier = "llm"
 
