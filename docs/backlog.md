@@ -81,7 +81,7 @@ P0(通道分化门控、打断打到底 uuid_break/clear_audio、端点判停放
 - **影响文件**:`services/voice-agent/src/voice_agent/`(agent + vad 协同)。
 - **优先级**:中(报号码等场景体验再上一档)。**估算**:中。
 
-### B-P2a · [P2] Silero VAD 替换 webrtcvad
+### ~~B-P2a · [P2] Silero VAD 替换 webrtcvad~~ —— ✅ 已交付(2026-07-12,5418b0a,VAD_PROVIDER=webrtc|silero 默认 webrtc,pysilero-vad/onnx 无 torch,加载/推理失败自动回退 webrtc)
 - **问题**:webrtcvad 是 2016 年的 GMM 模型,抗噪弱。
 - **做法**:用 Silero VAD(神经网络,CPU 毫秒级,抗噪远好)替换,做成 provider 可切换 + 保底回退到 webrtcvad。
 - **影响文件**:`services/voice-agent/src/voice_agent/vad.py`(provider 化)。
@@ -117,7 +117,7 @@ P0(通道分化门控、打断打到底 uuid_break/clear_audio、端点判停放
 ### D2 · [阻断] 安全配置收严
 `JWT_SECRET`/`SERVICE_API_TOKEN` 换随机长串;`VOICE_AGENT_WS_TOKEN` 必须设置(现为空 = 语音 WS 无鉴权);`DEFAULT_ADMIN_PASSWORD`/`CORS_ORIGINS` 按生产收;DeepSeek/DashScope key 轮换并入密钥管理。
 
-### D3 · [阻断] 拨号链路生产化
+### D3 · [阻断] 拨号链路生产化 —— 🔶 部分交付(2026-07-12,e76ff8b:Twilio Termination 网关已配好并验证 NOREG/Digest;剩余:购号后切 FREESWITCH_DIAL_STRING=sofia/gateway/twilio/{to} + FROM_NUMBER 换 Twilio 号码 + 真机 PSTN 试呼)
 `FREESWITCH_DIAL_STRING` 现硬编码直投 MicroSIP 主机 IP(绕 Docker NAT 的单机权宜)。生产换 SIP trunk(`sofia/gateway/...`)并在网关侧配好 NAT contact 改写——这是"到点不拨号"的根因,换环境必复发。
 
 ### ~~D4 · [阻断] 进程部署方式~~ —— ✅ 已交付(2026-07-11,d3bf447)
