@@ -48,7 +48,7 @@ describe('OutboxWorker', () => {
         },
       },
       callAttempt: {
-        findUnique: async () => ({ providerJobId: null, status: TaskStatus.CALLING }),
+        findUnique: async () => ({ providerJobId: null, status: TaskStatus.CALLING, dispatchStartedAt: null }),
         update: async (args: unknown) => {
           calls.push(['callAttempt.update', args]);
           return args;
@@ -87,20 +87,26 @@ describe('OutboxWorker', () => {
       },
     });
 
-    assert.deepEqual(calls[0], ['freeswitch.originate', '+1001', 'attempt-1:task-1']);
-    assert.deepEqual(calls[1], ['callAttempt.update', {
+    // 用例(a):originate 之前先写入"派发在途"标记(单独一笔,崩溃时可幸存)。
+    assert.equal(calls[0][0], 'callAttempt.update');
+    assert.deepEqual(calls[0][1].where, { id: 'attempt-1' });
+    assert.ok(calls[0][1].data.dispatchStartedAt instanceof Date, 'marker must be a Date');
+    assert.deepEqual(Object.keys(calls[0][1].data), ['dispatchStartedAt']);
+    // 标记落库后才真正拨号。
+    assert.deepEqual(calls[1], ['freeswitch.originate', '+1001', 'attempt-1:task-1']);
+    assert.deepEqual(calls[2], ['callAttempt.update', {
       where: { id: 'attempt-1' },
       data: { providerJobId: 'job-1' },
     }]);
-    assert.equal(calls[2][0], 'callEvent.create');
-    assert.equal(calls[2][1].data.type, 'call.dispatch_accepted');
-    assert.deepEqual(calls[2][1].data.payload, {
+    assert.equal(calls[3][0], 'callEvent.create');
+    assert.equal(calls[3][1].data.type, 'call.dispatch_accepted');
+    assert.deepEqual(calls[3][1].data.payload, {
       channel: 'freeswitch',
       provider: 'freeswitch',
       providerJobId: 'job-1',
     });
-    assert.equal(calls[3][0], 'outboxEvent.update');
-    assert.equal(calls[3][1].data.status, 'processed');
+    assert.equal(calls[4][0], 'outboxEvent.update');
+    assert.equal(calls[4][1].data.status, 'processed');
   });
 
   it('skips re-dialing when a prior delivery already placed the call', async () => {
@@ -151,7 +157,7 @@ describe('OutboxWorker', () => {
       $transaction: async (operations: unknown[]) => Promise.all(operations as Promise<unknown>[]),
       outboxEvent: { update: async (args: unknown) => { calls.push(['outboxEvent.update', args]); return args; } },
       callAttempt: {
-        findUnique: async () => ({ providerJobId: null, status: TaskStatus.CALLING }),
+        findUnique: async () => ({ providerJobId: null, status: TaskStatus.CALLING, dispatchStartedAt: null }),
         update: async (args: unknown) => { calls.push(['callAttempt.update', args]); return args; },
       },
       callEvent: { create: async (args: unknown) => { calls.push(['callEvent.create', args]); return args; } },
@@ -172,10 +178,84 @@ describe('OutboxWorker', () => {
       payload: { taskId: 'task-1', attemptId: 'attempt-1', to: '+1001', from: '+1000' },
     });
 
-    // Outbox marked processed; no callAttempt/task FAILED write for a live call.
-    assert.ok(!calls.some((c) => c[0] === 'callAttempt.update'), 'must not mutate the live attempt');
-    assert.equal(calls[0][0], 'outboxEvent.update');
-    assert.equal(calls[0][1].data.status, 'processed');
+    // 唯一的 callAttempt.update 只能是无害的"派发在途"标记,绝不能写 providerJobId/FAILED 去动活着的通话。
+    const attemptUpdates = calls.filter((c) => c[0] === 'callAttempt.update');
+    assert.equal(attemptUpdates.length, 1, 'only the dispatch marker may be written');
+    assert.deepEqual(Object.keys(attemptUpdates[0][1].data), ['dispatchStartedAt']);
+    // Outbox marked processed; no providerJobId/FAILED write for a live call.
+    assert.ok(calls.some((c) => c[0] === 'outboxEvent.update' && c[1].data.status === 'processed'),
+      'outbox event must be marked processed');
+  });
+
+  it('closes an ambiguous dispatch (marker set, no jobId) when the event pipeline proves the call went live', async () => {
+    const calls: Call[] = [];
+    const prisma = {
+      outboxEvent: { update: async (args: unknown) => { calls.push(['outboxEvent.update', args]); return args; } },
+      callAttempt: {
+        // 派发在途标记已存在但 providerJobId 仍缺失 → "曾开始派发但结局未知"的歧义态。
+        findUnique: async () => ({ providerJobId: null, status: TaskStatus.CALLING, dispatchStartedAt: new Date() }),
+        update: async (args: unknown) => { calls.push(['callAttempt.update', args]); return args; },
+      },
+      callEvent: {
+        // 事件管线记录过真实通道事件(provider_event)= 确实拨出过。
+        findFirst: async (args: any) => { calls.push(['callEvent.findFirst', args]); return { id: 'evt-provider-1' }; },
+        create: async (args: unknown) => { calls.push(['callEvent.create', args]); return args; },
+      },
+    };
+    const freeswitch = {
+      originate: async () => { calls.push(['freeswitch.originate', null]); return { accepted: true as const, jobId: 'x', replyText: '+OK' }; },
+    };
+
+    const worker = new OutboxWorker(prisma as never, freeswitch as never, {} as never);
+    const finalized = await (worker as unknown as { deliver(event: unknown): Promise<boolean> }).deliver({
+      id: 'event-1', aggregateId: 'attempt-1', type: 'call.dispatch_requested',
+      attempts: 0, deduplicationKey: 'dispatch-1',
+      payload: { taskId: 'task-1', attemptId: 'attempt-1', to: '+1001', from: '+1000' },
+    });
+
+    // 用例(b):不重拨、不重写标记,凭 provider_event 收口 processed。
+    assert.equal(finalized, true);
+    assert.ok(!calls.some((c) => c[0] === 'freeswitch.originate'), 'must not re-originate');
+    assert.ok(!calls.some((c) => c[0] === 'callAttempt.update'), 'must not touch the attempt');
+    const findFirst = calls.find((c) => c[0] === 'callEvent.findFirst');
+    assert.equal(findFirst![1].where.type, 'call.provider_event');
+    assert.equal(findFirst![1].where.attemptId, 'attempt-1');
+    const outbox = calls.find((c) => c[0] === 'outboxEvent.update');
+    assert.equal(outbox![1].data.status, 'processed');
+  });
+
+  it('dead-letters an ambiguous dispatch (marker set, no jobId, no channel event) for manual review', async () => {
+    const calls: Call[] = [];
+    const prisma = {
+      outboxEvent: { update: async (args: unknown) => { calls.push(['outboxEvent.update', args]); return args; } },
+      callAttempt: {
+        findUnique: async () => ({ providerJobId: null, status: TaskStatus.CALLING, dispatchStartedAt: new Date() }),
+        update: async (args: unknown) => { calls.push(['callAttempt.update', args]); return args; },
+      },
+      callEvent: {
+        // 无任何真实通道事件证据 → 结局无法确认。
+        findFirst: async () => null,
+        create: async (args: unknown) => { calls.push(['callEvent.create', args]); return args; },
+      },
+    };
+    const freeswitch = {
+      originate: async () => { calls.push(['freeswitch.originate', null]); return { accepted: true as const, jobId: 'x', replyText: '+OK' }; },
+    };
+
+    const worker = new OutboxWorker(prisma as never, freeswitch as never, {} as never);
+    const finalized = await (worker as unknown as { deliver(event: unknown): Promise<boolean> }).deliver({
+      id: 'event-1', aggregateId: 'attempt-1', type: 'call.dispatch_requested',
+      attempts: 0, deduplicationKey: 'dispatch-1',
+      payload: { taskId: 'task-1', attemptId: 'attempt-1', to: '+1001', from: '+1000' },
+    });
+
+    // 用例(c):绝不重拨、不改 attempt 状态;outbox 直接死信,lastError 含 ambiguous 供人工复核。
+    assert.equal(finalized, true);
+    assert.ok(!calls.some((c) => c[0] === 'freeswitch.originate'), 'must not re-originate an ambiguous dispatch');
+    assert.ok(!calls.some((c) => c[0] === 'callAttempt.update'), 'must not mutate attempt status');
+    const outbox = calls.find((c) => c[0] === 'outboxEvent.update');
+    assert.equal(outbox![1].data.status, 'failed');
+    assert.match(outbox![1].data.lastError, /ambiguous/);
   });
 
   it('sends a non-retryable dispatch error terminal on the first failure', async () => {

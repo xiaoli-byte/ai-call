@@ -277,6 +277,10 @@ model CallAttempt {
   channel                      String                  @default("freeswitch")
   providerCallId               String?                 @unique @map("provider_call_id")
   providerJobId                String?                 @unique @map("provider_job_id")
+  // 派发在途持久标记:originate 之前单独一笔已提交写入(不与 providerJobId 同事务)。
+  // 意义在于崩溃时幸存——bgapi originate 成功、providerJobId 提交前进程崩溃时,
+  // 重投可据此识别"曾开始派发但结局未知"的歧义态,绝不二次真实外呼(合规窄窗口 A4)。
+  dispatchStartedAt            DateTime?               @map("dispatch_started_at")
   status                       String                  @default("calling")
   startedAt                    DateTime                @default(now()) @map("started_at")
   ringingAt                    DateTime?               @map("ringing_at")

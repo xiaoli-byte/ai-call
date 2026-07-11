@@ -140,12 +140,47 @@ export class OutboxWorker implements OnModuleInit, OnModuleDestroy {
       // past CALLING, the call was already placed — finish without re-dialing.
       const attempt = await this.prisma.callAttempt.findUnique({
         where: { id: payload.attemptId },
-        select: { providerJobId: true, status: true },
+        select: { providerJobId: true, status: true, dispatchStartedAt: true },
       });
+      // 守卫①:已提交 providerJobId,或 attempt 已越过 CALLING → 上一次投递已下发,收口不重拨。
       if (attempt && (attempt.providerJobId || attempt.status !== TaskStatus.CALLING)) {
         await this.markDispatchProcessed(event.id);
         return true;
       }
+      // 守卫②(合规窄窗口 A4):存在"派发在途"持久标记但仍无 providerJobId → 这是"曾开始派发
+      // 但结局未知"的歧义态。典型成因:bgapi originate 成功、providerJobId 提交前进程崩溃,
+      // 且首通在本次重投前已挂断——守卫①失效(providerJobId 未落库)、originate 侧同步去重也失效
+      // (确定性 origination_uuid 对应的通道已不在)。绝不盲目重拨,改由"事件管线是否记录过真实
+      // 通道活动"来消歧。
+      if (attempt?.dispatchStartedAt) {
+        // call.provider_event 只在 FreeSWITCH 真实吐出通道事件、经 ESL 事件管线落库时写入
+        // (见 tasks.service.ts recordProviderCallEvent),独立于本 worker 的 providerJobId 事务。
+        // 注意:enqueue 时必写一条 call.dispatch_requested CallEvent,故不能用"是否有任意 CallEvent"
+        // 判定,必须精确匹配 provider_event 这一"确实拨出过"的信号。
+        const placed = await this.prisma.callEvent.findFirst({
+          where: { attemptId: payload.attemptId, type: 'call.provider_event' },
+          select: { id: true },
+        });
+        if (placed) {
+          await this.markDispatchProcessed(event.id);
+          return true;
+        }
+        // 无任何真实通道事件证据 → 结局无法确认。宁可死信人工复核,也绝不二次真实外呼。
+        // 不改 attempt 状态(仍 CALLING),交由快照健康机制兜底陈旧 attempt。
+        await this.deadLetterDispatch(
+          event.id,
+          'dispatch ambiguous: started but outcome unknown, manual review',
+        );
+        return true;
+      }
+
+      // 首次投递:originate 之前单独一笔【已提交】写入"派发在途"标记。关键——不能与后面
+      // providerJobId 的事务合并:标记的意义正是要在 originate 成功、providerJobId 提交前崩溃时
+      // 幸存下来,供重投据以识别歧义态(守卫②)。
+      await this.prisma.callAttempt.update({
+        where: { id: payload.attemptId },
+        data: { dispatchStartedAt: new Date() },
+      });
 
       let result: Awaited<ReturnType<FreeSwitchService['originate']>>;
       try {
@@ -228,6 +263,23 @@ export class OutboxWorker implements OnModuleInit, OnModuleDestroy {
       return false;
     }
     throw new Error(`Unsupported outbox event: ${event.type}`);
+  }
+
+  /** 歧义态死信:曾写入"派发在途"标记、无 providerJobId、且无任何真实通道事件证据时,
+   * 结局无法确认——直接将该 outbox event 置终态失败并写清 lastError 供人工复核,绝不重拨。
+   * 刻意不改 attempt 状态(仍 CALLING),陈旧 attempt 由快照健康机制兜底。 */
+  private async deadLetterDispatch(eventId: string, reason: string): Promise<void> {
+    await this.prisma.outboxEvent.update({
+      where: { id: eventId },
+      data: {
+        status: 'failed',
+        lastError: reason,
+        lockedAt: null,
+        lockedBy: null,
+      },
+    });
+    this.metrics?.incrementCounter('outbox.failed');
+    this.logger.warn(`dispatch dead-lettered event=${eventId}: ${reason}`);
   }
 
   /** Marks a dispatch outbox event processed without touching the call — used
