@@ -6,7 +6,6 @@ import { PERMISSIONS_KEY } from '@xiaoli-byte/authz/nestjs';
 import { HandoffsController } from './handoffs/handoffs.controller.js';
 import { IntegrationsController } from './integrations/integrations.controller.js';
 import { ScenarioTestsController } from './scenario-tests/scenario-tests.controller.js';
-import { CampaignsController } from './campaigns/campaigns.controller.js';
 import { QualityController } from './quality/quality.controller.js';
 import { ComplianceController } from './compliance/compliance.controller.js';
 import { AnalyticsController } from './analytics/analytics.controller.js';
@@ -39,14 +38,6 @@ describe('product module permission metadata', () => {
 
 // CALL-04：以下模块「去贴标签」，各自持有 call:{module}:{action} 码，不再借用其它模块权限。
 describe('CALL-04 de-labeled module permission metadata', () => {
-  it('campaigns owns call:campaign:*', () => {
-    assertPermissions(CampaignsController.prototype.list, [PERMISSIONS.CAMPAIGN_READ]);
-    assertPermissions(CampaignsController.prototype.get, [PERMISSIONS.CAMPAIGN_READ]);
-    assertPermissions(CampaignsController.prototype.simulateStrategy, [PERMISSIONS.CAMPAIGN_READ]);
-    assertPermissions(CampaignsController.prototype.create, [PERMISSIONS.CAMPAIGN_CREATE]);
-    assertPermissions(CampaignsController.prototype.updateStatus, [PERMISSIONS.CAMPAIGN_UPDATE]);
-  });
-
   it('quality owns call:quality:read', () => {
     assertPermissions(QualityController.prototype.list, [PERMISSIONS.QUALITY_READ]);
     assertPermissions(QualityController.prototype.analyze, [PERMISSIONS.QUALITY_READ]);
@@ -93,9 +84,6 @@ describe('CALL-04 role visibility', () => {
 
   it('operator keeps business-module read+write, minus tenant/platform', () => {
     for (const code of [
-      PERMISSIONS.CAMPAIGN_READ,
-      PERMISSIONS.CAMPAIGN_CREATE,
-      PERMISSIONS.CAMPAIGN_UPDATE,
       PERMISSIONS.QUALITY_READ,
       PERMISSIONS.COMPLIANCE_READ,
       PERMISSIONS.COMPLIANCE_UPDATE,
@@ -114,7 +102,6 @@ describe('CALL-04 role visibility', () => {
 
   it('viewer keeps business-module read only', () => {
     for (const code of [
-      PERMISSIONS.CAMPAIGN_READ,
       PERMISSIONS.QUALITY_READ,
       PERMISSIONS.COMPLIANCE_READ,
       PERMISSIONS.ANALYTICS_READ,
@@ -122,8 +109,6 @@ describe('CALL-04 role visibility', () => {
       assert.ok(viewer.includes(code), `viewer should have ${code}`);
     }
     for (const code of [
-      PERMISSIONS.CAMPAIGN_CREATE,
-      PERMISSIONS.CAMPAIGN_UPDATE,
       PERMISSIONS.COMPLIANCE_UPDATE,
       PERMISSIONS.TENANT_READ,
       PERMISSIONS.PLATFORM_READ,

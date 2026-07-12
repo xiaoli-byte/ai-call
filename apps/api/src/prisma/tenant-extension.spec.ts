@@ -134,22 +134,19 @@ describe('applyTenantScope', () => {
     );
   });
 
-  it('所有 16 张目标模型都在强制过滤集合内', () => {
-    assert.equal(TENANT_MODELS.size, 16);
+  it('所有 13 张目标模型都在强制过滤集合内', () => {
+    assert.equal(TENANT_MODELS.size, 13);
     for (const m of [
       'OutboundScenario',
       'TaskFlow',
       'TaskFlowVersion',
       'OutboundTask',
       'CallAttempt',
-      'Campaign',
       'KnowledgeDocument',
       'TranscriptTurn',
       'CallEvent',
       'CallAnalysis',
       'HandoffTicket',
-      'CampaignLead',
-      'LeadImportBatch',
       'ContactAttemptHistory',
       'ScenarioTestRun',
       'ResourceGrant',

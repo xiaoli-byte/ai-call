@@ -46,7 +46,7 @@ export default function LoginPage() {
       const redirectTo =
         rawRedirect && rawRedirect.startsWith('/') && !rawRedirect.startsWith('//')
           ? rawRedirect
-          : '/campaigns';
+          : '/tasks';
       // 刷新 SWR auth 缓存，让 AuthProvider 拿到新 user
       await mutate(AUTH_KEY, user, { revalidate: false });
       if (redirectTo.startsWith('/knowledge')) {

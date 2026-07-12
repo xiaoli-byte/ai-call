@@ -109,7 +109,7 @@ export default function HomePage() {
         </nav>
 
         <div className={styles.navActions}>
-          <Link href="/campaigns" className={styles.consoleLink}>
+          <Link href="/tasks" className={styles.consoleLink}>
             控制台
             <ChevronRight aria-hidden="true" />
           </Link>
@@ -255,7 +255,7 @@ export default function HomePage() {
             </p>
           </div>
           <div className={styles.finalActions}>
-            <Link href="/campaigns" className={styles.primaryAction}>
+            <Link href="/tasks" className={styles.primaryAction}>
               进入控制台
               <ChevronRight aria-hidden="true" />
             </Link>

@@ -235,10 +235,6 @@ model OutboundTask {
   outcome        String?
   recordingUrl   String?                 @map("recording_url")
   intentTags     String[]                @default([]) @map("intent_tags")
-  campaignId     String?                 @map("campaign_id")
-  campaign       Campaign?               @relation(fields: [campaignId], references: [id], onDelete: SetNull)
-  campaignLeadId String?                 @map("campaign_lead_id")
-  campaignLead   CampaignLead?           @relation(fields: [campaignLeadId], references: [id], onDelete: SetNull)
   attemptCount   Int                     @default(0) @map("attempt_count")
   flowId         String?                 @map("flow_id") @db.Uuid
   flow           TaskFlow?               @relation(fields: [flowId], references: [id], onDelete: Restrict)
@@ -253,8 +249,8 @@ model OutboundTask {
   createdAt      DateTime                @default(now()) @map("created_at")
   updatedAt      DateTime                @updatedAt @map("updated_at")
   tenantId       String                  @default("tenant_demo") @map("tenant_id")
-  // CALL-05：创建该任务的用户（JWT claims.sub）。为 null 表示历史任务或系统/活动批量
-  // 创建（campaign 派发等）——按当前策略这类任务对本租户内持有 task:read 的用户可见，
+  // CALL-05：创建该任务的用户（JWT claims.sub）。为 null 表示历史任务或系统批量创建。
+  // 按当前策略这类任务对本租户内持有 task:read 的用户可见，
   // 与去 ACL 化之前的行为一致；只有显式由某用户创建的任务才收紧为「仅创建者 + 被授权者
   // + admin/super_admin」可见。见 task-acl.ts。
   ownerId        String?                 @map("owner_id") @db.Uuid
@@ -262,8 +258,6 @@ model OutboundTask {
   @@index([status, scheduledAt])
   @@index([scenarioId])
   @@index([flowVersionId])
-  @@index([campaignId, status])
-  @@index([campaignLeadId])
   @@index([tenantId])
   @@index([ownerId])
   @@map("outbound_tasks")
@@ -307,79 +301,6 @@ model CallAttempt {
   @@index([status, startedAt])
   @@index([tenantId])
   @@map("call_attempts")
-}
-
-model Campaign {
-  id               String                  @id @default(uuid())
-  name             String
-  description      String                  @default("")
-  scenario         String
-  scenarioId       String?                 @map("scenario_id")
-  flowId           String?                 @map("flow_id")
-  status           String                  @default("draft")
-  scheduledAt      DateTime?               @map("scheduled_at")
-  concurrencyLimit Int                     @default(3) @map("concurrency_limit")
-  retryPolicy      Json                    @default("{}") @map("retry_policy")
-  strategyConfig   Json                    @default("{}") @map("strategy_config")
-  endCondition     Json                    @default("{}") @map("end_condition")
-  leads            CampaignLead[]
-  importBatches    LeadImportBatch[]
-  tasks            OutboundTask[]
-  contactHistory   ContactAttemptHistory[]
-  handoffTickets   HandoffTicket[]
-  createdAt        DateTime                @default(now()) @map("created_at")
-  updatedAt        DateTime                @updatedAt @map("updated_at")
-  tenantId         String                  @default("tenant_demo") @map("tenant_id")
-  ownerId          String?                 @map("owner_id") @db.Uuid
-
-  @@index([status, scheduledAt])
-  @@index([scenario, createdAt])
-  @@index([tenantId])
-  @@index([ownerId])
-  @@map("campaigns")
-}
-
-model LeadImportBatch {
-  id          String         @id @default(uuid())
-  campaignId  String         @map("campaign_id")
-  campaign    Campaign       @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-  filename    String?        @map("filename")
-  totalRows   Int            @map("total_rows")
-  validRows   Int            @map("valid_rows")
-  invalidRows Int            @map("invalid_rows")
-  errors      Json           @default("[]")
-  leads       CampaignLead[]
-  createdAt   DateTime       @default(now()) @map("created_at")
-  tenantId    String         @default("tenant_demo") @map("tenant_id")
-
-  @@index([campaignId, createdAt])
-  @@index([tenantId])
-  @@map("lead_import_batches")
-}
-
-model CampaignLead {
-  id              String                  @id @default(uuid())
-  campaignId      String                  @map("campaign_id")
-  campaign        Campaign                @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-  batchId         String?                 @map("batch_id")
-  batch           LeadImportBatch?        @relation(fields: [batchId], references: [id], onDelete: SetNull)
-  rowNumber       Int                     @map("row_number")
-  phoneNumber     String                  @map("phone_number")
-  displayName     String?                 @map("display_name")
-  variables       Json                    @default("{}")
-  status          String                  @default("imported")
-  validationError String?                 @map("validation_error")
-  tasks           OutboundTask[]
-  contactHistory  ContactAttemptHistory[]
-  createdAt       DateTime                @default(now()) @map("created_at")
-  updatedAt       DateTime                @updatedAt @map("updated_at")
-  tenantId        String                  @default("tenant_demo") @map("tenant_id")
-
-  @@unique([campaignId, rowNumber])
-  @@index([campaignId, status])
-  @@index([batchId])
-  @@index([tenantId])
-  @@map("campaign_leads")
 }
 
 model CallAnalysis {
@@ -584,8 +505,6 @@ model HandoffTicket {
   callAttempt       CallAttempt?  @relation(fields: [callAttemptId], references: [id], onDelete: SetNull)
   callAnalysisId    String?       @unique @map("call_analysis_id")
   callAnalysis      CallAnalysis? @relation(fields: [callAnalysisId], references: [id], onDelete: SetNull)
-  campaignId        String?       @map("campaign_id")
-  campaign          Campaign?     @relation(fields: [campaignId], references: [id], onDelete: SetNull)
   phoneNumber       String        @map("phone_number")
   customerName      String?       @map("customer_name")
   summary           String
@@ -602,32 +521,26 @@ model HandoffTicket {
   tenantId          String        @default("tenant_demo") @map("tenant_id")
 
   @@index([status, createdAt])
-  @@index([campaignId, createdAt])
   @@index([taskId])
   @@index([tenantId])
   @@map("handoff_tickets")
 }
 
 model ContactAttemptHistory {
-  id             String        @id @default(uuid())
-  phoneNumber    String        @map("phone_number")
-  phoneHash      String        @map("phone_hash")
-  campaignId     String?       @map("campaign_id")
-  campaign       Campaign?     @relation(fields: [campaignId], references: [id], onDelete: SetNull)
-  campaignLeadId String?       @map("campaign_lead_id")
-  campaignLead   CampaignLead? @relation(fields: [campaignLeadId], references: [id], onDelete: SetNull)
-  taskId         String?       @map("task_id") @db.Uuid
-  task           OutboundTask? @relation(fields: [taskId], references: [id], onDelete: SetNull)
-  attemptId      String?       @unique @map("attempt_id") @db.Uuid
-  attempt        CallAttempt?  @relation(fields: [attemptId], references: [id], onDelete: SetNull)
-  status         String?
-  outcome        String?
-  attemptedAt    DateTime      @default(now()) @map("attempted_at")
-  createdAt      DateTime      @default(now()) @map("created_at")
-  tenantId       String        @default("tenant_demo") @map("tenant_id")
+  id          String        @id @default(uuid())
+  phoneNumber String        @map("phone_number")
+  phoneHash   String        @map("phone_hash")
+  taskId      String?       @map("task_id") @db.Uuid
+  task        OutboundTask? @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  attemptId   String?       @unique @map("attempt_id") @db.Uuid
+  attempt     CallAttempt?  @relation(fields: [attemptId], references: [id], onDelete: SetNull)
+  status      String?
+  outcome     String?
+  attemptedAt DateTime      @default(now()) @map("attempted_at")
+  createdAt   DateTime      @default(now()) @map("created_at")
+  tenantId    String        @default("tenant_demo") @map("tenant_id")
 
   @@index([phoneHash, attemptedAt])
-  @@index([campaignId, attemptedAt])
   @@index([tenantId])
   @@map("contact_attempt_history")
 }

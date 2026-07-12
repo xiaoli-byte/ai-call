@@ -54,7 +54,6 @@ export class OrganizationsService {
           'BillingAccount',
         ],
         pendingResources: [
-          'Campaign',
           'OutboundTask',
           'TaskFlow',
           'KnowledgeDocument',

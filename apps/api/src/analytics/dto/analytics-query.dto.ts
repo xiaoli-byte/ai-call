@@ -1,11 +1,7 @@
-import { IsISO8601, IsOptional, IsString, IsUUID } from 'class-validator';
+import { IsISO8601, IsOptional, IsString } from 'class-validator';
 import type { AnalyticsQueryDto as SharedAnalyticsQueryDto } from '@ai-call/shared';
 
 export class AnalyticsQueryDto implements SharedAnalyticsQueryDto {
-  @IsOptional()
-  @IsUUID()
-  campaignId?: string;
-
   @IsOptional()
   @IsString()
   scenario?: string;

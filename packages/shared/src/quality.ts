@@ -36,7 +36,6 @@ export interface QualityListPage {
 export interface QualityQueryDto {
   riskLevel?: QualityRiskLevel;
   outcome?: CallOutcome | string;
-  campaignId?: string;
   cursor?: string;
   limit?: number;
 }

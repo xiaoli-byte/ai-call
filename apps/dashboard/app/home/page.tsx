@@ -128,7 +128,7 @@ export default function EnterpriseHomePage() {
 
           <div className={styles.headerActions}>
             <Link href="/login" className={styles.loginLink}>登录</Link>
-            <Link href="/campaigns" className={styles.consoleLink}>
+            <Link href="/tasks" className={styles.consoleLink}>
               进入控制台
               <ChevronRight aria-hidden="true" />
             </Link>
@@ -253,7 +253,7 @@ export default function EnterpriseHomePage() {
             <span className={styles.sectionKicker}>BUILT FOR ENTERPRISE</span>
             <h2>从第一通试用电话开始，就按生产标准设计</h2>
             <p>能力可以快速验证，治理边界必须从一开始就清晰。</p>
-            <Link href="/campaigns" className={styles.enterpriseLink}>
+            <Link href="/tasks" className={styles.enterpriseLink}>
               查看企业控制台 <ArrowRight aria-hidden="true" />
             </Link>
           </div>
@@ -280,7 +280,7 @@ export default function EnterpriseHomePage() {
           </div>
           <div className={styles.finalActions}>
             <a href="#voice-console" className={styles.ghostAction}>再次体验语音</a>
-            <Link href="/campaigns" className={styles.lightAction}>
+            <Link href="/tasks" className={styles.lightAction}>
               进入控制台 <ArrowRight aria-hidden="true" />
             </Link>
           </div>

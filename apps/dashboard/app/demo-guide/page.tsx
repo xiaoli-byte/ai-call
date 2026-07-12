@@ -32,7 +32,7 @@ export default async function DemoGuidePage() {
       <header className={styles.header}>
         <div>
           <h1>演示交付</h1>
-          <p>样例数据、运行健康、模板克隆、活动创建、结果复盘的演示路径</p>
+          <p>样例数据、运行健康、模板克隆、任务创建、结果复盘的演示路径</p>
         </div>
         <Link href="/templates" className={styles.primaryButton}>
           <PlayCircle size={15} />
@@ -54,11 +54,11 @@ export default async function DemoGuidePage() {
               <article className={styles.statCard}>
                 <div className={styles.statLabel}><span>场景/流程</span><ClipboardList size={16} /></div>
                 <strong>{number(overview.sampleData.scenarios)} / {number(overview.sampleData.flows)}</strong>
-                <small>可直接绑定活动</small>
+                <small>可直接绑定外呼任务</small>
               </article>
               <article className={styles.statCard}>
-                <div className={styles.statLabel}><span>任务/活动</span><Database size={16} /></div>
-                <strong>{number(overview.sampleData.tasks)} / {number(overview.sampleData.campaigns)}</strong>
+                <div className={styles.statLabel}><span>外呼任务</span><Database size={16} /></div>
+                <strong>{number(overview.sampleData.tasks)}</strong>
                 <small>{overview.resetCommand}</small>
               </article>
               <article className={styles.statCard}>

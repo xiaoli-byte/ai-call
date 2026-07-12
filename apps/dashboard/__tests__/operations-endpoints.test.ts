@@ -81,7 +81,6 @@ describe('operations API endpoint contracts', () => {
 
     await endpoints.list({
       status: 'pending',
-      campaignId: 'campaign-1',
       limit: 25,
       cursor: 'handoff-1',
     });
@@ -91,7 +90,7 @@ describe('operations API endpoint contracts', () => {
 
     expect(requests).toEqual([
       {
-        path: '/handoffs?status=pending&campaignId=campaign-1&limit=25&cursor=handoff-1',
+        path: '/handoffs?status=pending&limit=25&cursor=handoff-1',
         options: undefined,
       },
       {

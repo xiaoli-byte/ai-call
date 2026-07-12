@@ -13,7 +13,6 @@ import { SystemModule } from './system/system.module.js';
 import { CallsModule } from './calls/calls.module.js';
 import { GlobalConfigModule } from './global-config/global-config.module.js';
 import { VoiceClonesModule } from './voice-clones/voice-clones.module.js';
-import { CampaignsModule } from './campaigns/campaigns.module.js';
 import { AnalyticsModule } from './analytics/analytics.module.js';
 import { QualityModule } from './quality/quality.module.js';
 import { ComplianceModule } from './compliance/compliance.module.js';
@@ -53,7 +52,6 @@ import { PlatformModule } from './platform/platform.module.js';
     CallsModule,
     GlobalConfigModule,
     VoiceClonesModule,
-    CampaignsModule,
     AnalyticsModule,
     QualityModule,
     ComplianceModule,

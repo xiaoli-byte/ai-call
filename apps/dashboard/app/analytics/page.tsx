@@ -13,7 +13,7 @@ function number(value: number) {
 export default async function AnalyticsPage({
   searchParams,
 }: {
-  searchParams: { campaignId?: string; scenario?: string; from?: string; to?: string };
+  searchParams: { scenario?: string; from?: string; to?: string };
 }) {
   let overview: Awaited<ReturnType<typeof apiServer.analytics.overview>> | null = null;
   let error: string | null = null;
@@ -28,11 +28,11 @@ export default async function AnalyticsPage({
       <header className={styles.header}>
         <div>
           <h1>效果分析</h1>
-          <p>按活动、场景和时间查看外呼漏斗、失败原因和业务结果</p>
+          <p>按场景和时间查看外呼漏斗、失败原因和业务结果</p>
         </div>
-        <Link href="/campaigns" className={styles.primaryButton}>
+        <Link href="/tasks" className={styles.primaryButton}>
           <ClipboardList size={15} />
-          外呼活动
+          外呼任务
         </Link>
       </header>
 
@@ -68,35 +68,26 @@ export default async function AnalyticsPage({
               </article>
             </section>
 
-            <section className={styles.toolbar}>
-              <div className={styles.segments}>
-                <Link href="/analytics" className={!searchParams.campaignId ? styles.active : ''}>全部</Link>
-                {searchParams.campaignId && <Link href={`/analytics?campaignId=${searchParams.campaignId}`} className={styles.active}>当前活动</Link>}
-              </div>
-            </section>
-
             <div className={styles.tableShell}>
               <div className={styles.tableScroll}>
                 <table className={styles.table}>
                   <thead>
                     <tr>
-                      <th>活动/场景</th>
+                      <th>场景</th>
                       <th className="numeric">任务</th>
                       <th className="numeric">拨打</th>
                       <th className="numeric">接通</th>
                       <th className="numeric">达成</th>
                       <th>接通率</th>
                       <th>转化率</th>
-                      <th aria-label="操作" />
                     </tr>
                   </thead>
                   <tbody>
-                    {overview.campaigns.map((item, index) => (
-                      <tr key={item.campaignId ?? `scenario-${index}`}>
+                    {overview.scenarios.map((item) => (
+                      <tr key={item.scenario}>
                         <td>
                           <div className={styles.taskLink}>
-                            <strong>{item.campaignName ?? '未归属活动'}</strong>
-                            <span>{item.scenario}</span>
+                            <strong>{item.scenario}</strong>
                           </div>
                         </td>
                         <td className={styles.numeric}>{number(item.totalTasks)}</td>
@@ -105,10 +96,9 @@ export default async function AnalyticsPage({
                         <td className={styles.numeric}>{number(item.converted)}</td>
                         <td><div className={styles.rate}><span><i style={{ width: `${Math.max(item.connectRate, 3)}%` }} /></span><b>{item.connectRate}%</b></div></td>
                         <td><div className={styles.rate}><span><i style={{ width: `${Math.max(item.conversionRate, 3)}%` }} /></span><b>{item.conversionRate}%</b></div></td>
-                        <td>{item.campaignId ? <Link href={`/campaigns/${item.campaignId}`} className={styles.rowIcon}>→</Link> : null}</td>
                       </tr>
                     ))}
-                    {overview.campaigns.length === 0 && <tr><td colSpan={8}>暂无分析数据</td></tr>}
+                    {overview.scenarios.length === 0 && <tr><td colSpan={7}>暂无分析数据</td></tr>}
                   </tbody>
                 </table>
               </div>

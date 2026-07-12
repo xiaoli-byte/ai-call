@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import {
   CallOutcome,
   TaskStatus,
-  type AnalyticsCampaignSnapshot,
+  type AnalyticsScenarioSnapshot,
   type AnalyticsOverview,
   type AnalyticsQueryDto,
   type AnalyticsReasonBucket,
@@ -16,12 +16,10 @@ export class AnalyticsService {
   async getOverview(query: AnalyticsQueryDto = {}): Promise<AnalyticsOverview> {
     const tasks = await this.prisma.outboundTask.findMany({
       where: {
-        campaignId: query.campaignId,
         scenario: query.scenario,
         createdAt: buildDateRange(query.from, query.to),
       },
       include: {
-        campaign: { select: { id: true, name: true } },
         attempts: {
           orderBy: { attemptNo: 'desc' as const },
           select: { status: true, hangupCause: true, duration: true },
@@ -60,7 +58,7 @@ export class AnalyticsService {
         : 0,
       failureReasons: buildBuckets(tasks, failureReasonOf),
       outcomeBuckets: buildBuckets(tasks, (task: any) => task.outcome ?? '未设置结果'),
-      campaigns: buildCampaignSnapshots(tasks),
+      scenarios: buildScenarioSnapshots(tasks),
       generatedAt: new Date().toISOString(),
     };
   }
@@ -127,23 +125,20 @@ function buildBuckets(tasks: any[], pick: (task: any) => string | undefined): An
     .sort((a, b) => b.count - a.count || a.reason.localeCompare(b.reason));
 }
 
-function buildCampaignSnapshots(tasks: any[]): AnalyticsCampaignSnapshot[] {
+function buildScenarioSnapshots(tasks: any[]): AnalyticsScenarioSnapshot[] {
   const groups = new Map<string, any[]>();
   for (const task of tasks) {
-    const key = task.campaignId ?? 'uncampaigned';
+    const key = task.scenario;
     const group = groups.get(key) ?? [];
     group.push(task);
     groups.set(key, group);
   }
-  return [...groups.entries()].map(([key, records]) => {
+  return [...groups.entries()].map(([scenario, records]) => {
     const dialed = records.filter(isDialed).length;
     const connected = records.filter(isConnected).length;
     const converted = records.filter((task) => isConverted(task.outcome)).length;
-    const first = records[0];
     return {
-      campaignId: key === 'uncampaigned' ? undefined : key,
-      campaignName: first.campaign?.name,
-      scenario: first.scenario,
+      scenario,
       totalTasks: records.length,
       dialed,
       connected,

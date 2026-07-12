@@ -10,7 +10,7 @@ import type {
 
 export function handoffsEndpoints(http: HttpAdapter) {
   return {
-    list: (params?: { status?: HandoffTicketStatus; campaignId?: string; limit?: number; cursor?: string }) =>
+    list: (params?: { status?: HandoffTicketStatus; limit?: number; cursor?: string }) =>
       http.request<HandoffListPage>(`/handoffs${buildQuery(params as Record<string, unknown> | undefined)}`),
     get: (id: string) => http.request<HandoffTicket>(`/handoffs/${id}`),
     update: (id: string, dto: UpdateHandoffTicketDto) =>

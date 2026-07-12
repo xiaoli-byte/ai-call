@@ -32,14 +32,13 @@ export class DemoGuideService {
   }
 
   private async countDemoData(): Promise<DemoGuideOverview['sampleData']> {
-    const [scenarios, flows, campaigns, tasks, analyses] = await Promise.all([
+    const [scenarios, flows, tasks, analyses] = await Promise.all([
       (this.prisma as any).outboundScenario.count(),
       (this.prisma as any).taskFlow.count(),
-      (this.prisma as any).campaign.count(),
       (this.prisma as any).outboundTask.count(),
       (this.prisma as any).callAnalysis.count(),
     ]);
-    return { scenarios, flows, campaigns, tasks, analyses };
+    return { scenarios, flows, tasks, analyses };
   }
 }
 
@@ -64,11 +63,11 @@ function buildDemoSteps(
       href: '/templates',
     },
     {
-      id: 'campaign',
-      title: 'Create an outbound campaign',
-      status: sample.campaigns > 0 ? 'ready' : 'warning',
-      description: `${sample.campaigns} campaigns exist in the workspace.`,
-      href: '/campaigns/new',
+      id: 'tasks',
+      title: 'Create outbound tasks',
+      status: sample.tasks > 0 ? 'ready' : 'warning',
+      description: `${sample.tasks} outbound tasks exist in the workspace.`,
+      href: '/tasks/new',
     },
     {
       id: 'runtime',

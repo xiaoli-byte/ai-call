@@ -31,11 +31,4 @@ export class CreateTaskDto {
   @IsUUID()
   flowId?: string;
 
-  @IsOptional()
-  @IsUUID()
-  campaignId?: string;
-
-  @IsOptional()
-  @IsUUID()
-  campaignLeadId?: string;
 }

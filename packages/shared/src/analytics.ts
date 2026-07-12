@@ -1,7 +1,6 @@
 import type { ScenarioKey } from './scenarios.js';
 
 export interface AnalyticsQueryDto {
-  campaignId?: string;
   scenario?: ScenarioKey | string;
   from?: string;
   to?: string;
@@ -31,9 +30,7 @@ export interface AnalyticsReasonBucket {
   rate: number;
 }
 
-export interface AnalyticsCampaignSnapshot {
-  campaignId?: string;
-  campaignName?: string;
+export interface AnalyticsScenarioSnapshot {
   scenario: ScenarioKey | string;
   totalTasks: number;
   dialed: number;
@@ -49,6 +46,6 @@ export interface AnalyticsOverview {
   averageDurationSeconds: number;
   failureReasons: AnalyticsReasonBucket[];
   outcomeBuckets: AnalyticsReasonBucket[];
-  campaigns: AnalyticsCampaignSnapshot[];
+  scenarios: AnalyticsScenarioSnapshot[];
   generatedAt: string;
 }

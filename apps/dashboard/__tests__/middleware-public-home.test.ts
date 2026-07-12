@@ -28,14 +28,14 @@ describe('public homepage middleware behavior', () => {
   });
 
   it('redirects logged-out console routes to login with the original path', () => {
-    const response = middleware(request('/campaigns'));
+    const response = middleware(request('/tasks'));
 
-    expect(response.headers.get('location')).toBe('http://localhost/login?redirect=%2Fcampaigns');
+    expect(response.headers.get('location')).toBe('http://localhost/login?redirect=%2Ftasks');
   });
 
   it('sends authenticated login visits to the console entry', () => {
     const response = middleware(request('/login', validToken));
 
-    expect(response.headers.get('location')).toBe('http://localhost/campaigns');
+    expect(response.headers.get('location')).toBe('http://localhost/tasks');
   });
 });

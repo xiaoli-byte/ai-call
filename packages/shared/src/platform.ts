@@ -3,7 +3,6 @@ import type { FlowEdge, FlowNode } from './task-flows.js';
 export interface PlatformQueryDto {
   from?: string;
   to?: string;
-  campaignId?: string;
   scenario?: string;
   provider?: string;
 }
@@ -91,9 +90,7 @@ export interface CostProviderBreakdown {
   cost: number;
 }
 
-export interface CostCampaignBreakdown {
-  campaignId?: string;
-  campaignName: string;
+export interface CostScenarioBreakdown {
   scenario: string;
   calls: number;
   connectedCalls: number;
@@ -121,7 +118,7 @@ export interface CostOverview {
     avgCostPerCall: number;
   };
   providers: CostProviderBreakdown[];
-  campaigns: CostCampaignBreakdown[];
+  scenarios: CostScenarioBreakdown[];
   trend: CostTrendPoint[];
   assumptions: string[];
 }
@@ -242,7 +239,6 @@ export interface DemoGuideOverview {
   sampleData: {
     scenarios: number;
     flows: number;
-    campaigns: number;
     tasks: number;
     analyses: number;
   };

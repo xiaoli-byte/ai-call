@@ -8,7 +8,6 @@ import { systemEndpoints } from './system';
 import { callsEndpoints } from './calls';
 import { globalConfigEndpoints } from './global-config';
 import { voiceClonesEndpoints } from './voice-clones';
-import { campaignsEndpoints } from './campaigns';
 import { analyticsEndpoints } from './analytics';
 import { qualityEndpoints } from './quality';
 import { complianceEndpoints } from './compliance';
@@ -34,7 +33,6 @@ export function createApi(http: HttpAdapter) {
   const calls = callsEndpoints(http);
   const globalConfig = globalConfigEndpoints(http);
   const voiceClones = voiceClonesEndpoints(http);
-  const campaigns = campaignsEndpoints(http);
   const analytics = analyticsEndpoints(http);
   const quality = qualityEndpoints(http);
   const compliance = complianceEndpoints(http);
@@ -54,7 +52,6 @@ export function createApi(http: HttpAdapter) {
     calls,
     globalConfig,
     voiceClones,
-    campaigns,
     analytics,
     quality,
     compliance,
@@ -74,12 +71,6 @@ export function createApi(http: HttpAdapter) {
     createTask: tasks.create,
     createTaskBatch: tasks.createBatch,
     dispatchTask: tasks.dispatch,
-    // campaigns
-    listCampaigns: campaigns.list,
-    getCampaign: campaigns.get,
-    createCampaign: campaigns.create,
-    updateCampaignStatus: campaigns.updateStatus,
-    getCampaignStrategySimulation: campaigns.strategySimulation,
     // analytics
     getAnalyticsOverview: analytics.overview,
     // quality

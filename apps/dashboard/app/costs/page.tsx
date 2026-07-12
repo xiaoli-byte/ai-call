@@ -20,7 +20,7 @@ function money(value: number) {
 export default async function CostsPage({
   searchParams,
 }: {
-  searchParams: { campaignId?: string; scenario?: string; from?: string; to?: string };
+  searchParams: { scenario?: string; from?: string; to?: string };
 }) {
   let overview: Awaited<ReturnType<typeof apiServer.platform.costs>> | null = null;
   let error: string | null = null;
@@ -35,7 +35,7 @@ export default async function CostsPage({
       <header className={styles.header}>
         <div>
           <h1>成本中心</h1>
-          <p>按通话、Provider、活动和时间归因外呼成本；无用量事件时使用通话时长和转写内容估算</p>
+          <p>按通话、Provider、场景和时间归因外呼成本；无用量事件时使用通话时长和转写内容估算</p>
         </div>
         <Link href="/observability" className={styles.primaryButton}>
           <Gauge size={15} />
@@ -125,14 +125,13 @@ export default async function CostsPage({
 
             <section className={styles.panel} style={{ marginTop: 16 }}>
               <div className={styles.panelHeader}>
-                <h2>活动成本</h2>
-                <span>{overview.campaigns.length}</span>
+                <h2>场景成本</h2>
+                <span>{overview.scenarios.length}</span>
               </div>
               <div className={styles.scroll}>
                 <table className={styles.table}>
                   <thead>
                     <tr>
-                      <th>活动</th>
                       <th>场景</th>
                       <th className={styles.numeric}>通话</th>
                       <th className={styles.numeric}>接通</th>
@@ -143,9 +142,8 @@ export default async function CostsPage({
                     </tr>
                   </thead>
                   <tbody>
-                    {overview.campaigns.map((item) => (
-                      <tr key={item.campaignId ?? item.campaignName}>
-                        <td><strong>{item.campaignName}</strong><small>{item.campaignId ?? '未归属活动'}</small></td>
+                    {overview.scenarios.map((item) => (
+                      <tr key={item.scenario}>
                         <td>{item.scenario}</td>
                         <td className={styles.numeric}>{number(item.calls)}</td>
                         <td className={styles.numeric}>{number(item.connectedCalls)}</td>
@@ -155,7 +153,7 @@ export default async function CostsPage({
                         <td className={styles.numeric}>{money(item.avgCostPerCall)}</td>
                       </tr>
                     ))}
-                    {overview.campaigns.length === 0 ? <tr><td colSpan={8}>暂无活动成本数据</td></tr> : null}
+                    {overview.scenarios.length === 0 ? <tr><td colSpan={7}>暂无场景成本数据</td></tr> : null}
                   </tbody>
                 </table>
               </div>

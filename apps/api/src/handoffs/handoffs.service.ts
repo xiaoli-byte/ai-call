@@ -22,19 +22,18 @@ export class HandoffsService {
 
   async list(query: {
     status?: HandoffTicketStatus;
-    campaignId?: string;
     limit?: number;
     cursor?: string;
   } = {}): Promise<HandoffListPage> {
     const limit = Math.min(100, Math.max(1, query.limit ?? 25));
     const [records, counts] = await Promise.all([
       (this.prisma as any).handoffTicket.findMany({
-        where: { status: query.status, campaignId: query.campaignId },
+        where: { status: query.status },
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         take: limit + 1,
         ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
       }),
-      this.counts(query.campaignId),
+      this.counts(),
     ]);
     const hasMore = records.length > limit;
     const items = hasMore ? records.slice(0, limit) : records;
@@ -55,11 +54,7 @@ export class HandoffsService {
     const analysis = await (this.prisma as any).callAnalysis.findUnique({
       where: { id: callAnalysisId },
       include: {
-        task: {
-          include: {
-            campaignLead: { select: { displayName: true } },
-          },
-        },
+        task: true,
       },
     });
     if (!analysis) throw new NotFoundException(`CallAnalysis ${callAnalysisId} not found`);
@@ -75,9 +70,8 @@ export class HandoffsService {
         taskId: analysis.taskId,
         callAttemptId: analysis.callAttemptId,
         callAnalysisId,
-        campaignId: task?.campaignId,
         phoneNumber: task?.to ?? '',
-        customerName: task?.campaignLead?.displayName ?? task?.variables?.customerName,
+        customerName: task?.variables?.customerName,
         summary: analysis.summary,
         intent: analysis.intent,
         riskTags: toPrismaJson(riskTags),
@@ -125,7 +119,6 @@ export class HandoffsService {
       scheduledAt: dto.scheduledAt,
       status: TaskStatus.PENDING,
       priority: TaskPriority.HIGH,
-      campaignId: ticket.campaignId ?? undefined,
       variables: {
         ...(ticket.task?.variables ?? {}),
         handoffTicketId: ticket.id,
@@ -145,12 +138,12 @@ export class HandoffsService {
     return this.toDomain(record);
   }
 
-  private async counts(campaignId?: string): Promise<Record<HandoffTicketStatus, number>> {
+  private async counts(): Promise<Record<HandoffTicketStatus, number>> {
     const statuses: HandoffTicketStatus[] = ['pending', 'processing', 'completed', 'closed'];
     const entries = await Promise.all(statuses.map(async (status) => [
       status,
       await (this.prisma as any).handoffTicket.count?.({
-        where: { status, campaignId },
+        where: { status },
       }) ?? 0,
     ] as const));
     return Object.fromEntries(entries) as Record<HandoffTicketStatus, number>;
@@ -173,7 +166,6 @@ export class HandoffsService {
       taskId: record.taskId,
       callAttemptId: record.callAttemptId ?? undefined,
       callAnalysisId: record.callAnalysisId ?? undefined,
-      campaignId: record.campaignId ?? undefined,
       phoneNumber: record.phoneNumber,
       customerName: record.customerName ?? undefined,
       summary: record.summary,

@@ -3,17 +3,15 @@ import { describe, it } from 'node:test';
 import { CostsService } from './costs.service.js';
 
 describe('CostsService', () => {
-  it('estimates provider and campaign costs from call duration and transcripts', async () => {
+  it('estimates provider and scenario costs from call duration and transcripts', async () => {
     const prisma = {
       outboundTask: {
         findMany: async () => [
           {
             id: 'task-1',
-            campaignId: 'campaign-1',
             scenario: 'ecommerce',
             duration: 120,
             createdAt: new Date('2026-07-07T01:00:00.000Z'),
-            campaign: { id: 'campaign-1', name: 'July follow-up' },
             attempts: [],
             transcripts: [
               { role: 'user', content: 'Package received, but an accessory has an issue.' },
@@ -32,7 +30,7 @@ describe('CostsService', () => {
     assert.equal(overview.summary.callCount, 1);
     assert.equal(overview.summary.connectedCalls, 1);
     assert.equal(overview.summary.totalSeconds, 120);
-    assert.equal(overview.campaigns[0].campaignName, 'July follow-up');
+    assert.equal(overview.scenarios[0].scenario, 'ecommerce');
     assert.ok(overview.summary.totalCost > 0);
     assert.ok(overview.providers.some((provider) => provider.component === 'tool' && provider.toolCalls === 2));
   });

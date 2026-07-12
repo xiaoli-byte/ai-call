@@ -15,10 +15,6 @@ export class ListQualityDto {
 
   @IsOptional()
   @IsUUID()
-  campaignId?: string;
-
-  @IsOptional()
-  @IsUUID()
   cursor?: string;
 
   @IsOptional()

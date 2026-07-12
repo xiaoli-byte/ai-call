@@ -21,7 +21,6 @@ export class QualityService {
       where: {
         riskLevel: query.riskLevel,
         outcome: query.outcome,
-        task: { campaignId: query.campaignId },
       },
       include: {
         task: { select: { to: true, scenario: true } },
@@ -180,7 +179,7 @@ function buildAnalysisProposal(call: any) {
       ? '加入退订/黑名单候选并停止后续触达'
       : outcome === CallOutcome.ESCALATED
         ? '安排人工坐席跟进'
-        : '进入活动结果复盘',
+        : '进入任务结果复盘',
     riskLevel,
     complianceFlags: flags,
     confidence: transcript ? 0.78 : 0.35,

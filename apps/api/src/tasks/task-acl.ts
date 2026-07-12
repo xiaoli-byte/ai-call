@@ -12,7 +12,7 @@ import {
  *
  * 范围收窄自 backlog 原始描述「坐席仅见自己或本部门任务」——当前 User 无部门字段，
  * 故只做「创建者 + 显式 ResourceGrant 授权 + admin/super_admin 全见」，不做 DEPARTMENT
- * 主体。通用判定原语见 `common/resource-acl.ts`（与 CALL-09 的 campaign 共用同一套）。
+ * 主体。通用判定原语见 `common/resource-acl.ts`。
  */
 export const TASK_RESOURCE_TYPE = 'call_task';
 

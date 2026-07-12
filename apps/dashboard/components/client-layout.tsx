@@ -14,7 +14,6 @@ import styles from './client-layout.module.scss';
 
 const NAV_ITEMS_PRIMARY = [
   { href: '/', label: '概览', icon: 'home' },
-  { href: '/campaigns', label: '外呼活动', icon: 'campaign' },
   { href: '/tasks', label: '外呼任务', icon: 'phone' },
   { href: '/task-flows', label: '外呼流程', icon: 'flow' },
   // { href: '/analytics', label: '效果分析', icon: 'chart' },
@@ -83,16 +82,6 @@ function NavIcon({ name }: { name: string }) {
           <rect x="9" y="9" width="6" height="6" rx="1" />
           <path d="M6 9v3a3 3 0 0 0 3 3" />
           <path d="M15 12h-3a3 3 0 0 0-3 3" />
-        </svg>
-      );
-    case 'campaign':
-      return (
-        <svg {...props}>
-          <path d="M4 5h16" />
-          <path d="M4 12h10" />
-          <path d="M4 19h7" />
-          <path d="M17 15l4 4" />
-          <circle cx="16" cy="12" r="3" />
         </svg>
       );
     case 'chart':
@@ -252,7 +241,6 @@ function NavIcon({ name }: { name: string }) {
 
 function getBreadcrumb(pathname: string) {
   if (pathname === '/') return { group: '工作台', current: '概览' };
-  if (pathname.startsWith('/campaigns')) return { group: '工作台', current: '外呼活动' };
   if (pathname.startsWith('/tasks')) return { group: '工作台', current: '外呼任务' };
   if (pathname.startsWith('/task-flows')) return { group: '工作台', current: '外呼流程' };
   if (pathname.startsWith('/analytics')) return { group: '工作台', current: '效果分析' };

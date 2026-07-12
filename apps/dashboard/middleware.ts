@@ -30,7 +30,7 @@ export function middleware(request: NextRequest) {
 
   if (isLoginPage) {
     if (hasValidToken) {
-      return NextResponse.redirect(new URL('/campaigns', request.url));
+      return NextResponse.redirect(new URL('/tasks', request.url));
     }
     return NextResponse.next();
   }

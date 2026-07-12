@@ -51,11 +51,6 @@ export const PERMISSIONS = {
   // 以下模块 CALL-04「去贴标签」：各自持有 3 段码 call:{module}:{action}，
   // 不再借用 task:*/call:read/scenario:*/system:role:* 等其它模块的权限码。
 
-  // 营销活动（外呼批次）
-  CAMPAIGN_READ: 'call:campaign:read',
-  CAMPAIGN_CREATE: 'call:campaign:create',
-  CAMPAIGN_UPDATE: 'call:campaign:update',
-
   // 通话质检
   QUALITY_READ: 'call:quality:read',
 
@@ -110,9 +105,6 @@ export const ROLE_TEMPLATES = {
       PERMISSIONS.KNOWLEDGE_UPDATE,
       PERMISSIONS.KNOWLEDGE_DELETE,
       // 业务模块（CALL-04 去贴标签后，operator 保留与此前等价的可见范围）
-      PERMISSIONS.CAMPAIGN_READ,
-      PERMISSIONS.CAMPAIGN_CREATE,
-      PERMISSIONS.CAMPAIGN_UPDATE,
       PERMISSIONS.QUALITY_READ,
       PERMISSIONS.COMPLIANCE_READ,
       PERMISSIONS.COMPLIANCE_UPDATE,
@@ -131,7 +123,6 @@ export const ROLE_TEMPLATES = {
       PERMISSIONS.SCENARIO_READ,
       PERMISSIONS.KNOWLEDGE_READ,
       // 业务模块只读（CALL-04）
-      PERMISSIONS.CAMPAIGN_READ,
       PERMISSIONS.QUALITY_READ,
       PERMISSIONS.COMPLIANCE_READ,
       PERMISSIONS.ANALYTICS_READ,

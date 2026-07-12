@@ -86,10 +86,6 @@ export interface OutboundTask {
   recordingUrl?: string;
   /** 意向标签 */
   intentTags?: string[];
-  /** 所属外呼活动 ID。 */
-  campaignId?: string;
-  /** 所属外呼活动名单行 ID。 */
-  campaignLeadId?: string;
   /** 已创建的实际拨打次数。 */
   attemptCount: number;
   /** 详情响应中的拨打尝试记录。 */
@@ -142,8 +138,6 @@ export interface OutboundTaskListItem {
   duration?: number;
   outcome?: CallOutcome;
   intentTags?: string[];
-  campaignId?: string;
-  campaignLeadId?: string;
   flowId?: string;
   flowVersionId?: string;
   attemptCount: number;
@@ -240,9 +234,6 @@ export interface CreateTaskDto {
   priority?: TaskPriority;
   /** 关联的流程配置 ID（可选，指定后 Voice Agent 按流程执行） */
   flowId?: string;
-  /** 外呼活动创建任务时使用。 */
-  campaignId?: string;
-  campaignLeadId?: string;
 }
 
 export interface CreateTaskBatchItem {
@@ -250,7 +241,6 @@ export interface CreateTaskBatchItem {
   variables?: Record<string, string>;
   scheduledAt?: string;
   priority?: TaskPriority;
-  campaignLeadId?: string;
 }
 
 export interface CreateTaskBatchDto {
@@ -262,7 +252,6 @@ export interface CreateTaskBatchDto {
   priority?: TaskPriority;
   /** 关联的流程配置 ID（可选，指定后 Voice Agent 按流程执行） */
   flowId?: string;
-  campaignId?: string;
   items: CreateTaskBatchItem[];
 }
 

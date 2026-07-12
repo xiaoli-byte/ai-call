@@ -14,7 +14,6 @@ export interface HandoffTicket {
   taskId: string;
   callAttemptId?: string;
   callAnalysisId?: string;
-  campaignId?: string;
   phoneNumber: string;
   customerName?: string;
   summary: string;

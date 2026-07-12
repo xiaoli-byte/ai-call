@@ -13,13 +13,11 @@ export class HandoffsController {
   @Get()
   list(
     @Query('status') status?: HandoffTicketStatus,
-    @Query('campaignId') campaignId?: string,
     @Query('limit') limit?: string,
     @Query('cursor') cursor?: string,
   ) {
     return this.handoffs.list({
       status,
-      campaignId,
       cursor,
       limit: limit ? Number(limit) : undefined,
     });

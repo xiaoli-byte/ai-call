@@ -12,7 +12,6 @@ describe('HandoffsService', () => {
       taskId: 'task-1',
       callAttemptId: 'attempt-1',
       callAnalysisId: 'analysis-1',
-      campaignId: 'campaign-1',
       phoneNumber: '+8613800138000',
       customerName: '王先生',
       summary: '客户希望人工协商延期',
@@ -41,9 +40,7 @@ describe('HandoffsService', () => {
             id: 'task-1',
             to: ticket.phoneNumber,
             scenario: Scenario.COLLECTION,
-            campaignId: 'campaign-1',
-            campaignLead: { displayName: '王先生' },
-            variables: { amount: '5000' },
+            variables: { amount: '5000', customerName: '王先生' },
           },
         }),
       },
@@ -87,7 +84,6 @@ describe('HandoffsService', () => {
       taskId: 'task-1',
       callAttemptId: 'attempt-1',
       callAnalysisId: 'analysis-1',
-      campaignId: 'campaign-1',
       phoneNumber: '+8613800138000',
       customerName: '客户A',
       summary: '需要继续跟进',
@@ -128,7 +124,6 @@ describe('HandoffsService', () => {
         taskId: 'task-1',
         callAttemptId: 'attempt-1',
         callAnalysisId: 'analysis-1',
-        campaignId: 'campaign-1',
         phoneNumber: '+8613800138000',
         customerName: 'Customer A',
         summary: 'Needs manual follow-up',
@@ -148,7 +143,6 @@ describe('HandoffsService', () => {
         taskId: 'task-2',
         callAttemptId: 'attempt-2',
         callAnalysisId: 'analysis-2',
-        campaignId: 'campaign-1',
         phoneNumber: '+8613800138001',
         customerName: 'Customer B',
         summary: 'Also needs manual follow-up',
@@ -187,21 +181,20 @@ describe('HandoffsService', () => {
 
     const page = await service.list({
       status: 'pending',
-      campaignId: 'campaign-1',
       limit: 1,
       cursor: 'handoff-cursor',
     });
 
-    assert.deepEqual(receivedFindArgs.where, { status: 'pending', campaignId: 'campaign-1' });
+    assert.deepEqual(receivedFindArgs.where, { status: 'pending' });
     assert.deepEqual(receivedFindArgs.orderBy, [{ createdAt: 'desc' }, { id: 'desc' }]);
     assert.deepEqual(receivedFindArgs.cursor, { id: 'handoff-cursor' });
     assert.equal(receivedFindArgs.skip, 1);
     assert.equal(receivedFindArgs.take, 2);
     assert.deepEqual(countArgs.map((args) => args.where), [
-      { status: 'pending', campaignId: 'campaign-1' },
-      { status: 'processing', campaignId: 'campaign-1' },
-      { status: 'completed', campaignId: 'campaign-1' },
-      { status: 'closed', campaignId: 'campaign-1' },
+      { status: 'pending' },
+      { status: 'processing' },
+      { status: 'completed' },
+      { status: 'closed' },
     ]);
     assert.equal(page.items.length, 1);
     assert.equal(page.items[0].id, 'handoff-1');
@@ -221,7 +214,6 @@ describe('HandoffsService', () => {
       taskId: 'task-1',
       callAttemptId: 'attempt-1',
       callAnalysisId: 'analysis-1',
-      campaignId: 'campaign-1',
       phoneNumber: '+8613800138000',
       customerName: 'Customer A',
       summary: 'Needs manual follow-up',

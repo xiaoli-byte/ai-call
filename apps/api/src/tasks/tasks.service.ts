@@ -98,8 +98,6 @@ export type DispatchTaskResult = OutboundTask & {
 type ContactAttemptHistoryData = {
   phoneNumber: string;
   phoneHash: string;
-  campaignId?: string | null;
-  campaignLeadId?: string | null;
   taskId?: string;
   attemptId?: string;
   status?: string;
@@ -172,8 +170,6 @@ export class TasksService {
         variables: toPrismaJson(variables),
         status: TaskStatus.PENDING,
         scheduledAt,
-        campaignId: dto.campaignId,
-        campaignLeadId: dto.campaignLeadId,
         flowId: dto.flowId,
         flowVersionId: flowVersion?.id,
         // CALL-05：记录创建人；无 CLS 用户上下文（系统/worker）时留空，
@@ -210,8 +206,6 @@ export class TasksService {
         flowId: dto.flowId,
         scheduledAt: item.scheduledAt ?? dto.scheduledAt,
         priority: item.priority ?? dto.priority,
-        campaignId: dto.campaignId,
-        campaignLeadId: item.campaignLeadId,
         variables,
       }));
     }
@@ -462,8 +456,6 @@ export class TasksService {
             calledAt: true,
             endedAt: true,
             to: true,
-            campaignId: true,
-            campaignLeadId: true,
             outcome: true,
             attemptCount: true,
           },
@@ -622,8 +614,6 @@ export class TasksService {
           await recordContactAttemptHistory(tx, {
             phoneNumber: currentTask.to,
             phoneHash: hashPhone(currentTask.to),
-            campaignId: currentTask.campaignId,
-            campaignLeadId: currentTask.campaignLeadId,
             taskId: context.taskId,
             attemptId: currentAttempt.id,
             status: terminalHistoryStatus,
@@ -689,8 +679,6 @@ export class TasksService {
               calledAt: true,
               endedAt: true,
               to: true,
-              campaignId: true,
-              campaignLeadId: true,
               outcome: true,
               attemptCount: true,
             },
@@ -792,8 +780,6 @@ export class TasksService {
         await recordContactAttemptHistory(tx, {
           phoneNumber: attempt.task.to,
           phoneHash: hashPhone(attempt.task.to),
-          campaignId: attempt.task.campaignId,
-          campaignLeadId: attempt.task.campaignLeadId,
           taskId: attempt.taskId,
           attemptId: attempt.id,
           status: terminalStatus,
@@ -998,8 +984,6 @@ export class TasksService {
       await recordContactAttemptHistory(tx, {
         phoneNumber: current.to,
         phoneHash: hashPhone(current.to),
-        campaignId: current.campaignId,
-        campaignLeadId: current.campaignLeadId,
         taskId: context.taskId,
         attemptId: context.attemptId,
         status: TaskStatus.COMPLETED,
@@ -1247,8 +1231,6 @@ export class TasksService {
     duration: true,
     outcome: true,
     intentTags: true,
-    campaignId: true,
-    campaignLeadId: true,
     flowId: true,
     flowVersionId: true,
     attemptCount: true,
@@ -1440,8 +1422,6 @@ export class TasksService {
       duration: record.duration ?? undefined,
       outcome: (record.outcome as CallOutcome | null) ?? undefined,
       intentTags: record.intentTags,
-      campaignId: record.campaignId ?? undefined,
-      campaignLeadId: record.campaignLeadId ?? undefined,
       flowId: record.flowId ?? undefined,
       flowVersionId: record.flowVersionId ?? undefined,
       attemptCount: record.attemptCount,
@@ -1506,8 +1486,6 @@ export class TasksService {
       outcome: (record.outcome as CallOutcome | null) ?? undefined,
       recordingUrl: record.recordingUrl ?? undefined,
       intentTags: record.intentTags,
-      campaignId: record.campaignId ?? undefined,
-      campaignLeadId: record.campaignLeadId ?? undefined,
       attemptCount: record.attemptCount,
       attempts,
       flowId: record.flowId ?? undefined,
@@ -1541,8 +1519,6 @@ export class TasksService {
       duration: task.duration,
       outcome: task.outcome,
       intentTags: task.intentTags,
-      campaignId: task.campaignId,
-      campaignLeadId: task.campaignLeadId,
       flowId: task.flowId,
       flowVersionId: task.flowVersionId,
       attemptCount: task.attemptCount,
@@ -1614,8 +1590,6 @@ async function recordContactAttemptHistory(tx: unknown, data: ContactAttemptHist
       update: {
         phoneNumber: data.phoneNumber,
         phoneHash: data.phoneHash,
-        campaignId: data.campaignId,
-        campaignLeadId: data.campaignLeadId,
         taskId: data.taskId,
         status: data.status,
         outcome: data.outcome,

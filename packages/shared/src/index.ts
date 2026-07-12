@@ -9,7 +9,6 @@ export * from './task-flows.js';
 export * from './task-flow-templates.js';
 export * from './flow-validation.js';
 export * from './auth.js';
-export * from './campaigns.js';
 export * from './analytics.js';
 export * from './quality.js';
 export * from './compliance.js';

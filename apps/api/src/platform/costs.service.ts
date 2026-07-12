@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import type {
-  CostCampaignBreakdown,
+  CostScenarioBreakdown,
   CostOverview,
   CostProviderBreakdown,
   PlatformQueryDto,
@@ -31,12 +31,10 @@ export class CostsService {
     const [tasks, toolLogCount, usageAggregates] = await Promise.all([
       (this.prisma as any).outboundTask.findMany({
         where: {
-          campaignId: query.campaignId,
           scenario: query.scenario,
           createdAt: dateRange,
         },
         include: {
-          campaign: { select: { id: true, name: true } },
           transcripts: { select: { role: true, content: true } },
           attempts: { select: { duration: true, status: true } },
         },
@@ -80,7 +78,7 @@ export class CostsService {
         avgCostPerCall: money(tasks.length ? totalCost / tasks.length : 0),
       },
       providers,
-      campaigns: buildCostCampaigns(tasks),
+      scenarios: buildCostScenarios(tasks),
       trend: buildCostTrend(tasks),
       assumptions: [
         `Telephony: CNY ${COST_RATES.telephonyPerMinuteCny}/minute`,
@@ -151,10 +149,10 @@ function buildProviderBreakdown(input: {
   ];
 }
 
-function buildCostCampaigns(tasks: any[]): CostCampaignBreakdown[] {
+function buildCostScenarios(tasks: any[]): CostScenarioBreakdown[] {
   const groups = new Map<string, any[]>();
   for (const task of tasks) {
-    const key = task.campaignId ?? `uncampaigned:${task.scenario}`;
+    const key = task.scenario;
     const group = groups.get(key) ?? [];
     group.push(task);
     groups.set(key, group);
@@ -166,8 +164,6 @@ function buildCostCampaigns(tasks: any[]): CostCampaignBreakdown[] {
       const cost = estimateTaskGroupCost(records);
       const first = records[0];
       return {
-        campaignId: first.campaignId ?? undefined,
-        campaignName: first.campaign?.name ?? 'Unassigned campaign',
         scenario: first.scenario,
         calls: records.length,
         connectedCalls: records.filter((task) => taskDurationSeconds(task) > 0).length,

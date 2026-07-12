@@ -25,7 +25,7 @@ import {
   type ImportRow,
 } from '@/lib/outbound/import-parser';
 
-import styles from './lead-import-card.module.scss';
+import styles from './task-import-card.module.scss';
 
 const PRIORITY_OPTIONS: TaskPriority[] = [TaskPriority.HIGH, TaskPriority.NORMAL, TaskPriority.LOW];
 
@@ -41,7 +41,7 @@ function priorityTone(priority?: TaskPriority) {
   return 'normal';
 }
 
-type LeadImportCardProps = {
+type TaskImportCardProps = {
   listText: string;
   fileName: string;
   fileSize: number;
@@ -49,13 +49,13 @@ type LeadImportCardProps = {
   onListTextChange: (next: string, options?: { keepFileName?: boolean }) => void;
 };
 
-export function LeadImportCard({
+export function TaskImportCard({
   listText,
   fileName,
   fileSize,
   onFileChange,
   onListTextChange,
-}: LeadImportCardProps) {
+}: TaskImportCardProps) {
   const [editRow, setEditRow] = useState<ImportRow | null>(null);
 
   const delimiter = useMemo(() => detectDelimiter(listText), [listText]);

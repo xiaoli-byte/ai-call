@@ -5,9 +5,9 @@ import type { Prisma } from '../generated/prisma/client.js';
  * 资源级 ACL 的通用原语（对齐 @xiaoli-byte/authz 的 acl/ 语义），供各资源类型复用同一张
  * `resource_grants` 表与同一套判定，避免每个资源另造一套 ACL。
  *
- * 具体资源（call_task / campaign / …）在各自的 `*-acl.ts` 里用这些原语拼出模型专属的
+ * 具体资源在各自的 `*-acl.ts` 里用这些原语拼出模型专属的
  * Prisma where（返回类型随模型不同，故可见性 where 留在各模型侧，仅 3~4 行）。
- * 见 docs/authz-implementation-backlog.md CALL-05（call_task）、CALL-09（campaign）。
+ * 见 docs/authz-implementation-backlog.md CALL-05（call_task）。
  */
 
 /** 绕过资源 ACL、可见租户内全部资源的角色。admin 是 ai-call 当前最高业务角色；
