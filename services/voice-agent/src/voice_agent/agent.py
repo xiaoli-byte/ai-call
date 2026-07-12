@@ -22,7 +22,7 @@ from .callbacks import AgentCallbacks, NoopCallbacks
 from .llm import LLMAdapter
 from .rag import RagService
 from .scenarios import SCENARIO_CONFIGS, DEFAULT_VARIABLES, fill_template, get_scenario
-from .stt import FunASRClient
+from .stt import FunASRClient, create_stt_client
 from .tasks import TaskClient
 from .tools import ToolDispatcher
 from .tts import CosyVoiceTTS
@@ -721,9 +721,9 @@ class VoiceAgent:
 
         # 懒初始化 STT handle + VAD
         if call_id not in self._stt_handles:
-            stt = FunASRClient(
-                self._funasr_ws_url,
-                call_id,
+            stt = create_stt_client(
+                call_id=call_id,
+                ws_url=self._funasr_ws_url,
                 mode=self._funasr_mode,  # type: ignore[arg-type]
                 hotwords=self._funasr_hotwords,
                 on_event=lambda ev: asyncio.create_task(self._on_stt_event(call_id, ev)),

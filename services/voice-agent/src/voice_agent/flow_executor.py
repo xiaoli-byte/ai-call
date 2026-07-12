@@ -309,6 +309,21 @@ class FlowExecutor:
         if data.mode == DecisionMode.CONDITION:
             return self._eval_condition(data.expression or "", last_response)
 
+        # 例句可能配在出边上（edge.intentExamples）而非节点 data；聚合进来，供
+        # keyword-examples 与 embedding 使用（与 _select_intent_edge 的边聚合逻辑对齐）。
+        # 节点 data 已显式配例句时不覆盖。
+        if not data.intent_examples:
+            edge_examples: dict[str, list[str]] = {}
+            for edge in self._flow.outgoing_edges(node.id):
+                if _is_fallback_edge(edge) or not edge.label or not edge.intent_examples:
+                    continue
+                for token in re.split(r"[/|,，、]+", edge.label):
+                    token = token.strip()
+                    if token and token not in edge_examples:
+                        edge_examples[token] = edge.intent_examples
+            if edge_examples:
+                data.intent_examples = edge_examples
+
         matched = (
             self._match_intent_by_keyword(data.intents, last_response)
             or self._match_intent_by_phrase(data.intents, last_response)
@@ -663,6 +678,14 @@ class FlowExecutor:
             if matched:
                 tier = "embed"
                 self._log_intent(call_id, node_id, tier, response, matched, detail)
+        elif not matched:
+            logger.info(
+                "[Intent/Embed] call_id=%s node=%s 跳过 embedding: provider=%s edge_examples=%d",
+                call_id,
+                node_id,
+                type(self._embed).__name__ if self._embed is not None else "None",
+                len(intent_examples),
+            )
 
         if not matched:
             matched = await self._classify_intent_llm(

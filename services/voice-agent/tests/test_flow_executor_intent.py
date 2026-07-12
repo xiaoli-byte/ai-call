@@ -302,3 +302,63 @@ def test_phrase_match_preserves_negative_intent_polarity():
 
     assert ex._match_intent_by_phrase(["满意", "不满意"], "我不太满意") == "不满意"
     assert ex._match_intent_by_phrase(["未收到", "收到了"], "我没有收到") == "未收到"
+
+
+class _StubEmbed:
+    """确定性桩 embed：positive 集合内文本向量 [1,0]，其余 [0,1]（同组 cosine=1、异组=0）。"""
+
+    def __init__(self, positive: set[str]) -> None:
+        self._positive = set(positive)
+        self.calls = 0
+
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        self.calls += 1
+        return [[1.0, 0.0] if t in self._positive else [0.0, 1.0] for t in texts]
+
+
+async def test_decision_node_aggregates_edge_examples_for_embedding():
+    """DECISION(INTENT)节点例句配在出边上时，_exec_decision 应聚合边例句并走 embedding。
+
+    回归修复:例句在 edge.intentExamples、node.data.intent_examples 为空时，keyword
+    未命中不应直接落 LLM，而应先聚合出边例句走 embedding 语义匹配。
+    """
+    cb = FakeFlowCallbacks(user_reply="东西到我手上了", llm_reply="没收到")
+    nodes = [
+        FlowNode(id="start", type=NodeType.START, position={"x": 0, "y": 0}, data=StartNodeData()),
+        FlowNode(
+            id="q",
+            type=NodeType.DIALOG,
+            position={"x": 0, "y": 0},
+            data=DialogNodeData(mode=DialogMode.SCRIPT, text="收到货了吗？", wait_for_response=True),
+        ),
+        FlowNode(
+            id="dec",
+            type=NodeType.DECISION,
+            position={"x": 0, "y": 0},
+            data=DecisionNodeData(mode=DecisionMode.INTENT, intents=["收到了", "没收到"]),
+        ),
+        FlowNode(id="end_received", type=NodeType.END, position={"x": 0, "y": 0}, data=EndNodeData()),
+        FlowNode(id="end_missing", type=NodeType.END, position={"x": 0, "y": 0}, data=EndNodeData()),
+    ]
+    edges = [
+        FlowEdge(id="e_start", source="start", target="q"),
+        FlowEdge(id="e_q", source="q", target="dec"),
+        FlowEdge(
+            id="e1", source="dec", target="end_received",
+            label="收到了", intent_examples=["快递到了", "已签收"],
+        ),
+        FlowEdge(
+            id="e2", source="dec", target="end_missing",
+            label="没收到", intent_examples=["还没到", "没影儿"],
+        ),
+    ]
+    stub = _StubEmbed(positive={"东西到我手上了", "快递到了", "已签收"})
+    ex = FlowExecutor(
+        TaskFlow(id="f", name="f", nodes=nodes, edges=edges), cb, embed_provider=stub
+    )
+    await ex.run("c1")
+
+    # keyword 不命中(用户话无字面例句)，embedding 命中"收到了"(而非 llm 的"没收到")
+    assert stub.calls > 0  # embedding 层确实被执行
+    assert cb.entered_nodes[-1] == "end_received"
+    assert cb.llm_calls == 0  # 没落到 LLM

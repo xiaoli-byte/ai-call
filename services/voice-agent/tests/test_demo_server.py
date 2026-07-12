@@ -75,7 +75,10 @@ def make_server() -> DemoServer:
 @pytest.fixture(autouse=True)
 def fake_asr_dependencies(monkeypatch: pytest.MonkeyPatch) -> None:
     FakeSTT.instances.clear()
-    monkeypatch.setattr(demo_server, "FunASRClient", FakeSTT)
+    # demo_server 现在经 create_stt_client 工厂创建 STT：显式走本地分支，
+    # 并 patch 工厂内部引用的 stt.FunASRClient（而非 demo_server.FunASRClient）。
+    monkeypatch.setenv("STT_PROVIDER", "funasr")
+    monkeypatch.setattr("voice_agent.stt.FunASRClient", FakeSTT)
     monkeypatch.setattr(demo_server, "VoiceActivityDetector", lambda **_kwargs: FakeVAD())
 
 

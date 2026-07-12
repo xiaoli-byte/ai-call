@@ -7,7 +7,8 @@
   行为与现状逐行为等价，CI/mock 环境不需要任何模型。
 - fail-open：本模块只负责取向量，任何异常上抛给调用方（flow_executor）统一 fail-open
   落到 LLM 层，绝不影响通话。
-- 模型宿主在 funasr-server：voice-agent 不新增 torch 依赖，仅通过 httpx 调 /embed。
+- 模型宿主可选本地 funasr-server（/embed）或阿里云百炼 DashScope 云端 embeddings 接口
+  （方案 A：embedding 全云化）：voice-agent 不新增 torch 依赖，均仅通过 httpx 调用。
 - 向量在服务端已 L2 归一化，客户端 cosine 相似度 == 点积，纯 Python 实现不依赖 numpy。
 """
 
@@ -27,7 +28,12 @@ _DEFAULT_URL = "http://localhost:10095/embed"
 _DEFAULT_THRESHOLD = 0.72
 _DEFAULT_MARGIN = 0.05
 _DEFAULT_TIMEOUT_MS = 500
-_VALID_PROVIDERS = {"off", "mock", "funasr"}
+_VALID_PROVIDERS = {"off", "mock", "funasr", "dashscope"}
+
+# 阿里云百炼 DashScope OpenAI 兼容 embeddings 接口默认值（方案 A：embedding 全云化）。
+_DEFAULT_DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+_DEFAULT_DASHSCOPE_MODEL = "text-embedding-v4"
+_DEFAULT_DASHSCOPE_TIMEOUT_MS = 3000  # 云端接口延迟更高，默认比本地 funasr 放宽
 
 # mock 伪向量维度（仅供无模型环境；语义质量无意义，只保证确定性）。
 _MOCK_DIM = 32
@@ -108,6 +114,48 @@ class FunasrEmbedProvider:
         return embeddings
 
 
+class DashScopeEmbedProvider:
+    """通过阿里云百炼 DashScope OpenAI 兼容 embeddings 接口获取句向量（方案 A：embedding 全云化）。
+
+    不依赖本地 funasr-server，直接调云端模型。与 FunasrEmbedProvider 保持同一失败契约：
+    任何异常（超时、HTTP 非 2xx、响应条数不符）直接上抛，由调用方 fail-open。
+    """
+
+    def __init__(self, api_key: str, base_url: str, model: str, timeout_ms: int) -> None:
+        if not api_key:
+            raise ValueError("DASHSCOPE_API_KEY 未配置")
+        self._api_key = api_key
+        self._base_url = base_url.rstrip("/")
+        self._model = model
+        self._timeout_s = max(0.001, timeout_ms / 1000.0)
+
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        if not texts:
+            return []
+        import httpx  # 延迟导入：off/mock 场景不触发 httpx 加载
+
+        async with httpx.AsyncClient(timeout=self._timeout_s) as client:
+            resp = await client.post(
+                f"{self._base_url}/embeddings",
+                headers={"Authorization": f"Bearer {self._api_key}"},
+                json={
+                    "model": self._model,
+                    "input": list(texts),
+                    "encoding_format": "float",
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        items = data.get("data")
+        if not isinstance(items, list) or len(items) != len(texts):
+            raise ValueError(
+                f"/embeddings 响应条数不符: 期望 {len(texts)}，实得 {len(items) if isinstance(items, list) else type(items).__name__}"
+            )
+        # OpenAI 兼容接口不保证返回顺序与输入一致，必须按 index 排序后再取向量。
+        items = sorted(items, key=lambda item: item["index"])
+        return [_l2_normalize(item["embedding"]) for item in items]
+
+
 # --- 环境变量安全解析 ---
 
 
@@ -158,6 +206,14 @@ def create_embed_provider_from_env() -> Optional[IntentEmbedProvider]:
         return None
     if name == "mock":
         return MockEmbedProvider()
+    if name == "dashscope":
+        api_key = os.getenv("DASHSCOPE_API_KEY", "").strip()
+        base_url = (
+            os.getenv("DASHSCOPE_COMPATIBLE_BASE_URL", "").strip() or _DEFAULT_DASHSCOPE_BASE_URL
+        )
+        model = os.getenv("INTENT_EMBED_MODEL", "").strip() or _DEFAULT_DASHSCOPE_MODEL
+        timeout_ms = _read_int_env("INTENT_EMBED_TIMEOUT_MS", _DEFAULT_DASHSCOPE_TIMEOUT_MS)
+        return DashScopeEmbedProvider(api_key, base_url, model, timeout_ms)
     url = os.getenv("INTENT_EMBED_URL", _DEFAULT_URL).strip() or _DEFAULT_URL
     timeout_ms = _read_int_env("INTENT_EMBED_TIMEOUT_MS", _DEFAULT_TIMEOUT_MS)
     return FunasrEmbedProvider(url, timeout_ms)

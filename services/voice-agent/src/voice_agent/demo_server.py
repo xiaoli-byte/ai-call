@@ -20,7 +20,7 @@ import websockets
 from websockets.protocol import State
 
 from . import audio
-from .stt import FunASRClient
+from .stt import FunASRClient, create_stt_client
 from .types import STTEvent, TTSChunk
 from .vad import VoiceActivityDetector, make_frame_detector_factory
 
@@ -121,10 +121,10 @@ class DemoServer:
                     hotwords = metadata.get("hotwords", self._funasr_hotwords)
                     mode = metadata.get("mode", self._funasr_mode)
 
-                    # 创建 STT + VAD
-                    stt = FunASRClient(
-                        self._funasr_ws_url,
-                        call_id,
+                    # 创建 STT + VAD（按 STT_PROVIDER 选本地/云端 Fun-ASR）
+                    stt = create_stt_client(
+                        call_id=call_id,
+                        ws_url=self._funasr_ws_url,
                         mode=mode,  # type: ignore[arg-type]
                         hotwords=hotwords,
                         on_event=on_stt_event,

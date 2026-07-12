@@ -27,6 +27,9 @@ class FlowEdgeContract(ContractModel):
     source: str
     target: str
     label: Optional[str] = None
+    # 边级意图例句（供 embedding 相似度匹配）。ContractModel 的 extra="ignore" 会丢弃
+    # 未声明字段，缺这行会导致 voice-agent 拿到的 edge 无例句 → embedding 层被跳过。
+    intent_examples: list[str] = Field(default_factory=list, alias="intentExamples")
 
 
 class TaskFlowVersionContract(ContractModel):
