@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, CalendarDays, CircleHelp, Download, Settings2 } from 'lucide-react';
 import { FlowStatus, ScenarioStatus, TaskPriority, type TaskFlow } from '@ai-call/shared';
+import { extractFlowVariables } from '@ai-call/shared';
 import { apiClient } from '@/lib/api/client';
 import { useTaskFlows } from '@/hooks/use-task-flows';
 import { useScenarios } from '@/hooks/use-scenarios';
@@ -66,7 +67,10 @@ export default function NewTaskPage() {
   }
 
   function handleDownloadTemplate() {
-    const blob = new Blob([buildTemplate()], { type: 'text/csv;charset=utf-8' });
+    const flow = flows.find((item) => item.id === flowId);
+    const dynamicKeys = extractFlowVariables(flow);
+    const variableKeys = ['company', ...dynamicKeys];
+    const blob = new Blob([buildTemplate(variableKeys)], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
     anchor.href = url;
