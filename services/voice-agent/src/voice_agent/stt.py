@@ -200,13 +200,16 @@ class DashScopeFunASRClient:
     与 FunASRClient 同接口（鸭子类型），可被 create_stt_client 工厂互换。
     Fun-ASR 是本地 FunASR 的云端托管版，走 DashScope 实时语音 WebSocket 协议。
 
-    协议（参考 Fun-ASR 实时识别 WebSocket API）：
-    - connect(): 连 wss → 发 run-task 指令 → 等 task-started 事件 → 起接收循环
-    - send_audio(pcm): task-started 后推二进制 PCM 帧（之前的帧先缓冲）
-    - end_speech(): **no-op** —— 句尾由服务端自动检测（result 的 sentence_end），
-      无需客户端触发；voice-agent 的 VAD speech_end 仍会调它，这里安全忽略
-    - close(): 发 finish-task 指令 → 收尾并关连接
-    - 接收：result-generated 事件 → sentence_end=False 视为 partial、True 视为 final
+    协议（参考 Fun-ASR 实时识别 WebSocket API；一条 WS 连接内按 run-task/finish-task
+    循环复用，一句用户话语对应一个 task，而非整通电话一个 task）：
+    - connect(): 仅连 wss、起接收循环；run-task 延迟到首帧真实音频再发（见 send_audio）
+    - send_audio(pcm): 首帧触发 run-task + 等 task-started，此后推二进制 PCM 帧
+    - end_speech(): 本地合成 final 上报 + 结束当前 task（发 finish-task）并重置
+      （新 task_id/_run_task_sent=False），下一句从全新 task 开始识别，避免服务端
+      识别缓冲跨句累加（DashScope 没有句内边界重置原语，只能靠结束/新建 task）
+    - close(): 若仍有活跃 task，发 finish-task 收尾；取消接收循环并关连接
+    - 接收：result-generated 事件 → sentence_end=False 视为 partial、True 视为 final；
+      task-finished/task-failed 只结束当前 task，不中断整条连接（等下一句新 task）
 
     音频要求：PCM 16-bit 16kHz 单声道（与 mod_audio_fork "mono 16k" 一致，无需重采样）。
     """
@@ -345,26 +348,53 @@ class DashScopeFunASRClient:
     async def end_speech(self) -> None:
         """voice-agent 的 VAD 判定句尾（speech_end）时调用。
 
-        关键：voice-agent 的 VAD 门控在句尾会停止向 STT 发送音频（跳过静音帧），
-        云端 Fun-ASR 因此收不到句尾静音、无法自动判 sentence_end。所以这里用最近
-        一次 partial 合成一个 final 上报，由 voice-agent 的 VAD 驱动句尾（与本地
-        FunASR 的 is_speaking:false → offline final 语义一致），确保对话正常推进。
-        若服务端已自行出过 final，_current_text 已被清空，不会重复上报。
+        两件事：
+        1) 本地合成 final 上报：voice-agent 门控在句尾会停止向 STT 发送音频（跳过
+           静音帧），云端 Fun-ASR 收不到句尾静音、无法自动判 sentence_end，所以用
+           最近一次 partial 兜底成 final（与本地 FunASR 的 is_speaking:false →
+           offline final 语义一致）。
+        2) 结束当前云端 task 并为下一句准备全新 task_id：DashScope 没有"同一个 task
+           内重置句子边界"的原语，如果不结束 task，服务端的识别文本缓冲区不会清空——
+           下一句话会在上一句文本后面继续拼接（真机复现：第一轮"到了呀"，第二轮
+           变成"到了呀，明天下午2点"）。发 finish-task 后立即（不等服务端确认）
+           重置本地状态，下一句第一帧音频触发全新 run-task，服务端从零识别。
         """
-        if self._closed or self._on_event is None:
+        if self._closed:
             return
         text = self._current_text
-        if not text:
-            return
         self._current_text = ""
-        try:
-            await self._on_event(STTEvent(type="final", text=text))
-        except Exception as err:
-            logger.exception(
-                "[FunASR/Cloud] call_id=%s end_speech final callback error: %s",
-                self._call_id,
-                err,
-            )
+        if text and self._on_event is not None:
+            try:
+                await self._on_event(STTEvent(type="final", text=text))
+            except Exception as err:
+                logger.exception(
+                    "[FunASR/Cloud] call_id=%s end_speech final callback error: %s",
+                    self._call_id,
+                    err,
+                )
+
+        if self._run_task_sent and self._ws is not None:
+            try:
+                finish_task = {
+                    "header": {
+                        "action": "finish-task",
+                        "task_id": self._task_id,
+                        "streaming": "duplex",
+                    },
+                    "payload": {"input": {}},
+                }
+                await self._ws.send(json.dumps(finish_task))
+            except Exception as err:
+                logger.warning(
+                    "[FunASR/Cloud] call_id=%s end_speech finish-task failed: %s",
+                    self._call_id,
+                    err,
+                )
+            # 不等服务端 task-finished 确认：立即重置，下一句第一帧音频即可开新 task。
+            # WS 连接保留（DashScope 协议支持单连接多 task 复用），_recv_loop 继续收。
+            self._run_task_sent = False
+            self._task_id = uuid4().hex
+            self._started.clear()
 
     async def close(self) -> None:
         if self._closed:
@@ -422,7 +452,9 @@ class DashScopeFunASRClient:
                     self._started.set()
                     continue
                 if event == "task-finished":
-                    break
+                    # 一通电话内多个 task 循环（每句一个 task，见 end_speech）：
+                    # finished 只代表这一句的 task 结束，连接本身继续收下一个 task 的事件。
+                    continue
                 if event == "task-failed":
                     logger.error(
                         "[FunASR/Cloud] call_id=%s task-failed code=%s msg=%s",
@@ -430,7 +462,8 @@ class DashScopeFunASRClient:
                         header.get("error_code"),
                         header.get("error_message"),
                     )
-                    break
+                    # 同上：单句 task 失败不终止整条连接，下一句仍可发起新 task。
+                    continue
                 if event != "result-generated":
                     continue
 

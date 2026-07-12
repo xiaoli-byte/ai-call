@@ -5,7 +5,8 @@
 - task-started 后 connect 完成
 - result-generated：sentence_end=False→partial、True→final
 - send_audio 发二进制帧、连接前缓冲 flush
-- end_speech 为 no-op（不向服务端发送任何内容）
+- end_speech：无活跃 task 时不发消息；有活跃 task 时发 finish-task 并为下一句
+  重置出全新 task_id（回归：真机曾出现第二句文本累加在第一句后面）
 - close 发 finish-task
 - 防御性取文本（output.text 兜底）
 - create_stt_client 工厂：缺 key 回退本地、dashscope 正常选择
@@ -41,10 +42,13 @@ class FakeWS:
         return self
 
     async def __anext__(self) -> str:
-        await asyncio.sleep(0)  # 让出控制权，模拟异步收帧
-        if self._msgs:
-            return self._msgs.pop(0)
-        raise StopAsyncIteration
+        # 队列空时等待而非结束迭代：真实 WS 连接消息发完不会自动断开，
+        # 靠 client.close() 主动 cancel 接收任务才会终止（各测试均有 close()）。
+        while not self._msgs:
+            if self.closed:
+                raise StopAsyncIteration
+            await asyncio.sleep(0)
+        return self._msgs.pop(0)
 
     async def close(self) -> None:
         self.closed = True
@@ -127,7 +131,7 @@ async def test_send_audio_and_pre_connect_buffering(monkeypatch: pytest.MonkeyPa
 
 
 async def test_end_speech_sends_no_ws_message(monkeypatch: pytest.MonkeyPatch) -> None:
-    # end_speech 只在本地合成 final（不向服务端发 WS 指令）；无 partial 时什么都不做
+    # 没有 send_audio 过 → 无活跃 task（_run_task_sent=False）→ end_speech 不发任何 WS 消息
     fake = FakeWS([_msg("task-started")])
     _patch_connect(monkeypatch, fake)
 
@@ -149,6 +153,7 @@ async def test_end_speech_sends_no_ws_message(monkeypatch: pytest.MonkeyPatch) -
 
 async def test_end_speech_finalizes_last_partial(monkeypatch: pytest.MonkeyPatch) -> None:
     # 门控架构下服务端收不到句尾静音，end_speech 用最近 partial 兜底成 final
+    # （本例未调 send_audio，_run_task_sent 仍为 False，不涉及 finish-task/task 重置）
     fake = FakeWS(
         [
             _msg("task-started"),
@@ -174,6 +179,51 @@ async def test_end_speech_finalizes_last_partial(monkeypatch: pytest.MonkeyPatch
     events.clear()
     await client.end_speech()
     assert events == []
+
+    await client.close()
+
+
+async def test_end_speech_resets_task_for_next_utterance(monkeypatch: pytest.MonkeyPatch) -> None:
+    """回归测试：真机曾出现第二句话把第一句文本带上继续拼接（"到了呀" →
+    "到了呀，明天下午2点"）。根因：一通电话只建一个云端 task，服务端识别缓冲从不
+    清空。修复后 end_speech 应结束当前 task（发 finish-task）并让下一句用全新
+    task_id 开一个新 task；本测试验证两轮 run-task 的 task_id 不同，且 finish-task
+    结束的是第一轮的 task_id（而非第二轮）。
+    """
+    # FakeWS 的消息队列会被 recv_loop 一次性尽量抽干（_drain 多次 tick 无法卡在
+    # "只处理到这里"），所以第二句的消息分阶段追加，确保断言第一句时它们还没到。
+    fake = FakeWS([_msg("task-started"), _result("到了呀", False)])
+    _patch_connect(monkeypatch, fake)
+
+    events: list[tuple[str, str]] = []
+
+    async def on_event(ev) -> None:
+        events.append((ev.type, ev.text))
+
+    client = DashScopeFunASRClient(call_id="two-turns", api_key="k", on_event=on_event)
+    await client.connect()
+
+    # 第一句
+    await client.send_audio(b"\x00" * 640)
+    await _drain()
+    assert client._current_text == "到了呀"
+    await client.end_speech()
+    assert ("final", "到了呀") in events
+
+    # 第二句：应触发全新 task（新 task_id），第二句结果不应带上第一句文本
+    fake._msgs.extend([_msg("task-finished"), _msg("task-started"), _result("明天下午2点", False)])
+    await client.send_audio(b"\x00" * 640)
+    await _drain()
+    assert client._current_text == "明天下午2点"  # 不是 "到了呀，明天下午2点"
+
+    text_frames = [json.loads(d) for d in fake.sent if isinstance(d, str)]
+    run_tasks = [f for f in text_frames if f["header"].get("action") == "run-task"]
+    finish_tasks = [f for f in text_frames if f["header"].get("action") == "finish-task"]
+
+    assert len(run_tasks) == 2
+    assert run_tasks[0]["header"]["task_id"] != run_tasks[1]["header"]["task_id"]
+    assert len(finish_tasks) == 1
+    assert finish_tasks[0]["header"]["task_id"] == run_tasks[0]["header"]["task_id"]
 
     await client.close()
 
