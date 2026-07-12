@@ -46,3 +46,48 @@ export function extractTemplateVars(template: string): string[] {
 }
 
 const TEMPLATE_VARIABLE_PATTERN = /\$\{(\w+)\}|\{\{(\w+)\}\}|\{(\w+)\}/g;
+
+/** 流程变量提取时需要排除的系统变量键(与 import-parser 系统列对应) */
+export const FLOW_SYSTEM_VARIABLE_KEYS = [
+  'phone', 'to', 'mobile', 'number',
+  'name', 'customer', 'customerName',
+  'scheduledAt', 'scheduled_at', 'calltime',
+  'priority',
+] as const;
+
+/** extractFlowVariables 接受的结构类型,避免与 TaskFlow 强耦合 */
+interface FlowLike {
+  nodes?: Array<{
+    data?: {
+      text?: string;
+      prompt?: string;
+      systemPrompt?: string;
+      farewell?: string;
+    };
+  }>;
+}
+
+/**
+ * 从话术流程节点中提取业务变量键,按节点顺序去重,排除系统变量与 company。
+ * 覆盖字段:DialogNodeData.text/prompt/systemPrompt、EndNodeData.farewell。
+ */
+export function extractFlowVariables(flow: FlowLike | null | undefined): string[] {
+  if (!flow?.nodes) return [];
+  const excluded = new Set<string>([...FLOW_SYSTEM_VARIABLE_KEYS, 'company']);
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const node of flow.nodes) {
+    const data = node?.data;
+    if (!data) continue;
+    const fields = [data.text, data.prompt, data.systemPrompt, data.farewell];
+    for (const field of fields) {
+      if (typeof field !== 'string' || !field) continue;
+      for (const key of extractTemplateVars(field)) {
+        if (excluded.has(key) || seen.has(key)) continue;
+        seen.add(key);
+        result.push(key);
+      }
+    }
+  }
+  return result;
+}
