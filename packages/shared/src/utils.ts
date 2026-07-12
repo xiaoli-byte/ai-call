@@ -58,12 +58,7 @@ export const FLOW_SYSTEM_VARIABLE_KEYS = [
 /** extractFlowVariables 接受的结构类型,避免与 TaskFlow 强耦合 */
 interface FlowLike {
   nodes?: Array<{
-    data?: {
-      text?: string;
-      prompt?: string;
-      systemPrompt?: string;
-      farewell?: string;
-    };
+    data?: unknown;
   }>;
 }
 
@@ -77,7 +72,10 @@ export function extractFlowVariables(flow: FlowLike | null | undefined): string[
   const seen = new Set<string>();
   const result: string[] = [];
   for (const node of flow.nodes) {
-    const data = node?.data;
+    const data = node?.data as
+      | { text?: unknown; prompt?: unknown; systemPrompt?: unknown; farewell?: unknown }
+      | null
+      | undefined;
     if (!data) continue;
     const fields = [data.text, data.prompt, data.systemPrompt, data.farewell];
     for (const field of fields) {
