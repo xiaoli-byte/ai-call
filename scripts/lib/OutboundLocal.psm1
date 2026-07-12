@@ -1,4 +1,4 @@
-Set-StrictMode -Version Latest
+﻿Set-StrictMode -Version Latest
 
 $script:MicroSipAccountUser = '1001'
 $script:ExcludedAdapterPattern = '(?i)(loopback|apipa|docker|wsl|vethernet|hyper-v|tunnel|teredo|isatap|tap|vpn|virtual)'
