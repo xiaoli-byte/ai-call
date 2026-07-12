@@ -15,6 +15,7 @@ import {
   buildTemplate,
   normalizeDateTime,
   parseImportText,
+  readFileAsText,
   toDateTimeLocal,
 } from '@/lib/outbound/import-parser';
 import { TaskImportCard } from './_components/task-import-card';
@@ -55,7 +56,7 @@ export default function NewTaskPage() {
   async function handleFileSelected(file: File) {
     setFileName(file.name);
     setFileSize(file.size);
-    setListText(await file.text());
+    setListText(await readFileAsText(file));
   }
 
   function handleListTextChange(next: string, options?: { keepFileName?: boolean }) {

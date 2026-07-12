@@ -236,3 +236,36 @@ export function buildTemplate(variableKeys = ['company']) {
   });
   return `\ufeff${headers.join(',')}\n${example.join(',')}\n`;
 }
+
+/**
+ * 自动检测文件编码并读取为文本。
+ * 检测顺序:UTF-8 BOM / UTF-16 LE BOM / UTF-16 BE BOM → UTF-8(无替换字符)→ GBK 回退。
+ * 解决 WPS 中文版默认 GBK 保存 CSV 导致的中文乱码问题。
+ */
+export async function readFileAsText(file: Blob): Promise<string> {
+  if (typeof file.arrayBuffer !== 'function') {
+    return file.text();
+  }
+  const buffer = await file.arrayBuffer();
+  const bytes = new Uint8Array(buffer);
+
+  if (bytes.length >= 3 && bytes[0] === 0xEF && bytes[1] === 0xBB && bytes[2] === 0xBF) {
+    return new TextDecoder('utf-8').decode(bytes.subarray(3));
+  }
+  if (bytes.length >= 2 && bytes[0] === 0xFF && bytes[1] === 0xFE) {
+    return new TextDecoder('utf-16le').decode(bytes.subarray(2));
+  }
+  if (bytes.length >= 2 && bytes[0] === 0xFE && bytes[1] === 0xFF) {
+    return new TextDecoder('utf-16be').decode(bytes.subarray(2));
+  }
+
+  const utf8Text = new TextDecoder('utf-8').decode(bytes);
+  if (!utf8Text.includes('\uFFFD')) {
+    return utf8Text;
+  }
+  try {
+    return new TextDecoder('gbk').decode(bytes);
+  } catch {
+    return utf8Text;
+  }
+}
