@@ -404,10 +404,10 @@ function setCaretOffset(editor: HTMLElement | null, targetOffset: number) {
 
 function findVariableTrigger(value: string, caret: number): TriggerState | null {
   const beforeCaret = value.slice(0, caret);
-  const start = beforeCaret.lastIndexOf('${');
+  const start = beforeCaret.lastIndexOf('$');
   if (start < 0) return null;
 
-  const query = beforeCaret.slice(start + 2);
+  const query = beforeCaret.slice(start + 1);
   if (query.includes('}') || /[\s]/.test(query)) return null;
 
   return {

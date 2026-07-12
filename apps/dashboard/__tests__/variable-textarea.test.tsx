@@ -31,11 +31,11 @@ function Harness() {
 }
 
 describe('VariableTextArea', () => {
-  it('opens global variable suggestions after typing ${ and inserts the selected token', () => {
+  it('opens global variable suggestions after typing $ and inserts the selected token', () => {
     render(<Harness />);
 
     const editor = screen.getByLabelText('话术文本');
-    editor.textContent = '您好 ${';
+    editor.textContent = '您好 $';
     fireEvent.input(editor);
 
     const option = screen.getByRole('option', { name: /客户姓名/ });
