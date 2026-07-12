@@ -13,6 +13,7 @@
 import { useState } from 'react';
 import { StatusBadge } from './StatusBadge';
 import type { UseTTSReturn } from '@/hooks/useTTS';
+import { BUILT_IN_TTS_VOICES } from '@/lib/tts-voices';
 import styles from './voice-demo.module.scss';
 
 interface TTSPanelProps {
@@ -79,10 +80,11 @@ export function TTSPanel({ tts }: TTSPanelProps) {
             value={voiceParams.speaker}
             onChange={(e) => updateVoiceParams({ speaker: e.target.value })}
           >
-            <option value="Cherry">Cherry（女声）</option>
-            <option value="Serena">Serena（女声）</option>
-            <option value="Ethan">Ethan（男声）</option>
-            <option value="Chelsie">Chelsie（女声）</option>
+            {BUILT_IN_TTS_VOICES.map((voice) => (
+              <option key={voice.id} value={voice.id}>
+                {voice.id}（{voice.description}）
+              </option>
+            ))}
           </select>
         </div>
 

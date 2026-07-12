@@ -56,11 +56,15 @@ export interface UseTTSReturn {
   error: string | null;
   voiceParams: VoiceParams;
   updateVoiceParams: (params: Partial<VoiceParams>) => void;
-  speak: (text: string) => Promise<void>;
+  speak: (
+    text: string,
+    overrides?: Partial<Pick<VoiceParams, 'speaker' | 'instructText'>>,
+  ) => Promise<void>;
   stop: () => void;
 }
 
 const VOICE_AGENT_WS_URL = process.env.NEXT_PUBLIC_VOICE_AGENT_WS_URL ?? 'ws://localhost:8080';
+const VOICE_AGENT_WS_TOKEN = process.env.NEXT_PUBLIC_VOICE_AGENT_WS_TOKEN;
 const QWEN_TTS_SPEAKER = process.env.NEXT_PUBLIC_QWEN_TTS_VOICE ?? 'Cherry';
 const TTS_SAMPLE_RATE = parseInt(process.env.NEXT_PUBLIC_TTS_SAMPLE_RATE ?? '16000', 10);
 
@@ -70,7 +74,7 @@ const DEFAULT_VOICE_PARAMS: VoiceParams = {
 };
 
 export function useTTS(options: UseTTSOptions = {}): UseTTSReturn {
-  const serverUrl = options.serverUrl ?? `${VOICE_AGENT_WS_URL}/tts-stream`;
+  const serverUrl = options.serverUrl ?? buildTtsStreamUrl();
   const defaultSpeaker = options.defaultSpeaker ?? QWEN_TTS_SPEAKER;
   const sampleRate = options.sampleRate ?? TTS_SAMPLE_RATE;
 
@@ -138,9 +142,12 @@ export function useTTS(options: UseTTSOptions = {}): UseTTSReturn {
       activeSourcesRef.current.push(source);
       source.onended = () => {
         activeSourcesRef.current = activeSourcesRef.current.filter((s) => s !== source);
+        if (activeSourcesRef.current.length === 0 && !clientRef.current?.isSynthesizing) {
+          syncState('idle');
+        }
       };
     },
-    [sampleRate],
+    [sampleRate, syncState],
   );
 
   const stopAllPlayback = useCallback(() => {
@@ -156,7 +163,10 @@ export function useTTS(options: UseTTSOptions = {}): UseTTSReturn {
   }, []);
 
   const speak = useCallback(
-    async (text: string) => {
+    async (
+      text: string,
+      overrides?: Partial<Pick<VoiceParams, 'speaker' | 'instructText'>>,
+    ) => {
       if (!text.trim()) return;
       if (ttsStateRef.current === 'synthesizing' || ttsStateRef.current === 'playing') {
         stopAllPlayback();
@@ -193,7 +203,7 @@ export function useTTS(options: UseTTSOptions = {}): UseTTSReturn {
 
       await ensurePlaybackContext();
 
-      const params = voiceParamsRef.current;
+      const params = { ...voiceParamsRef.current, ...overrides };
 
       try {
         await client.synthesize(text, {
@@ -241,4 +251,11 @@ export function useTTS(options: UseTTSOptions = {}): UseTTSReturn {
     speak,
     stop,
   };
+}
+
+function buildTtsStreamUrl(): string {
+  const base = `${VOICE_AGENT_WS_URL.replace(/\/+$/, '')}/tts-stream`;
+  return VOICE_AGENT_WS_TOKEN
+    ? `${base}?token=${encodeURIComponent(VOICE_AGENT_WS_TOKEN)}`
+    : base;
 }

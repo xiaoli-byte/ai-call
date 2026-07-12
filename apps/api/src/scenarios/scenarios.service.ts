@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import {
+  FlowStatus,
   SCENARIO_CONFIGS,
   ScenarioStatus,
   type CreateScenarioDto as SharedCreateScenarioDto,
@@ -72,6 +73,7 @@ export class ScenariosService {
     if (existing) {
       throw new BadRequestException(`Scenario key ${dto.scenario} already exists`);
     }
+    await this.assertSelectablePublishedFlow(dto.defaultFlowId);
     const record = await this.prisma.outboundScenario.create({
       data: this.toCreateData(dto) as any,
     });
@@ -79,6 +81,7 @@ export class ScenariosService {
   }
 
   async update(identifier: string, dto: ScenarioUpdateInput): Promise<ScenarioConfig> {
+    await this.assertSelectablePublishedFlow(dto.defaultFlowId);
     const record = await this.findRecord(identifier);
     const target = record ?? await this.materializeBuiltin(identifier);
     const updated = await this.prisma.outboundScenario.update({
@@ -152,6 +155,22 @@ export class ScenariosService {
     return await this.prisma.outboundScenario.create({
       data: this.toCreateData(builtin) as any,
     });
+  }
+
+  private async assertSelectablePublishedFlow(flowId: string | null | undefined): Promise<void> {
+    if (!flowId) return;
+    const flow = await this.prisma.taskFlow.findUnique({
+      where: { id: flowId },
+      select: { status: true, version: true },
+    });
+    const hasPublishedVersion = Boolean(
+      flow
+      && flow.status !== FlowStatus.ARCHIVED
+      && (flow.status === FlowStatus.PUBLISHED || flow.version > 0),
+    );
+    if (!hasPublishedVersion) {
+      throw new BadRequestException('外呼流程只能绑定已发布且未归档的版本');
+    }
   }
 
   private toCreateData(dto: SharedCreateScenarioDto): Record<string, unknown> {

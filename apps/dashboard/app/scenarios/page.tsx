@@ -1,24 +1,31 @@
 'use client';
 
-import { type ReactNode, useEffect, useMemo, useState } from 'react';
+import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
+  Headphones,
+  LoaderCircle,
   Plus,
   RefreshCw,
   Save,
   Search,
+  Square,
   Volume2,
 } from 'lucide-react';
 import {
   FlowStatus,
   ScenarioStatus,
+  VoiceCloneStatus,
   type CreateScenarioDto,
   type EscalationRule,
   type ScenarioConfig,
+  type TaskFlow,
 } from '@ai-call/shared';
 import { useScenarioMutations, useScenarios } from '@/hooks/use-scenarios';
 import { useTaskFlows } from '@/hooks/use-task-flows';
-import { useVoiceClones } from '@/hooks/use-voice-clones';
+import { useVoiceCloneMutations, useVoiceClones } from '@/hooks/use-voice-clones';
+import { useTTS } from '@/hooks/useTTS';
+import { BUILT_IN_TTS_VOICES, isBuiltInTtsVoice } from '@/lib/tts-voices';
 import { cn } from '@/lib/utils';
 import { appToast } from '@/lib/toast';
 import { ScenarioPageTitle, ScenarioTab, ScenarioTabs } from '@/components/scenario-workbench/page-chrome';
@@ -35,8 +42,8 @@ interface ScenarioDraft {
   status: ScenarioStatus;
   ttsVoice: string;
   ttsVoiceCloneId: string;
+  ttsProvider: string;
   ttsAge: string;
-  ttsGender: string;
   ttsSpeakingRate: string;
   ttsPitch: string;
   ttsStylePrompt: string;
@@ -59,10 +66,10 @@ const EMPTY_DRAFT: ScenarioDraft = {
   name: '',
   description: '',
   status: ScenarioStatus.ACTIVE,
-  ttsVoice: '',
+  ttsVoice: 'Cherry',
   ttsVoiceCloneId: '',
+  ttsProvider: 'qwen',
   ttsAge: '',
-  ttsGender: '',
   ttsSpeakingRate: '',
   ttsPitch: '',
   ttsStylePrompt: '',
@@ -81,6 +88,36 @@ const EMPTY_DRAFT: ScenarioDraft = {
 
 const IDENTITY_PRESETS = ['游戏推广员', '活动运营员', '医疗助理', '审计专员', '保险专员', '行政助理'];
 const STYLE_PRESETS = ['亲切', '自然', '口语化', '专业', '活泼', '严肃'];
+const BUILT_IN_VOICE_PREFIX = 'builtin:';
+const CLONED_VOICE_PREFIX = 'clone:';
+const DEFAULT_PREVIEW_TEXT = '您好，这是一段场景语音试听，请确认当前音色是否符合预期。';
+
+function splitCommunicationStyles(value: string): string[] {
+  return value
+    .split(/[、,，]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function toggleCommunicationStyle(value: string, style: string): string {
+  const selected = splitCommunicationStyles(value);
+  const next = selected.includes(style)
+    ? selected.filter((item) => item !== style)
+    : [...selected, style];
+  return next.join('、');
+}
+
+function isSelectablePublishedFlow(flow: TaskFlow): boolean {
+  if (flow.status === FlowStatus.ARCHIVED) return false;
+  return flow.status === FlowStatus.PUBLISHED || flow.version > 0;
+}
+
+function withCacheBust(url: string | undefined, token: string | undefined): string | undefined {
+  if (!url) return undefined;
+  const separator = url.includes('?') ? '&' : '?';
+  return token ? `${url}${separator}v=${encodeURIComponent(token)}` : url;
+}
+
 function toDraft(scenario?: ScenarioConfig): ScenarioDraft {
   if (!scenario) return { ...EMPTY_DRAFT, escalationRules: [] };
   return {
@@ -91,8 +128,9 @@ function toDraft(scenario?: ScenarioConfig): ScenarioDraft {
     status: scenario.status ?? ScenarioStatus.ACTIVE,
     ttsVoice: scenario.ttsConfig?.voice ?? '',
     ttsVoiceCloneId: scenario.ttsConfig?.voiceCloneId ?? '',
+    ttsProvider: scenario.ttsConfig?.provider
+      ?? (scenario.ttsConfig?.voice && !scenario.ttsConfig.voiceCloneId ? 'qwen' : ''),
     ttsAge: scenario.ttsConfig?.age ?? '',
-    ttsGender: scenario.ttsConfig?.gender ?? '',
     ttsSpeakingRate: scenario.ttsConfig?.speakingRate !== undefined ? String(scenario.ttsConfig.speakingRate) : '',
     ttsPitch: scenario.ttsConfig?.pitch !== undefined ? String(scenario.ttsConfig.pitch) : '',
     ttsStylePrompt: scenario.ttsConfig?.stylePrompt ?? '',
@@ -142,9 +180,8 @@ function draftToDto(draft: ScenarioDraft): CreateScenarioDto {
     ttsConfig: {
       voice: draft.ttsVoice || undefined,
       voiceCloneId: draft.ttsVoiceCloneId || undefined,
-      provider: draft.ttsVoiceCloneId ? 'cosyvoice' : undefined,
+      provider: draft.ttsProvider || undefined,
       age: draft.ttsAge || undefined,
-      gender: draft.ttsGender || undefined,
       speakingRate: numberValue(draft.ttsSpeakingRate),
       pitch: numberValue(draft.ttsPitch),
       stylePrompt: draft.ttsStylePrompt || undefined,
@@ -273,12 +310,42 @@ function PresetChips({
         <button
           key={value}
           type="button"
-          className={`scenario-chip ${selected.includes(value) ? 'selected' : ''}`}
+          className={`scenario-chip ${selected === value ? 'selected' : ''}`}
+          aria-pressed={selected === value}
           onClick={() => onSelect(value)}
         >
           {value}
         </button>
       ))}
+    </div>
+  );
+}
+
+function MultiPresetChips({
+  values,
+  selected,
+  onToggle,
+}: {
+  values: string[];
+  selected: string[];
+  onToggle: (value: string) => void;
+}) {
+  return (
+    <div className="scenario-chip-list" role="group" aria-label="沟通风格（可多选）">
+      {values.map((value) => {
+        const active = selected.includes(value);
+        return (
+          <button
+            key={value}
+            type="button"
+            className={`scenario-chip ${active ? 'selected' : ''}`}
+            aria-pressed={active}
+            onClick={() => onToggle(value)}
+          >
+            {value}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -409,8 +476,17 @@ function RobotConfigTab({
 }: {
   draft: ScenarioDraft;
   setDraft: React.Dispatch<React.SetStateAction<ScenarioDraft>>;
-  flows: Array<{ id: string; name: string; version: number; status: string }>;
+  flows: TaskFlow[];
 }) {
+  const selectedStyles = splitCommunicationStyles(draft.communicationStyle);
+  const styleOptions = [
+    ...STYLE_PRESETS,
+    ...selectedStyles.filter((value) => !STYLE_PRESETS.includes(value)),
+  ];
+  const boundFlowUnavailable = Boolean(
+    draft.defaultFlowId && !flows.some((flow) => flow.id === draft.defaultFlowId),
+  );
+
   return (
     <>
       <section className="scenario-section">
@@ -430,18 +506,6 @@ function RobotConfigTab({
             onChange={(value) => setDraft((prev) => ({ ...prev, description: value }))}
             placeholder="请输入场景描述"
           />
-        </FieldRow>
-        <FieldRow label="性别">
-          <select
-            className="form-select"
-            value={draft.ttsGender}
-            onChange={(event) => setDraft((prev) => ({ ...prev, ttsGender: event.target.value }))}
-          >
-            <option value="">未设置</option>
-            <option value="female">女</option>
-            <option value="male">男</option>
-            <option value="neutral">中性</option>
-          </select>
         </FieldRow>
         <FieldRow label="年龄">
           <div className="scenario-inline-input">
@@ -466,16 +530,15 @@ function RobotConfigTab({
           />
         </FieldRow>
         <FieldRow label="沟通风格">
-          <PresetChips
-            values={STYLE_PRESETS}
-            selected={draft.communicationStyle}
-            onSelect={(value) => setDraft((prev) => ({ ...prev, communicationStyle: value }))}
+          <MultiPresetChips
+            values={styleOptions}
+            selected={selectedStyles}
+            onToggle={(value) => setDraft((prev) => ({
+              ...prev,
+              communicationStyle: toggleCommunicationStyle(prev.communicationStyle, value),
+            }))}
           />
-          <input
-            className="form-input"
-            value={draft.communicationStyle}
-            onChange={(event) => setDraft((prev) => ({ ...prev, communicationStyle: event.target.value }))}
-          />
+          <span className="scenario-field-hint">可点选多个风格，再次点击可取消。</span>
         </FieldRow>
       </section>
 
@@ -493,18 +556,32 @@ function RobotConfigTab({
           <div className="scenario-flow-row">
             <select
               className="form-select"
-              value={draft.defaultFlowId}
+              value={boundFlowUnavailable ? '' : draft.defaultFlowId}
               onChange={(event) => setDraft((prev) => ({ ...prev, defaultFlowId: event.target.value }))}
             >
-              <option value="">没有流程</option>
+              <option value="">不绑定流程</option>
               {flows.map((flow) => (
                 <option key={flow.id} value={flow.id}>
-                  {flow.name} v{flow.version}{flow.status === FlowStatus.PUBLISHED ? '' : '（草稿）'}
+                  {flow.name} v{flow.version}
+                  {flow.status === FlowStatus.PUBLISHED ? '' : '（有草稿修改，绑定已发布版本）'}
                 </option>
               ))}
             </select>
-            <button type="button" className="scenario-text-link">去新建</button>
+            <Link href="/task-flows" className="scenario-text-link">管理流程</Link>
           </div>
+          <span className="scenario-field-hint">仅显示至少发布过一个版本且未归档的流程。</span>
+          {boundFlowUnavailable && (
+            <div className="scenario-inline-warning" role="alert">
+              原绑定流程已不可用，请重新选择已发布流程，或
+              <button
+                type="button"
+                onClick={() => setDraft((prev) => ({ ...prev, defaultFlowId: '' }))}
+              >
+                解除原绑定
+              </button>
+              。
+            </div>
+          )}
         </FieldRow>
         <FieldRow label="回复边界">
           <CountedTextarea
@@ -527,44 +604,197 @@ function VoiceTab({
   setDraft: React.Dispatch<React.SetStateAction<ScenarioDraft>>;
 }) {
   const { data: voiceClones } = useVoiceClones();
-  const clones = voiceClones ?? [];
+  const { synthesize } = useVoiceCloneMutations();
+  const tts = useTTS({ defaultSpeaker: draft.ttsVoice || 'Cherry' });
+  const clones = (voiceClones ?? []).filter((clone) => clone.status === VoiceCloneStatus.READY);
+  const selectedClone = clones.find((clone) => clone.id === draft.ttsVoiceCloneId);
+  const selectedVoiceValue = selectedClone
+    ? `${CLONED_VOICE_PREFIX}${selectedClone.id}`
+    : isBuiltInTtsVoice(draft.ttsVoice)
+      ? `${BUILT_IN_VOICE_PREFIX}${draft.ttsVoice}`
+      : '';
+  const [previewText, setPreviewText] = useState(DEFAULT_PREVIEW_TEXT);
+  const [cloneGenerating, setCloneGenerating] = useState(false);
+  const [clonePreviewUrl, setClonePreviewUrl] = useState<string>();
+  const [previewError, setPreviewError] = useState<string>();
+  const previewAudioRef = useRef<HTMLAudioElement | null>(null);
+  const busy = cloneGenerating || tts.isBusy;
+
+  useEffect(() => {
+    if (!clonePreviewUrl) return;
+    previewAudioRef.current?.play().catch(() => {
+      // 浏览器可能阻止异步请求后的自动播放，音频控件仍可手动播放。
+    });
+  }, [clonePreviewUrl]);
+
+  function selectVoice(value: string) {
+    tts.stop();
+    previewAudioRef.current?.pause();
+    setClonePreviewUrl(undefined);
+    setPreviewError(undefined);
+
+    if (value.startsWith(BUILT_IN_VOICE_PREFIX)) {
+      const voice = value.slice(BUILT_IN_VOICE_PREFIX.length);
+      setDraft((prev) => ({
+        ...prev,
+        ttsVoice: voice,
+        ttsVoiceCloneId: '',
+        ttsProvider: 'qwen',
+      }));
+      return;
+    }
+
+    if (value.startsWith(CLONED_VOICE_PREFIX)) {
+      const cloneId = value.slice(CLONED_VOICE_PREFIX.length);
+      const clone = clones.find((item) => item.id === cloneId);
+      if (!clone) return;
+      setDraft((prev) => ({
+        ...prev,
+        ttsVoice: clone.voiceId,
+        ttsVoiceCloneId: clone.id,
+        ttsProvider: clone.model,
+      }));
+      return;
+    }
+
+    setDraft((prev) => ({
+      ...prev,
+      ttsVoice: '',
+      ttsVoiceCloneId: '',
+      ttsProvider: '',
+    }));
+  }
+
+  async function generatePreview() {
+    const text = previewText.trim();
+    if (!text) {
+      appToast.error(new Error('请输入试听文案'));
+      return;
+    }
+    if (!selectedVoiceValue) {
+      appToast.error(new Error('请选择语音音色'));
+      return;
+    }
+
+    setPreviewError(undefined);
+    if (selectedClone) {
+      tts.stop();
+      setCloneGenerating(true);
+      try {
+        const result = await synthesize(selectedClone.id, { text });
+        const url = withCacheBust(
+          result.voiceClone.previewAudioUrl,
+          result.voiceClone.previewGeneratedAt ?? result.voiceClone.updatedAt,
+        );
+        if (!url) throw new Error('试听音频生成成功，但未返回可播放地址');
+        setClonePreviewUrl(url);
+        if (result.usedFallback) appToast.info(result.message ?? '已使用提示音频作为试听');
+      } catch (error) {
+        const message = error instanceof Error ? error.message : '克隆音色试听生成失败';
+        setPreviewError(message);
+        appToast.error(error);
+      } finally {
+        setCloneGenerating(false);
+      }
+      return;
+    }
+
+    setClonePreviewUrl(undefined);
+    await tts.speak(text, {
+      speaker: draft.ttsVoice,
+      instructText: draft.ttsStylePrompt.trim() || undefined,
+    });
+  }
 
   return (
     <section className="scenario-section">
       <h2>语音与 VUI</h2>
-      <FieldRow label="TTS 音色">
+      <FieldRow label="语音音色">
         <div className="scenario-voice-select-row">
           <select
             className="form-select"
-            value={draft.ttsVoiceCloneId}
-            onChange={(event) => {
-              const cloneId = event.target.value;
-              const clone = clones.find((item) => item.id === cloneId);
-              setDraft((prev) => ({
-                ...prev,
-                ttsVoiceCloneId: cloneId,
-                ttsVoice: clone?.voiceId ?? prev.ttsVoice,
-              }));
-            }}
+            aria-label="语音音色"
+            value={selectedVoiceValue}
+            onChange={(event) => selectVoice(event.target.value)}
           >
-            <option value="">使用内置/手动音色</option>
-            {clones.map((clone) => (
-              <option key={clone.id} value={clone.id}>
-                {clone.name} / {clone.voiceId}
-              </option>
-            ))}
+            <option value="">请选择语音音色</option>
+            <optgroup label="TTS 内置音色">
+              {BUILT_IN_TTS_VOICES.map((voice) => (
+                <option key={voice.id} value={`${BUILT_IN_VOICE_PREFIX}${voice.id}`}>
+                  {voice.id} · {voice.description}
+                </option>
+              ))}
+            </optgroup>
+            {clones.length > 0 && (
+              <optgroup label="已克隆音色">
+                {clones.map((clone) => (
+                  <option key={clone.id} value={`${CLONED_VOICE_PREFIX}${clone.id}`}>
+                    {clone.name} · {clone.voiceId}
+                  </option>
+                ))}
+              </optgroup>
+            )}
           </select>
-          <input
-            className="form-input"
-            value={draft.ttsVoice}
-            onChange={(event) => setDraft((prev) => ({
-              ...prev,
-              ttsVoice: event.target.value,
-              ttsVoiceCloneId: '',
-            }))}
-            placeholder="Cherry"
-          />
-          <Link href="/voice-clones" className="scenario-text-link">去克隆</Link>
+          <Link href="/voice-clones" className="scenario-text-link">管理克隆音色</Link>
+        </div>
+      </FieldRow>
+      <FieldRow label="音色试听">
+        <div className="scenario-voice-preview">
+          <div className="scenario-preview-heading">
+            <span className="scenario-preview-icon"><Headphones size={16} /></span>
+            <div>
+              <strong>输入一段真实话术</strong>
+              <span>将使用当前选择的音色生成试听语音</span>
+            </div>
+          </div>
+          <div className="scenario-counted-field textarea">
+            <textarea
+              className="form-textarea"
+              aria-label="试听文案"
+              value={previewText}
+              maxLength={500}
+              onChange={(event) => setPreviewText(event.target.value)}
+              placeholder="请输入需要生成语音的试听文案"
+              style={{ minHeight: 112 }}
+            />
+            <span>{previewText.length}/500</span>
+          </div>
+          <div className="scenario-preview-actions">
+            <button
+              type="button"
+              className="btn"
+              onClick={generatePreview}
+              disabled={busy || !previewText.trim() || !selectedVoiceValue}
+            >
+              {busy ? <LoaderCircle size={15} className="scenario-spin" /> : <Volume2 size={15} />}
+              {cloneGenerating || tts.state === 'synthesizing'
+                ? '正在生成...'
+                : tts.state === 'playing'
+                  ? '播放中'
+                  : '生成并试听'}
+            </button>
+            {tts.isBusy && !selectedClone && (
+              <button type="button" className="btn btn-secondary" onClick={tts.stop}>
+                <Square size={13} />
+                停止播放
+              </button>
+            )}
+            <span className="scenario-preview-current">
+              当前：{selectedClone?.name || draft.ttsVoice || '未选择'}
+            </span>
+          </div>
+          {clonePreviewUrl && (
+            <audio
+              ref={previewAudioRef}
+              className="scenario-preview-audio"
+              src={clonePreviewUrl}
+              controls
+              preload="metadata"
+            />
+          )}
+          {(previewError || tts.error) && (
+            <div className="scenario-preview-error" role="alert">{previewError ?? tts.error}</div>
+          )}
         </div>
       </FieldRow>
       <FieldRow label="声音风格">
@@ -598,7 +828,7 @@ function ScenarioDetailView({
 }: {
   draft: ScenarioDraft;
   setDraft: React.Dispatch<React.SetStateAction<ScenarioDraft>>;
-  flows: Array<{ id: string; name: string; version: number; status: string }>;
+  flows: TaskFlow[];
   mode: 'create' | 'edit';
   submitting: boolean;
   onBack: () => void;
@@ -614,11 +844,15 @@ function ScenarioDetailView({
         onBack={onBack}
         backLabel="返回列表"
         extra={(
-          <div className="scenario-debug-toggle">
+          <button
+            type="button"
+            className="scenario-debug-toggle"
+            onClick={() => setTab('voice')}
+            aria-pressed={tab === 'voice'}
+          >
             <Volume2 size={15} />
-            <span>语音调试</span>
-            <span className="scenario-toggle-dot" />
-          </div>
+            <span>语音试听</span>
+          </button>
         )}
       />
 
@@ -646,7 +880,10 @@ function ScenarioDetailView({
 export default function ScenariosPage() {
   const { data, error, isLoading } = useScenarios();
   const { data: flowsData } = useTaskFlows();
-  const flows = flowsData ?? [];
+  const flows = useMemo(
+    () => (flowsData ?? []).filter(isSelectablePublishedFlow),
+    [flowsData],
+  );
   const scenarios = data ?? [];
   const { create, update, deactivate } = useScenarioMutations();
   const [view, setView] = useState<'list' | 'detail'>('list');
@@ -682,7 +919,11 @@ export default function ScenariosPage() {
   async function saveDraft() {
     const dto = draftToDto(draft);
     if (!dto.name) {
-      appToast.error('请填写场景名称');
+      appToast.error(new Error('请填写场景名称'));
+      return;
+    }
+    if (draft.defaultFlowId && !flows.some((flow) => flow.id === draft.defaultFlowId)) {
+      appToast.error(new Error('外呼流程只能绑定已发布且未归档的版本'));
       return;
     }
     setSubmitting(true);
@@ -694,7 +935,10 @@ export default function ScenariosPage() {
         setDraft(toDraft(created));
         appToast.success('场景已创建');
       } else {
-        const saved = await update(draft.id ?? (selectedKey || draft.scenario), dto);
+        const saved = await update(draft.id ?? (selectedKey || draft.scenario), {
+          ...dto,
+          defaultFlowId: draft.defaultFlowId || null,
+        });
         setSelectedKey(saved.id ?? saved.scenario);
         setDraft(toDraft(saved));
         appToast.success('场景已保存');

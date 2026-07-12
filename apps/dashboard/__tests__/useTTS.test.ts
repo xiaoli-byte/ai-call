@@ -170,4 +170,20 @@ describe('useTTS', () => {
       }),
     );
   });
+
+  it('speak() 单次覆盖应立即使用指定音色和风格', async () => {
+    const { result } = renderHook(() => useTTS());
+
+    await act(async () => {
+      await result.current.speak('场景试听', {
+        speaker: 'Ethan',
+        instructText: '沉稳自然',
+      });
+    });
+
+    expect(mockSynthesize).toHaveBeenCalledWith('场景试听', {
+      speaker: 'Ethan',
+      instructText: '沉稳自然',
+    });
+  });
 });
