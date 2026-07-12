@@ -206,3 +206,40 @@ STT 和意图 embedding 都支持「本地模型」或「阿里云百炼（DashS
 ### 契约字段注意（踩过的坑）
 
 voice-agent 经 `contracts.py` 的 pydantic 契约消费 API 响应，`ContractModel` 配了 `extra="ignore"`——**任何未在 Contract 里声明的字段都会被静默丢弃**。给流程/任务上下文新增字段（如边级 `intentExamples`）后，必须同步在对应 Contract（如 `FlowEdgeContract`）声明，否则字段到不了运行链，且不报错、极难排查。
+
+---
+
+## 9. 前端（dashboard）部署
+
+dashboard 是**带服务端逻辑的 Next.js 应用**（不是静态站点，有 Route Handler 在 server 端转发 API），生产用 `next build` + `next start -p 3000`（`ecosystem.config.js` 已配为 PM2 进程 `dashboard`）。**不能静态导出 / 纯 CDN 托管**。
+
+### 部署步骤
+
+```bash
+# 1. 构建（必须在 dashboard 未运行时执行，见第 0 节铁律：next build 会覆盖 .next 产物）
+pnpm --filter @ai-call/shared build       # 前端从 shared 的编译产物导入类型/DTO
+pnpm --filter @ai-call/dashboard build     # next build → .next 产物
+
+# 2. 启动
+pm2 start ecosystem.config.js --only dashboard   # = next start -p 3000
+```
+
+### 前端环境变量（`apps/dashboard/.env.local`，模板见 `.env.example`）
+
+分两类，机制不同：
+
+**① `NEXT_PUBLIC_*`（浏览器可见，`next build` 时内联进产物 —— 改了必须重新 build 才生效）：**
+- `NEXT_PUBLIC_VOICE_AGENT_WS_URL`：浏览器**直连** voice-agent 的 WebSocket（首页浏览器模拟外呼 / 语音 demo 用）。生产必须填**浏览器可达**的地址；站点走 HTTPS 时必须是 `wss://`（经反向代理），**不能**是 `ws://localhost:8090`。
+- `NEXT_PUBLIC_FUNASR_*` / `NEXT_PUBLIC_QWEN_TTS_*` / `NEXT_PUBLIC_TTS_SAMPLE_RATE`：仅前端展示用，实际 STT/TTS 由 Python 后端代理，值不精确也不影响功能。
+
+**② 服务端私有（不暴露浏览器，运行时读取，改了重启即可）：**
+- `API_INTERNAL_URL`（默认 `http://localhost:3001/api`）：NestJS API 地址。**浏览器的 `/api/*` 请求从不直连后端**——dev 由 `next.config.js` 的 `rewrites` 同源代理；**prod 由 Route Handler `app/api/[...path]/route.ts` 在 dashboard server 端转发**到这里。因此 dashboard server 必须能访问 `API_INTERNAL_URL`（内网地址即可），前端与后端**可以不同域**，后端也**无需对公网暴露**。
+- `KNOWLEDGE_ZONE_URL`（可选，知识库微前端 Multi-Zones）：指向 ai-knowledge web 时 `/knowledge/*` 转发内嵌其原厂 UI；留空回落自带 mock 页。**要求与 ai-knowledge 同域部署**（cookie 共享、鉴权免改造），详见 `docs/knowledge-base-microfrontend.md`。
+
+### 反向代理（生产建议拓扑）
+
+- 对外只暴露 dashboard（:3000）作为站点入口；
+- `/api/*` 由 dashboard server 转发到 NestJS（:3001）—— **NestJS 不必开公网**，仅供 dashboard server 内网访问；
+- 语音 WebSocket 需**单独暴露**（`NEXT_PUBLIC_VOICE_AGENT_WS_URL` 指向它）：反代 `wss://` → voice-agent :8090，注意开启 WebSocket upgrade。
+
+典型 nginx：`/` → `:3000`（dashboard）、`/voice-ws`（或独立子域）→ `:8090`（voice-agent，WebSocket）、`:3001`（NestJS）不开公网。
