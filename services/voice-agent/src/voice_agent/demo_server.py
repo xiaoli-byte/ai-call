@@ -21,6 +21,7 @@ from websockets.protocol import State
 
 from . import audio
 from .stt import FunASRClient, create_stt_client
+from .tts_factory import create_tts
 from .types import STTEvent, TTSChunk
 from .vad import VoiceActivityDetector, make_frame_detector_factory
 
@@ -244,23 +245,46 @@ class DemoServer:
         """处理 /tts-stream 连接。
 
         协议：
-        - 客户端发 JSON { "text": "...", "speaker": "...", "instruct_text": "..." }
+        - 客户端发 JSON { "text": "...", "speaker": "...", "instruct_text": "...",
+          "provider": "cosyvoice|qwen|mock" }
+          · provider 省略 → 用共享 TTS 实例（浏览器 demo 通话链路）。
+          · provider 指定 → 懒建该 provider 专属临时实例（音色克隆试听用）：让复刻
+            voiceId 路由到正确合成模型，且不与共享实例的在途合成抢占冲突。
         - 客户端可发 { "type": "cancel" } 中断当前合成
-        - 服务端回推：二进制 PCM 16-bit 帧 + 结束 JSON { "type": "final" }
+        - 服务端回推：二进制 PCM 16-bit 帧 + 结束 JSON
+          { "type": "final", "sample_rate": <int> }（sample_rate 供调用方封 WAV）
         """
         logger.info("[DemoServer/tts] connection")
 
         synth_task: Optional[asyncio.Task[None]] = None
+        active_tts: Any = None
+        # provider -> 本连接内懒建的临时 TTS 实例，连接结束时统一关闭。
+        scoped_tts: dict[str, Any] = {}
+
+        def resolve_tts(provider: Optional[str]) -> Any:
+            """按请求 provider 选 TTS 实例：省略→共享实例；指定→懒建专属实例。"""
+            if not provider:
+                return self._tts
+            key = provider.strip().lower()
+            if not key:
+                return self._tts
+            inst = scoped_tts.get(key)
+            if inst is None:
+                inst = create_tts(key)
+                scoped_tts[key] = inst
+            return inst
 
         async def on_chunk(chunk: TTSChunk) -> None:
-            """TTS 音频块 → 推给浏览器。"""
+            """TTS 音频块 → 推给客户端。"""
             try:
                 if not _ws_open(ws):
                     return
                 if chunk.audio:
                     await ws.send(chunk.audio)
                 if chunk.is_final:
-                    await ws.send(json.dumps({"type": "final"}))
+                    await ws.send(
+                        json.dumps({"type": "final", "sample_rate": chunk.sample_rate})
+                    )
             except Exception as err:
                 logger.warning("[DemoServer/tts] send chunk failed: %s", err)
 
@@ -274,8 +298,8 @@ class DemoServer:
 
                 if req.get("type") == "cancel":
                     # 中断当前合成
-                    if synth_task and not synth_task.done():
-                        self._tts.interrupt()
+                    if synth_task and not synth_task.done() and active_tts is not None:
+                        active_tts.interrupt()
                     continue
 
                 text = req.get("text", "").strip()
@@ -283,8 +307,8 @@ class DemoServer:
                     continue
 
                 # 中断前一个合成任务（若有）
-                if synth_task and not synth_task.done():
-                    self._tts.interrupt()
+                if synth_task and not synth_task.done() and active_tts is not None:
+                    active_tts.interrupt()
                     try:
                         await synth_task
                     except (asyncio.CancelledError, Exception):
@@ -292,9 +316,22 @@ class DemoServer:
 
                 speaker = req.get("speaker")
                 instruct_text = req.get("instruct_text")
+                try:
+                    active_tts = resolve_tts(req.get("provider"))
+                except Exception as err:
+                    logger.exception(
+                        "[DemoServer/tts] create_tts(%s) failed: %s",
+                        req.get("provider"),
+                        err,
+                    )
+                    # 通知客户端收场，避免卡在 synthesizing 状态
+                    await on_chunk(
+                        TTSChunk(audio=b"", sample_rate=16000, is_final=True)
+                    )
+                    continue
 
                 synth_task = asyncio.create_task(
-                    self._run_synth(text, speaker, instruct_text, on_chunk)
+                    self._run_synth(active_tts, text, speaker, instruct_text, on_chunk)
                 )
 
         except websockets.exceptions.ConnectionClosed:
@@ -302,15 +339,22 @@ class DemoServer:
         except Exception as err:
             logger.exception("[DemoServer/tts] error: %s", err)
         finally:
-            if synth_task and not synth_task.done():
-                self._tts.interrupt()
+            if synth_task and not synth_task.done() and active_tts is not None:
+                active_tts.interrupt()
                 try:
                     await synth_task
                 except (asyncio.CancelledError, Exception):
                     pass
+            # 关闭本连接懒建的临时 TTS 实例（共享实例 self._tts 不在此关闭）
+            for inst in scoped_tts.values():
+                try:
+                    await inst.close()
+                except Exception:
+                    pass
 
     async def _run_synth(
         self,
+        tts: Any,
         text: str,
         speaker: Optional[str],
         instruct_text: Optional[str],
@@ -318,15 +362,14 @@ class DemoServer:
     ) -> None:
         """执行一次 TTS 合成（包装异常）。"""
         try:
-            await self._tts.synthesize(text, on_chunk, speaker, instruct_text)
+            await tts.synthesize(text, on_chunk, speaker, instruct_text)
         except asyncio.CancelledError:
             logger.info("[DemoServer/tts] synthesis cancelled")
             raise
         except Exception as err:
             logger.exception("[DemoServer/tts] synthesis failed: %s", err)
             try:
-                on_chunk_sync = on_chunk
                 # 错误时也发 final，避免前端卡在 synthesizing 状态
-                await on_chunk_sync(TTSChunk(audio=b"", sample_rate=16000, is_final=True))
+                await on_chunk(TTSChunk(audio=b"", sample_rate=16000, is_final=True))
             except Exception:
                 pass

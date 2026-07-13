@@ -65,6 +65,11 @@ export class VoiceClonesService {
   private readonly cosyVoiceTimeoutMs = Number(process.env.COSYVOICE_TIMEOUT_MS ?? 30000);
   // 云端 CosyVoice 声音复刻绑定的合成模型（复刻创建与后续合成须用同一模型）。
   private readonly cosyVoiceCloneTargetModel = process.env.COSYVOICE_CLONE_TARGET_MODEL?.trim() || 'cosyvoice-v2';
+  // voice-agent /tts-stream 试听代理：CosyVoice/Qwen 复刻音色只有 WebSocket 流式合成，
+  // 经 voice-agent 用真实音色流式合成 PCM，api 收齐后封 WAV 返回作试听。
+  private readonly voiceAgentTtsUrl = resolveVoiceAgentTtsUrl();
+  private readonly voiceAgentWsToken = process.env.VOICE_AGENT_WS_TOKEN?.trim() ?? '';
+  private readonly voiceAgentTtsTimeoutMs = Number(process.env.VOICE_AGENT_TTS_TIMEOUT_MS ?? 30000);
   private readonly dashScopeApiKey = process.env.DASHSCOPE_API_KEY ?? '';
   private readonly dashScopeBaseUrl = resolveDashScopeBaseUrl();
   private readonly dashScopeTimeoutMs = Number(process.env.DASHSCOPE_TTS_TIMEOUT_MS ?? 60000);
@@ -319,12 +324,11 @@ export class VoiceClonesService {
     const voiceId = isLocalDraftVoiceId(record.voiceId)
       ? await this.createDashScopeQwenVoice(record)
       : record.voiceId;
-    // realtime 复刻音色（vc-realtime）绑定到 WebSocket 流式模型，只能在实时通话
-    // （voice-agent）里合成；dashboard 侧的 HTTP 非流式试听接口不支持该模型。
-    // 此时跳过 HTTP 试听、用源音频作试听兜底，确保音色照常创建入库供通话使用。
+    // realtime 复刻音色（vc-realtime）绑定到 WebSocket 流式模型，DashScope 无 HTTP
+    // 非流式合成接口，经 voice-agent /tts-stream 用真实复刻音色流式合成试听。
     if (isRealtimeQwenTargetModel(this.qwenVoiceCloneTargetModel)) {
-      const source = await readFile(this.resolveStoragePath(record.sourceFilePath));
-      return { buffer: source, mimeType: record.sourceMimeType, voiceId };
+      const audio = await this.synthesizeViaVoiceAgent(text, voiceId, 'qwen');
+      return { ...audio, voiceId };
     }
     const audio = await this.synthesizeDashScopeQwenVoice(voiceId, text);
     return { ...audio, voiceId };
@@ -428,10 +432,10 @@ export class VoiceClonesService {
     const voiceId = isLocalDraftVoiceId(record.voiceId)
       ? await this.createDashScopeCosyVoice(record)
       : record.voiceId;
-    // 云端 CosyVoice 合成只有 WebSocket 流式接口（tts_v2），dashboard 侧 HTTP 试听
-    // 不便直连；试听暂用源音频兜底，真实克隆效果在实时通话（voice-agent CosyVoice）中体验。
-    const source = await readFile(this.resolveStoragePath(record.sourceFilePath));
-    return { buffer: source, mimeType: record.sourceMimeType, voiceId };
+    // CosyVoice v2 合成只有 WebSocket 流式接口（tts_v2），经 voice-agent /tts-stream
+    // 用真实复刻音色流式合成试听（不再回放源音频）。
+    const audio = await this.synthesizeViaVoiceAgent(text, voiceId, 'cosyvoice');
+    return { ...audio, voiceId };
   }
 
   private async createDashScopeCosyVoice(record: VoiceCloneRecord): Promise<string> {
@@ -460,6 +464,90 @@ export class VoiceClonesService {
       throw new Error(`CosyVoice 声音复刻未返回 voice_id：${JSON.stringify(response).slice(0, 300)}`);
     }
     return voice;
+  }
+
+  /**
+   * 经 voice-agent 的 /tts-stream 用指定 provider + 复刻 voiceId 流式合成试听音频。
+   * CosyVoice v2 / Qwen vc-realtime 复刻音色只有 WebSocket 流式合成接口，dashboard
+   * 侧无法直连；由 voice-agent 复用已验证的流式合成 + 重采样逻辑，api 收齐 PCM 后封 WAV。
+   */
+  private async synthesizeViaVoiceAgent(
+    text: string,
+    voiceId: string,
+    provider: 'cosyvoice' | 'qwen',
+    instructText?: string,
+  ): Promise<GeneratedAudio> {
+    const WebSocketCtor = (globalThis as { WebSocket?: new (url: string) => unknown }).WebSocket;
+    if (!WebSocketCtor) {
+      throw new Error('当前 Node 运行时无全局 WebSocket（需 Node 22+），无法连接 voice-agent 试听合成');
+    }
+    const url = this.voiceAgentWsToken
+      ? `${this.voiceAgentTtsUrl}?token=${encodeURIComponent(this.voiceAgentWsToken)}`
+      : this.voiceAgentTtsUrl;
+
+    return await new Promise<GeneratedAudio>((resolvePromise, rejectPromise) => {
+      // 全局 WebSocket（undici）无 DOM lib 类型，统一以 any 交互。
+      const ws = new WebSocketCtor(url) as any;
+      ws.binaryType = 'arraybuffer';
+      const chunks: Buffer[] = [];
+      let sampleRate = 16000;
+      let settled = false;
+
+      const timer = setTimeout(() => {
+        finish(new Error(`voice-agent 试听合成超时（${this.voiceAgentTtsTimeoutMs}ms），请确认 voice-agent（${this.voiceAgentTtsUrl}）正在运行`));
+      }, this.voiceAgentTtsTimeoutMs);
+
+      const finish = (err: Error | null, value?: GeneratedAudio): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        try {
+          ws.close();
+        } catch {
+          /* ignore close error */
+        }
+        if (err) rejectPromise(err);
+        else resolvePromise(value!);
+      };
+
+      ws.onopen = (): void => {
+        ws.send(JSON.stringify({ text, speaker: voiceId, provider, instruct_text: instructText }));
+      };
+      ws.onmessage = (event: { data: unknown }): void => {
+        const data = event.data;
+        if (typeof data === 'string') {
+          try {
+            const msg = JSON.parse(data) as { type?: string; sample_rate?: number };
+            if (msg?.type === 'final') {
+              if (typeof msg.sample_rate === 'number' && msg.sample_rate > 0) {
+                sampleRate = msg.sample_rate;
+              }
+              const pcm = Buffer.concat(chunks);
+              if (pcm.length === 0) {
+                finish(new Error('voice-agent 返回空音频（合成失败，请检查 voice-agent 日志与 DASHSCOPE_API_KEY）'));
+                return;
+              }
+              finish(null, { buffer: wrapPcm16AsWav(pcm, sampleRate), mimeType: 'audio/wav' });
+            }
+          } catch {
+            /* 忽略非 JSON 文本帧 */
+          }
+          return;
+        }
+        // 二进制 PCM 16-bit 帧（binaryType=arraybuffer）
+        if (data instanceof ArrayBuffer) {
+          chunks.push(Buffer.from(data));
+        } else if (ArrayBuffer.isView(data)) {
+          chunks.push(Buffer.from(data.buffer, data.byteOffset, data.byteLength));
+        }
+      };
+      ws.onerror = (): void => {
+        finish(new Error(`无法连接 voice-agent 试听服务（${this.voiceAgentTtsUrl}），请确认 voice-agent 已启动`));
+      };
+      ws.onclose = (): void => {
+        finish(new Error('voice-agent 试听连接已关闭但未返回完整音频，请确认 voice-agent 运行正常'));
+      };
+    });
   }
 
   private assertAudioFile(file: Express.Multer.File): void {
@@ -568,13 +656,34 @@ function resolveDashScopeBaseUrl(): string {
   return 'https://dashscope.aliyuncs.com/api/v1';
 }
 
+/**
+ * voice-agent /tts-stream 的 WebSocket 地址。复用 VOICE_AGENT_WS_* 配置（与
+ * health-checks 一致），强制路径为 /tts-stream（忽略 VOICE_AGENT_WS_PATH 的 /audio-stream）。
+ */
+function resolveVoiceAgentTtsUrl(): string {
+  // 用 || 而非 ??：.env 里空串（VOICE_AGENT_WS_HOST=）也回退默认值。
+  const host = (process.env.VOICE_AGENT_WS_HOST || '').trim() || '127.0.0.1';
+  const port = (process.env.VOICE_AGENT_WS_PORT || '').trim() || '8090';
+  const base = (process.env.VOICE_AGENT_WS_URL || '').trim() || `ws://${host}:${port}`;
+  try {
+    const url = new URL(base);
+    // 0.0.0.0 是监听地址，客户端连接改用回环地址。
+    if (url.hostname === '0.0.0.0') url.hostname = '127.0.0.1';
+    url.pathname = '/tts-stream';
+    url.search = '';
+    return url.toString();
+  } catch {
+    return `ws://${host === '0.0.0.0' ? '127.0.0.1' : host}:${port}/tts-stream`;
+  }
+}
+
 function isRealtimeQwenTargetModel(model: string): boolean {
   return model.includes('realtime');
 }
 
 function assertHttpQwenVoiceCloneTargetModel(model: string): void {
   if (isRealtimeQwenTargetModel(model)) {
-    throw new Error(`Qwen TTS HTTP 非流式合成接口不支持 realtime 模型 ${model}（realtime 复刻音色只能走 WebSocket 流式合成，试听已改为源音频兜底）`);
+    throw new Error(`Qwen TTS HTTP 非流式合成接口不支持 realtime 模型 ${model}（realtime 复刻音色改经 voice-agent /tts-stream 流式合成试听）`);
   }
 }
 
