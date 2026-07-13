@@ -87,7 +87,7 @@ function MyComponent() {
 
 ```typescript
 useASR({
-  serverUrl: 'ws://localhost:8080/asr-stream',  // Voice Agent /asr-stream 端点
+  serverUrl: 'ws://localhost:8090/asr-stream',  // Voice Agent /asr-stream 端点
   mode: '2pass',                                // online | offline | 2pass
   hotwords: '还款 50 逾期 50',                  // 热词
   recorder: {
@@ -246,11 +246,11 @@ cp .env.example .env
 #   DASHSCOPE_API_KEY=<你的阿里云 DashScope API Key>
 #   FUNASR_WS_URL=ws://localhost:10095
 
-# 启动 WebSocket 服务（默认端口 8080）
+# 启动 WebSocket 服务（默认端口 8090）
 python -m voice_agent.main
 ```
 
-验证：日志输出 `[VoiceAgentServer] listening on ws://0.0.0.0:8080 (paths: /audio-stream, /asr-stream, /tts-stream)`。
+验证：日志输出 `[VoiceAgentServer] listening on ws://0.0.0.0:8090 (paths: /audio-stream, /asr-stream, /tts-stream)`。
 
 ### 3. 配置前端环境变量
 
@@ -258,7 +258,9 @@ python -m voice_agent.main
 
 ```ini
 # Voice Agent WebSocket（Python 后端，含 /asr-stream + /tts-stream）
-NEXT_PUBLIC_VOICE_AGENT_WS_URL=ws://localhost:8080
+# 不配置时按当前页面协议派生（http→ws / https→wss）+ 当前主机 + 8090。
+# 生产 https 部署请显式配 wss://（ws:// 会被浏览器按混合内容拦截）。
+NEXT_PUBLIC_VOICE_AGENT_WS_URL=ws://localhost:8090
 
 # FunASR（仅用于显示，实际连接由 Python 后端代理）
 NEXT_PUBLIC_FUNASR_WS_URL=ws://localhost:10095
@@ -406,10 +408,10 @@ pnpm test:watch    # 监听模式
 Get-Process python* | Where-Object { $_.CommandLine -like "*voice_agent*" }
 
 # 检查端口
-Test-NetConnection localhost -Port 8080
+Test-NetConnection localhost -Port 8090
 ```
 
-确认日志输出 `listening on ws://0.0.0.0:8080`。若未启动：
+确认日志输出 `listening on ws://0.0.0.0:8090`。若未启动：
 ```powershell
 cd services/voice-agent
 python -m voice_agent.main

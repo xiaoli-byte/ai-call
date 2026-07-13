@@ -14,6 +14,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ASRStreamClient, type ASRConnectionState } from '@/lib/voice-agent-client';
+import { voiceAgentWsBaseUrl } from '@/lib/voice-agent-ws';
 import {
   TARGET_SAMPLE_RATE,
   createPCM16FrameBuffer,
@@ -58,7 +59,6 @@ export interface UseASRReturn {
   clear: () => void;
 }
 
-const VOICE_AGENT_WS_URL = process.env.NEXT_PUBLIC_VOICE_AGENT_WS_URL ?? 'ws://localhost:8080';
 const ASR_MODE = (process.env.NEXT_PUBLIC_FUNASR_MODE ?? '2pass') as 'online' | 'offline' | '2pass';
 const ASR_HOTWORDS = process.env.NEXT_PUBLIC_FUNASR_HOTWORDS ?? '';
 const ASR_FRAME_MS = 20;
@@ -67,7 +67,8 @@ const ASR_FRAME_BYTES = getPCM16FrameByteLength(TARGET_SAMPLE_RATE, ASR_FRAME_MS
 const ASR_SEND_BATCH_BYTES = ASR_FRAME_BYTES * Math.max(1, Math.round(ASR_SEND_BATCH_MS / ASR_FRAME_MS));
 
 export function useASR(options: UseASROptions = {}): UseASRReturn {
-  const serverUrl = options.serverUrl ?? `${VOICE_AGENT_WS_URL}/asr-stream`;
+  // WS 前缀随页面协议派生（https→wss），不硬编码。
+  const serverUrl = options.serverUrl ?? `${voiceAgentWsBaseUrl()}/asr-stream`;
   const mode = options.mode ?? ASR_MODE;
   const hotwords = options.hotwords ?? ASR_HOTWORDS;
 

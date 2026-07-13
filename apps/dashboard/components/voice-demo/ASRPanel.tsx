@@ -12,6 +12,7 @@
 
 import { StatusBadge } from './StatusBadge';
 import { AudioVisualizer } from './AudioVisualizer';
+import { useVoiceAgentWsBaseUrl } from '@/hooks/useVoiceAgentWsBaseUrl';
 import type { UseASRReturn } from '@/hooks/useASR';
 import styles from './voice-demo.module.scss';
 
@@ -33,6 +34,7 @@ export function ASRPanel({ asr }: ASRPanelProps) {
     endSentence,
     clear,
   } = asr;
+  const wsBaseUrl = useVoiceAgentWsBaseUrl();
 
   return (
     <div className="card">
@@ -43,7 +45,7 @@ export function ASRPanel({ asr }: ASRPanelProps) {
 
       {/* 服务配置提示 */}
       <div className={styles.configInfo}>
-        <code>{process.env.NEXT_PUBLIC_VOICE_AGENT_WS_URL ?? 'ws://localhost:8080'}/asr-stream</code>
+        <code>{wsBaseUrl}/asr-stream</code>
         <span className="badge badge-dim">{process.env.NEXT_PUBLIC_FUNASR_MODE ?? '2pass'}</span>
       </div>
 

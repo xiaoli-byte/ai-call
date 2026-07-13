@@ -12,7 +12,8 @@
  * 注意：与 lib/voice-agent-client.ts（demo 端点 /asr-stream、/tts-stream）无关。
  */
 
-const VOICE_AGENT_WS_URL = process.env.NEXT_PUBLIC_VOICE_AGENT_WS_URL ?? 'ws://localhost:8080';
+import { voiceAgentWsBaseUrl } from './voice-agent-ws';
+
 const VOICE_AGENT_WS_TOKEN = process.env.NEXT_PUBLIC_VOICE_AGENT_WS_TOKEN;
 
 /** WebSocket readyState 常量（不依赖全局 WebSocket 静态属性，便于测试 mock） */
@@ -86,7 +87,8 @@ export class WebCallClient {
 
   constructor(config: WebCallClientConfig, callbacks: WebCallClientCallbacks = {}) {
     this.metadata = config.metadata;
-    this.serverUrl = config.serverUrl ?? `${VOICE_AGENT_WS_URL}/audio-stream`;
+    // 惰性解析（构造时在浏览器运行）：WS 前缀随页面协议派生（https→wss），不硬编码。
+    this.serverUrl = config.serverUrl ?? `${voiceAgentWsBaseUrl()}/audio-stream`;
     this.callbacks = callbacks;
   }
 

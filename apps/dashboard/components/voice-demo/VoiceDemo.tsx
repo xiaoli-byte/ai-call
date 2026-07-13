@@ -15,6 +15,7 @@
 import { useEffect, useState } from 'react';
 import { useASR } from '@/hooks/useASR';
 import { useTTS } from '@/hooks/useTTS';
+import { useVoiceAgentWsBaseUrl } from '@/hooks/useVoiceAgentWsBaseUrl';
 import { ASRPanel } from './ASRPanel';
 import { TTSPanel } from './TTSPanel';
 import styles from './voice-demo.module.scss';
@@ -22,6 +23,7 @@ import styles from './voice-demo.module.scss';
 export function VoiceDemo() {
   const asr = useASR();
   const tts = useTTS();
+  const wsBaseUrl = useVoiceAgentWsBaseUrl();
 
   const [linkMode, setLinkMode] = useState(false);
   const [lastFinalCount, setLastFinalCount] = useState(0);
@@ -79,7 +81,7 @@ export function VoiceDemo() {
       <div className={styles.dependencyCheck}>
         <div className={styles.depItem}>
           <span className={styles.depName}>Voice Agent WS</span>
-          <code>{process.env.NEXT_PUBLIC_VOICE_AGENT_WS_URL ?? 'ws://localhost:8080'}</code>
+          <code>{wsBaseUrl}</code>
         </div>
         <div className={styles.depItem}>
           <span className={styles.depName}>FunASR (via Python)</span>

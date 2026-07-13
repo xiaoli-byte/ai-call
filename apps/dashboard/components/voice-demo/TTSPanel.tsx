@@ -12,6 +12,7 @@
 
 import { useState } from 'react';
 import { StatusBadge } from './StatusBadge';
+import { useVoiceAgentWsBaseUrl } from '@/hooks/useVoiceAgentWsBaseUrl';
 import type { UseTTSReturn } from '@/hooks/useTTS';
 import { BUILT_IN_TTS_VOICES } from '@/lib/tts-voices';
 import styles from './voice-demo.module.scss';
@@ -23,6 +24,7 @@ interface TTSPanelProps {
 export function TTSPanel({ tts }: TTSPanelProps) {
   const { state, isBusy, error, voiceParams, updateVoiceParams, speak, stop } = tts;
   const [text, setText] = useState('');
+  const wsBaseUrl = useVoiceAgentWsBaseUrl();
 
   const handleSpeak = () => {
     if (text.trim()) {
@@ -47,7 +49,7 @@ export function TTSPanel({ tts }: TTSPanelProps) {
 
       {/* 服务配置提示 */}
       <div className={styles.configInfo}>
-        <code>{process.env.NEXT_PUBLIC_VOICE_AGENT_WS_URL ?? 'ws://localhost:8080'}/tts-stream</code>
+        <code>{wsBaseUrl}/tts-stream</code>
         <span className="badge badge-dim">{voiceParams.speaker}</span>
       </div>
 

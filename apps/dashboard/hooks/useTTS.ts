@@ -19,6 +19,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { TTSStreamClient, type TTSConnectionState } from '@/lib/voice-agent-client';
+import { voiceAgentWsBaseUrl } from '@/lib/voice-agent-ws';
 import {
   ensureAudioContext,
   pcm16ToFloat32,
@@ -63,7 +64,6 @@ export interface UseTTSReturn {
   stop: () => void;
 }
 
-const VOICE_AGENT_WS_URL = process.env.NEXT_PUBLIC_VOICE_AGENT_WS_URL ?? 'ws://localhost:8080';
 const VOICE_AGENT_WS_TOKEN = process.env.NEXT_PUBLIC_VOICE_AGENT_WS_TOKEN;
 const QWEN_TTS_SPEAKER = process.env.NEXT_PUBLIC_QWEN_TTS_VOICE ?? 'Cherry';
 const TTS_SAMPLE_RATE = parseInt(process.env.NEXT_PUBLIC_TTS_SAMPLE_RATE ?? '16000', 10);
@@ -254,7 +254,8 @@ export function useTTS(options: UseTTSOptions = {}): UseTTSReturn {
 }
 
 function buildTtsStreamUrl(): string {
-  const base = `${VOICE_AGENT_WS_URL.replace(/\/+$/, '')}/tts-stream`;
+  // WS 前缀随页面协议派生（https→wss），不硬编码。
+  const base = `${voiceAgentWsBaseUrl()}/tts-stream`;
   return VOICE_AGENT_WS_TOKEN
     ? `${base}?token=${encodeURIComponent(VOICE_AGENT_WS_TOKEN)}`
     : base;
