@@ -22,14 +22,12 @@ import { useFlowStore } from './store/flow-store';
 import styles from './flow-builder.module.scss';
 import { StartNode } from './nodes/start-node';
 import { DialogNode } from './nodes/dialog-node';
-import { DecisionNode } from './nodes/decision-node';
 import { ActionNode } from './nodes/action-node';
 import { EndNode } from './nodes/end-node';
 
 const nodeTypes: NodeTypes = {
   start: StartNode,
   dialog: DialogNode,
-  decision: DecisionNode,
   action: ActionNode,
   end: EndNode,
 };

@@ -2,7 +2,6 @@
 
 import { useFlowStore } from './store/flow-store';
 import { DialogForm } from './forms/dialog-form';
-import { DecisionForm } from './forms/decision-form';
 import { ActionForm } from './forms/action-form';
 import { EndForm } from './forms/end-form';
 import { EdgeForm } from './forms/edge-form';
@@ -114,9 +113,6 @@ export function PropertyPanel() {
       <div className={styles.flowPropertyPanelBody}>
         {node.type === 'dialog' && (
           <DialogForm node={node as unknown as FlowNode} onUpdate={(d) => updateNode(node.id, d)} />
-        )}
-        {node.type === 'decision' && (
-          <DecisionForm node={node as unknown as FlowNode} onUpdate={(d) => updateNode(node.id, d)} />
         )}
         {node.type === 'action' && (
           <ActionForm node={node as unknown as FlowNode} onUpdate={(d) => updateNode(node.id, d)} />

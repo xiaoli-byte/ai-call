@@ -6,7 +6,7 @@
  *   pnpm prisma:seed
  *
  * 创建 3 个示例流程：催收 / 电商回访 / 售前咨询
- * 每个流程包含 Start → Dialog → Decision → Action → End 完整节点链。
+ * 每个流程使用连线意图从 Dialog 直接路由到 Action / End。
  */
 import { config } from 'dotenv';
 import { resolve } from 'path';
@@ -66,19 +66,6 @@ function dialogNode(
   };
 }
 
-function decisionNode(
-  x: number,
-  y: number,
-  data: Record<string, unknown>,
-): FlowNode {
-  return {
-    id: nid('decision'),
-    type: 'decision',
-    position: { x, y },
-    data: data as never,
-  };
-}
-
 function actionNode(
   x: number,
   y: number,
@@ -128,10 +115,6 @@ function buildCollectionFlow(): { nodes: FlowNode[]; edges: FlowEdge[] } {
     waitForResponse: true,
     timeoutSeconds: 10,
   });
-  const decide = decisionNode(260, 380, {
-    mode: 'intent',
-    intents: ['同意还款', '拒绝还款', '经济困难', '非本人'],
-  });
   const remind = dialogNode(-60, 560, {
     mode: 'script',
     text: '好的，已为您记录还款意愿。请于 3 个工作日内完成还款，否则将影响您的信用记录。',
@@ -157,13 +140,12 @@ function buildCollectionFlow(): { nodes: FlowNode[]; edges: FlowEdge[] } {
     farewell: '感谢您的配合，再见。',
   });
 
-  const nodes = [start, greet, decide, remind, negotiate, transfer, end];
+  const nodes = [start, greet, remind, negotiate, transfer, end];
   const edges = [
     edge(start.id, greet.id),
-    edge(greet.id, decide.id),
-    edge(decide.id, remind.id, '同意还款'),
-    edge(decide.id, negotiate.id, '经济困难'),
-    edge(decide.id, transfer.id, '拒绝还款/非本人'),
+    edge(greet.id, remind.id, '同意还款'),
+    edge(greet.id, negotiate.id, '经济困难'),
+    edge(greet.id, transfer.id, '拒绝还款/非本人'),
     edge(remind.id, end.id),
     edge(negotiate.id, end.id),
     edge(transfer.id, end.id),
@@ -184,10 +166,6 @@ function buildEcommerceFlow(): { nodes: FlowNode[]; edges: FlowEdge[] } {
     interruptible: true,
     waitForResponse: true,
     timeoutSeconds: 10,
-  });
-  const decide = decisionNode(260, 380, {
-    mode: 'intent',
-    intents: ['满意', '不满意', '未收到'],
   });
   const thanks = dialogNode(-60, 560, {
     mode: 'script',
@@ -216,13 +194,12 @@ function buildEcommerceFlow(): { nodes: FlowNode[]; edges: FlowEdge[] } {
     farewell: '感谢您的时间，再见。',
   });
 
-  const nodes = [start, greet, decide, thanks, afterSale, logistics, end];
+  const nodes = [start, greet, thanks, afterSale, logistics, end];
   const edges = [
     edge(start.id, greet.id),
-    edge(greet.id, decide.id),
-    edge(decide.id, thanks.id, '满意'),
-    edge(decide.id, afterSale.id, '不满意'),
-    edge(decide.id, logistics.id, '未收到'),
+    edge(greet.id, thanks.id, '满意'),
+    edge(greet.id, afterSale.id, '不满意'),
+    edge(greet.id, logistics.id, '未收到'),
     edge(thanks.id, end.id),
     edge(afterSale.id, end.id),
     edge(logistics.id, end.id),
@@ -246,10 +223,6 @@ function buildPresaleFlow(): { nodes: FlowNode[]; edges: FlowEdge[] } {
     interruptible: true,
     waitForResponse: true,
     timeoutSeconds: 180,
-  });
-  const decide = decisionNode(260, 380, {
-    mode: 'intent',
-    intents: ['有意向试驾', '需要考虑', '无意向'],
   });
   const book = actionNode(-60, 560, {
     actionType: 'crm',
@@ -277,13 +250,12 @@ function buildPresaleFlow(): { nodes: FlowNode[]; edges: FlowEdge[] } {
     farewell: '感谢您的咨询，期待为您服务，再见。',
   });
 
-  const nodes = [start, greet, decide, book, followUp, sms, end];
+  const nodes = [start, greet, book, followUp, sms, end];
   const edges = [
     edge(start.id, greet.id),
-    edge(greet.id, decide.id),
-    edge(decide.id, book.id, '有意向试驾'),
-    edge(decide.id, followUp.id, '需要考虑'),
-    edge(decide.id, sms.id, '无意向'),
+    edge(greet.id, book.id, '有意向试驾'),
+    edge(greet.id, followUp.id, '需要考虑'),
+    edge(greet.id, sms.id, '无意向'),
     edge(book.id, end.id),
     edge(followUp.id, end.id),
     edge(sms.id, end.id),

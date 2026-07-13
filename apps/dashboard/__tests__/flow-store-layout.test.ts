@@ -11,12 +11,6 @@ const nodes: FlowNode[] = [
     data: { mode: 'script', text: 'hello', interruptible: true, waitForResponse: true },
   },
   {
-    id: 'decision',
-    type: 'decision',
-    position: { x: 400, y: 400 },
-    data: { mode: 'intent', intents: ['yes', 'no'] },
-  },
-  {
     id: 'action',
     type: 'action',
     position: { x: 200, y: 300 },
@@ -38,9 +32,8 @@ const nodes: FlowNode[] = [
 
 const edges: FlowEdge[] = [
   { id: 'e1', source: 'start', target: 'dialog' },
-  { id: 'e2', source: 'dialog', target: 'decision' },
-  { id: 'e3', source: 'decision', target: 'action' },
-  { id: 'e4', source: 'decision', target: 'handoff' },
+  { id: 'e2', source: 'dialog', target: 'action', label: 'yes' },
+  { id: 'e3', source: 'dialog', target: 'handoff', label: 'no' },
   { id: 'e5', source: 'action', target: 'end' },
   { id: 'e6', source: 'handoff', target: 'end' },
 ];
@@ -55,7 +48,6 @@ describe('flow store layout', () => {
     const byId = new Map(arranged.map((node) => [node.id, node]));
 
     expect(byId.get('start')?.position.y).toBeLessThan(byId.get('dialog')!.position.y);
-    expect(byId.get('dialog')?.position.y).toBeLessThan(byId.get('decision')!.position.y);
     expect(byId.get('action')?.position.y).toBe(byId.get('handoff')?.position.y);
     expect(byId.get('action')?.position.x).toBeLessThan(byId.get('handoff')!.position.x);
     expect(byId.get('end')?.position.y).toBeGreaterThan(byId.get('action')!.position.y);

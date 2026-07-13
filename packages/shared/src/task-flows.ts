@@ -5,21 +5,19 @@ import type { ScenarioConfig } from './scenarios.js';
  *
  * 采用现代 TypeScript 实践（string literal union types + discriminated unions），
  * 强类型可推断。新版编辑器只允许新增 dialog/action/end 三类业务节点，
- * decision 与 question 仅用于兼容历史快照，载入后会自动迁移。
  *
  * 节点类型：
  * - start：唯一入口节点，整个流程只能有一个
  * - dialog：统一所有对话能力（固定话术/AI 生成回复）
- * - decision：历史判断节点（兼容读取，意图能力已下沉到 edge）
  * - action：统一业务动作（转人工/发短信/CRM/API）
  * - end：统一结束行为（正常结束/挂机）
  */
 
 // ============================================================
-// 节点类型（decision 仅用于历史兼容）
+// 节点类型
 // ============================================================
 
-export type FlowNodeType = 'start' | 'dialog' | 'decision' | 'action' | 'end';
+export type FlowNodeType = 'start' | 'dialog' | 'action' | 'end';
 
 export const FlowStatus = {
   DRAFT: 'draft',
@@ -55,22 +53,6 @@ export interface DialogNodeData {
   timeoutSeconds?: number;
   /** 重试次数（question 模式）*/
   retryCount?: number;
-}
-
-// --- Decision Node（统一所有分支判断：条件/意图）---
-export type DecisionMode = 'condition' | 'intent';
-
-export interface DecisionNodeData {
-  mode: DecisionMode;
-  /** condition 模式：表达式（如 "response.includes('满意')"）*/
-  expression?: string;
-  /** intent 模式：意图列表（如 ["感兴趣", "拒绝", "忙", "稍后联系"]）*/
-  intents?: string[];
-  /**
-   * intent 模式：每个意图的例句（键=意图名，值=例句数组），供运行时 embedding 相似度层使用。
-   * 可选字段，不配置时行为与现状等价（回退到 LLM 判定）。运行时忽略键不在 intents 里的例句。
-   */
-  intentExamples?: Record<string, string[]>;
 }
 
 // --- Action Node（统一业务动作：转人工/发短信/CRM/API）---
@@ -148,7 +130,6 @@ export interface EndNodeData {
 export type FlowNodeData =
   | StartNodeData
   | DialogNodeData
-  | DecisionNodeData
   | ActionNodeData
   | EndNodeData;
 

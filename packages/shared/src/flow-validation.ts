@@ -3,8 +3,6 @@ import type {
   FlowValidationIssue,
 } from './task-flows.js';
 
-const DEFAULT_BRANCH_LABELS = new Set(['default', 'else', '默认', '其他']);
-
 /**
  * 发布前的结构校验。编辑器可以保存不完整草稿，但只有合法图才能发布。
  */
@@ -44,81 +42,6 @@ export function validateFlowDefinition(
     const edges = outgoing.get(node.id) ?? [];
     if (node.type !== 'end' && edges.length === 0) {
       issues.push({ code: 'dead_end', message: `非结束节点 ${node.id} 没有出口`, nodeId: node.id });
-    }
-    if (node.type !== 'decision' && edges.length > 1) {
-      const fallbackEdges = edges.filter((edge) => {
-        const label = edge.label?.trim();
-        return !label || DEFAULT_BRANCH_LABELS.has(label.toLowerCase());
-      });
-      const intentEdges = edges.filter((edge) => !fallbackEdges.includes(edge));
-
-      if (intentEdges.length === 0) {
-        issues.push({
-          code: 'missing_intent_branch',
-          message: `节点 ${node.id} 有多个出口，请至少配置一个意图分支`,
-          nodeId: node.id,
-        });
-      }
-      if (fallbackEdges.length === 0) {
-        issues.push({
-          code: 'missing_intent_fallback',
-          message: `节点 ${node.id} 缺少默认分支，请将一条出边的分支名称留空`,
-          nodeId: node.id,
-        });
-      }
-      if (fallbackEdges.length > 1) {
-        issues.push({
-          code: 'multiple_intent_fallbacks',
-          message: `节点 ${node.id} 只能有一条默认分支`,
-          nodeId: node.id,
-        });
-      }
-    }
-
-    for (const edge of edges) {
-      if ((edge.intentExamples?.length ?? 0) > 0 && !edge.label?.trim()) {
-        issues.push({
-          code: 'intent_examples_without_name',
-          message: `连线 ${edge.id} 配置了用户问法，但缺少分支名称`,
-          nodeId: node.id,
-          edgeId: edge.id,
-        });
-      }
-    }
-    if (node.type === 'decision') {
-      if (edges.length < 2) {
-        issues.push({ code: 'decision_branches', message: `判断节点 ${node.id} 至少需要两个分支`, nodeId: node.id });
-      }
-      const labels = edges.map((edge) => edge.label?.trim()).filter(Boolean) as string[];
-      if (labels.length !== edges.length) {
-        issues.push({ code: 'branch_label', message: `判断节点 ${node.id} 的每个出口都需要标签`, nodeId: node.id });
-      }
-      const branchTokens = labels.flatMap((label) => label.split(/[\/|,，]/).map((item) => item.trim()));
-      const nodeData = node.data as { mode?: string; intents?: string[] };
-      if (nodeData.mode === 'intent') {
-        const uncoveredIntents = (nodeData.intents ?? []).filter((intent) => !branchTokens.includes(intent));
-        if (uncoveredIntents.length > 0) {
-          issues.push({
-            code: 'missing_intent_branch',
-            message: `判断节点 ${node.id} 缺少意图分支: ${uncoveredIntents.join('、')}`,
-            nodeId: node.id,
-          });
-        }
-        // intent 模式必须有 fallback 出边（运行时用它承接分类为"其他"的用户意图，
-        // 判定口径与 flow_executor._select_decision_edge 保持一致：
-        // 未设置 label 的边，或 label 归一化后属于默认关键词集合）
-        const hasFallback = edges.some((edge) => {
-          const label = edge.label?.trim();
-          return !label || DEFAULT_BRANCH_LABELS.has(label.toLowerCase());
-        });
-        if (!hasFallback) {
-          issues.push({
-            code: 'missing_intent_fallback',
-            message: `判断节点 ${node.id} (意图模式) 缺少默认分支：请添加一条标签为"其他"或"默认"的出边，用于承接无法识别的用户意图`,
-            nodeId: node.id,
-          });
-        }
-      }
     }
   }
 

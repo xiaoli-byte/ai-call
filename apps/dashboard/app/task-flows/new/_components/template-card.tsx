@@ -7,7 +7,6 @@ import styles from './template-card.module.scss';
 const NODE_COLORS: Record<string, string> = {
   start: '#2563eb',
   dialog: '#10b981',
-  decision: '#f59e0b',
   action: '#8b5cf6',
   end: '#ef4444',
 };

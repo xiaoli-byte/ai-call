@@ -17,7 +17,7 @@ class ContractModel(BaseModel):
 
 class FlowNodeContract(ContractModel):
     id: str
-    type: Literal["start", "dialog", "decision", "action", "end"]
+    type: Literal["start", "dialog", "action", "end"]
     position: dict[str, float]
     data: dict[str, Any] = Field(default_factory=dict)
 

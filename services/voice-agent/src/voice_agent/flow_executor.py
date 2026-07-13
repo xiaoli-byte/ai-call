@@ -15,8 +15,6 @@ from uuid import uuid4
 from . import intent_embed
 from .flow_types import (
     ActionType,
-    DecisionMode,
-    DecisionNodeData,
     DialogMode,
     EndMode,
     FlowEdge,
@@ -30,8 +28,7 @@ from .types import ChatMessage, ToolCall
 logger = logging.getLogger(__name__)
 
 # fallback（兜底/默认）边的 label 判定：无 label 或 label 属于下列关键字。
-# 抽成模块级常量+helper，让 _exec_decision 的 has_fallback 判定与
-# _select_decision_edge 的 fallback 边选择共用同一份逻辑，防止两处漂移。
+# 所有分支判断都配置在 edge 上，统一使用这一组默认分支标签。
 _FALLBACK_LABELS = {"default", "else", "默认", "其他"}
 
 # 否定词：意图关键字紧邻其后时，keyword 层不足以判定语义（如"不满意"含"满意"），
@@ -140,9 +137,6 @@ class FlowExecutor:
                 content = (data.prompt or "")[:20]
             suffix = f": {content}" if content else ""
             return f"对话({data.mode.value}){suffix}"
-        if node.type == NodeType.DECISION:
-            data = node.as_decision()
-            return f"判断({data.mode.value})"
         if node.type == NodeType.ACTION:
             data = node.as_action()
             return f"动作({data.action_type.value})"
@@ -197,11 +191,7 @@ class FlowExecutor:
             if not candidates:
                 raise ValueError(f"flow node {current_id} has no outgoing edge")
 
-            if node.type == NodeType.DECISION:
-                selected = await self._select_decision_edge(
-                    call_id, candidates, last_response
-                )
-            elif len(candidates) > 1:
+            if len(candidates) > 1:
                 selected = await self._select_intent_edge(
                     call_id, node.id, candidates, last_response
                 )
@@ -220,8 +210,6 @@ class FlowExecutor:
             return None
         if node.type == NodeType.DIALOG:
             return await self._exec_dialog(call_id, node, last_response)
-        if node.type == NodeType.DECISION:
-            return await self._exec_decision(call_id, node, last_response)
         if node.type == NodeType.ACTION:
             await self._exec_action(call_id, node)
             return None
@@ -300,101 +288,6 @@ class FlowExecutor:
         return await self._cb.generate_llm_text(
             call_id, messages, {"temperature": data.temperature}
         )
-
-    async def _exec_decision(
-        self, call_id: str, node: FlowNode, last_response: str
-    ) -> str:
-        data = node.as_decision()
-
-        if data.mode == DecisionMode.CONDITION:
-            return self._eval_condition(data.expression or "", last_response)
-
-        # 例句可能配在出边上（edge.intentExamples）而非节点 data；聚合进来，供
-        # keyword-examples 与 embedding 使用（与 _select_intent_edge 的边聚合逻辑对齐）。
-        # 节点 data 已显式配例句时不覆盖。
-        if not data.intent_examples:
-            edge_examples: dict[str, list[str]] = {}
-            for edge in self._flow.outgoing_edges(node.id):
-                if _is_fallback_edge(edge) or not edge.label or not edge.intent_examples:
-                    continue
-                for token in re.split(r"[/|,，、]+", edge.label):
-                    token = token.strip()
-                    if token and token not in edge_examples:
-                        edge_examples[token] = edge.intent_examples
-            if edge_examples:
-                data.intent_examples = edge_examples
-
-        matched = (
-            self._match_intent_by_keyword(data.intents, last_response)
-            or self._match_intent_by_phrase(data.intents, last_response)
-            or self._match_intent_by_examples(
-                data.intents, data.intent_examples, last_response
-            )
-        )
-        if matched:
-            self._log_intent(call_id, node.id, "keyword", last_response, matched)
-            return matched
-
-        # intents 为空或用户无有效输入：保持原早退语义，交给边匹配/兜底。
-        if not data.intents or not last_response.strip():
-            return last_response
-
-        # embedding 相似度层：keyword 未命中后、LLM 前。仅当 provider 已配置且节点配了例句
-        # 时才尝试；任何失败/未命中都 fail-open 落到下方 LLM 层，逻辑零改动。
-        if self._embed is not None and data.intent_examples:
-            intent, detail = await self._classify_intent_embedding(
-                call_id, node.id, data, last_response
-            )
-            if intent:
-                self._log_intent(call_id, node.id, "embed", last_response, intent, detail)
-                return intent
-
-        # 有无兜底边决定 LLM 是否提供"其他"逃生口，以及最终兜底策略。
-        has_fallback = any(
-            _is_fallback_edge(e) for e in self._flow.outgoing_edges(node.id)
-        )
-
-        classified = await self._classify_intent_llm(
-            call_id,
-            data.intents,
-            last_response,
-            has_fallback,
-            data.intent_examples,
-        )
-        if classified:
-            self._log_intent(call_id, node.id, "llm", last_response, classified)
-            return classified
-
-        # keyword 与 LLM 均无结果：电话进行中，错分支比抛异常炸掉整通电话轻。
-        if has_fallback:
-            self._log_intent(call_id, node.id, "fallback", last_response, "其他")
-            return "其他"
-        forced = data.intents[0]
-        logger.warning(
-            "[FlowExecutor] intent 无法分类，强制走首个意图分支: call=%s node=%s text=%s",
-            call_id,
-            node.id,
-            (last_response or "")[:50],
-        )
-        self._log_intent(call_id, node.id, "forced", last_response, forced)
-        return forced
-
-    def _eval_condition(self, expression: str, response: str) -> str:
-        expr = expression.strip()
-        if not expr:
-            return ""
-        try:
-            if "includes(" in expr:
-                match = re.search(r"includes\(['\"](.+?)['\"]\)", expr)
-                if match:
-                    return "true" if match.group(1) in response else "false"
-            if "==" in expr:
-                match = re.search(r"==\s*['\"](.+?)['\"]", expr)
-                if match:
-                    return "true" if response.strip() == match.group(1) else "false"
-        except Exception as err:
-            logger.warning("[FlowExecutor] condition eval failed: %s (expr=%s)", err, expr)
-        return "false"
 
     def _match_intent_by_keyword(self, intents: list[str], response: str) -> str:
         normalized = response.casefold()
@@ -483,7 +376,12 @@ class FlowExecutor:
         return candidates[0][1]
 
     async def _classify_intent_embedding(
-        self, call_id: str, node_id: str, data: DecisionNodeData, response: str
+        self,
+        call_id: str,
+        node_id: str,
+        intents: list[str],
+        intent_examples: dict[str, list[str]],
+        response: str,
     ) -> tuple[str, str]:
         """embedding 相似度意图匹配。
 
@@ -499,8 +397,8 @@ class FlowExecutor:
 
         # 只保留 intents 列表内、且配了非空例句的意图（忽略脏键/空例句）。
         usable = [
-            (intent, data.intent_examples.get(intent) or [])
-            for intent in data.intents
+            (intent, intent_examples.get(intent) or [])
+            for intent in intents
         ]
         usable = [(intent, exs) for intent, exs in usable if exs]
         if not usable:
@@ -598,7 +496,7 @@ class FlowExecutor:
             logger.warning("[FlowExecutor] LLM intent classify failed: %s", err)
         return ""
 
-    async def _select_decision_edge(
+    async def _select_matching_edge(
         self, call_id: str, edges: list[FlowEdge], response: str
     ) -> Optional[FlowEdge]:
         fallback: Optional[FlowEdge] = None
@@ -667,13 +565,8 @@ class FlowExecutor:
         tier = "keyword"
 
         if not matched and self._embed is not None and intent_examples:
-            data = DecisionNodeData(
-                mode=DecisionMode.INTENT,
-                intents=intents,
-                intent_examples=intent_examples,
-            )
             matched, detail = await self._classify_intent_embedding(
-                call_id, node_id, data, response
+                call_id, node_id, intents, intent_examples, response
             )
             if matched:
                 tier = "embed"
@@ -700,7 +593,7 @@ class FlowExecutor:
         if matched:
             if tier != "embed":
                 self._log_intent(call_id, node_id, tier, response, matched)
-            selected = await self._select_decision_edge(call_id, edges, matched)
+            selected = await self._select_matching_edge(call_id, edges, matched)
             if selected:
                 return selected
 

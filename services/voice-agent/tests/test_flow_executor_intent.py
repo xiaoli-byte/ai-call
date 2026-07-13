@@ -10,8 +10,6 @@ from typing import Any, Optional
 
 from voice_agent.flow_executor import FlowExecutor
 from voice_agent.flow_types import (
-    DecisionMode,
-    DecisionNodeData,
     DialogMode,
     DialogNodeData,
     EndMode,
@@ -102,56 +100,6 @@ def _dummy_flow() -> TaskFlow:
     return TaskFlow(id="f", name="f", nodes=[], edges=[])
 
 
-def _build_decision_flow(intents: list[str], with_fallback: bool) -> TaskFlow:
-    """构造 START → QUESTION → DECISION → 各意图 END（可选 fallback END）。
-
-    每个意图一条 label 相同的出边指向独立 END；with_fallback 时再加一条
-    无 label 的兜底边指向 fallback END。便于断言最终落到哪个 target。
-    """
-    nodes: list[FlowNode] = [
-        FlowNode(id="start", type=NodeType.START, position={"x": 0, "y": 0}, data=StartNodeData()),
-        FlowNode(
-            id="q",
-            type=NodeType.DIALOG,
-            position={"x": 0, "y": 0},
-            data=DialogNodeData(mode=DialogMode.QUESTION, prompt="您对本次服务满意吗？"),
-        ),
-        FlowNode(
-            id="dec",
-            type=NodeType.DECISION,
-            position={"x": 0, "y": 0},
-            data=DecisionNodeData(mode=DecisionMode.INTENT, intents=list(intents)),
-        ),
-    ]
-    edges: list[FlowEdge] = [
-        FlowEdge(id="e_start", source="start", target="q"),
-        FlowEdge(id="e_q", source="q", target="dec"),
-    ]
-    for i, intent in enumerate(intents):
-        end_id = f"end_{i}"
-        nodes.append(
-            FlowNode(
-                id=end_id,
-                type=NodeType.END,
-                position={"x": 0, "y": 0},
-                data=EndNodeData(mode=EndMode.COMPLETE, reason=intent),
-            )
-        )
-        edges.append(FlowEdge(id=f"e_{i}", source="dec", target=end_id, label=intent))
-    if with_fallback:
-        nodes.append(
-            FlowNode(
-                id="end_fallback",
-                type=NodeType.END,
-                position={"x": 0, "y": 0},
-                data=EndNodeData(mode=EndMode.COMPLETE, reason="fallback"),
-            )
-        )
-        # 无 label 的兜底边
-        edges.append(FlowEdge(id="e_fallback", source="dec", target="end_fallback", label=None))
-    return TaskFlow(id="f", name="f", nodes=nodes, edges=edges)
-
-
 def _build_edge_intent_flow() -> TaskFlow:
     nodes = [
         FlowNode(id="start", type=NodeType.START, position={"x": 0, "y": 0}, data=StartNodeData()),
@@ -211,36 +159,14 @@ async def test_llm_parse_longest_first():
     assert result == "不满意"
 
 
-# --- 4. LLM 输出"其他" + 无 label fallback 边 → 走 fallback target ---
-async def test_decision_routes_to_fallback_on_other():
-    cb = FakeFlowCallbacks(user_reply="别说话", llm_reply="其他")
-    flow = _build_decision_flow(["满意", "不满意"], with_fallback=True)
-    ex = FlowExecutor(flow, cb)
-    await ex.run("c1")
-    # fallback END 的 reason 标记为 fallback
-    assert cb.entered_nodes[-1] == "end_fallback"
-
-
-# --- 5. LLM 输出无关内容 + 无 fallback 边 → 强制 intents[0]，不抛 ValueError ---
-async def test_decision_forced_first_intent_without_fallback():
-    cb = FakeFlowCallbacks(user_reply="别说话", llm_reply="今天天气不错")
-    flow = _build_decision_flow(["满意", "不满意"], with_fallback=False)
-    ex = FlowExecutor(flow, cb)
-    # 不应抛异常
-    await ex.run("c1")
-    # intents[0] = "满意" → end_0
-    assert cb.entered_nodes[-1] == "end_0"
-
-
-# --- 6. _select_decision_edge 精确命中 ---
-async def test_select_edge_exact_match():
+async def test_select_matching_edge_exact_match():
     cb = FakeFlowCallbacks()
     ex = FlowExecutor(_dummy_flow(), cb)
     edges = [
         FlowEdge(id="a", source="dec", target="t_satisfied", label="满意"),
         FlowEdge(id="b", source="dec", target="t_unsatisfied", label="不满意"),
     ]
-    selected = await ex._select_decision_edge("c1", edges, "不满意")
+    selected = await ex._select_matching_edge("c1", edges, "不满意")
     assert selected is not None
     assert selected.target == "t_unsatisfied"
 
@@ -316,12 +242,7 @@ class _StubEmbed:
         return [[1.0, 0.0] if t in self._positive else [0.0, 1.0] for t in texts]
 
 
-async def test_decision_node_aggregates_edge_examples_for_embedding():
-    """DECISION(INTENT)节点例句配在出边上时，_exec_decision 应聚合边例句并走 embedding。
-
-    回归修复:例句在 edge.intentExamples、node.data.intent_examples 为空时，keyword
-    未命中不应直接落 LLM，而应先聚合出边例句走 embedding 语义匹配。
-    """
+async def test_edge_intent_uses_examples_for_embedding():
     cb = FakeFlowCallbacks(user_reply="东西到我手上了", llm_reply="没收到")
     nodes = [
         FlowNode(id="start", type=NodeType.START, position={"x": 0, "y": 0}, data=StartNodeData()),
@@ -331,24 +252,17 @@ async def test_decision_node_aggregates_edge_examples_for_embedding():
             position={"x": 0, "y": 0},
             data=DialogNodeData(mode=DialogMode.SCRIPT, text="收到货了吗？", wait_for_response=True),
         ),
-        FlowNode(
-            id="dec",
-            type=NodeType.DECISION,
-            position={"x": 0, "y": 0},
-            data=DecisionNodeData(mode=DecisionMode.INTENT, intents=["收到了", "没收到"]),
-        ),
         FlowNode(id="end_received", type=NodeType.END, position={"x": 0, "y": 0}, data=EndNodeData()),
         FlowNode(id="end_missing", type=NodeType.END, position={"x": 0, "y": 0}, data=EndNodeData()),
     ]
     edges = [
         FlowEdge(id="e_start", source="start", target="q"),
-        FlowEdge(id="e_q", source="q", target="dec"),
         FlowEdge(
-            id="e1", source="dec", target="end_received",
+            id="e1", source="q", target="end_received",
             label="收到了", intent_examples=["快递到了", "已签收"],
         ),
         FlowEdge(
-            id="e2", source="dec", target="end_missing",
+            id="e2", source="q", target="end_missing",
             label="没收到", intent_examples=["还没到", "没影儿"],
         ),
     ]

@@ -9,11 +9,9 @@ import type {
   FlowNodeData,
   FlowNodeType,
   DialogNodeData,
-  DecisionNodeData,
   ActionNodeData,
   EndNodeData,
   DialogMode,
-  DecisionMode,
   ActionType,
   EndMode,
 } from '@ai-call/shared';
@@ -24,11 +22,9 @@ export type {
   FlowNodeData,
   FlowNodeType,
   DialogNodeData,
-  DecisionNodeData,
   ActionNodeData,
   EndNodeData,
   DialogMode,
-  DecisionMode,
   ActionType,
   EndMode,
 };
@@ -53,13 +49,6 @@ const StartIcon = ({ className }: { className?: string }) => (
 const DialogIcon = ({ className }: { className?: string }) => (
   <svg className={className} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
     <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-  </svg>
-);
-
-const DecisionIcon = ({ className }: { className?: string }) => (
-  <svg className={className} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M6 3v6a6 6 0 0 0 6 6h0a6 6 0 0 1 6 6v0" />
-    <path d="M3 3h6M3 9h6M15 21h6M15 15h6" />
   </svg>
 );
 
@@ -90,13 +79,6 @@ export const NODE_META: Record<FlowNodeType, NodeMeta> = {
     description: '固定话术 / AI 生成回复',
     accent: 'success',
   },
-  decision: {
-    type: 'decision',
-    icon: DecisionIcon,
-    title: '判断',
-    description: '条件/意图分支',
-    accent: 'warning',
-  },
   action: {
     type: 'action',
     icon: ActionIcon,
@@ -117,7 +99,6 @@ export const NODE_META: Record<FlowNodeType, NodeMeta> = {
 export const RECOMMENDATIONS: Record<FlowNodeType, FlowNodeType[]> = {
   start: ['dialog'],
   dialog: ['dialog', 'action', 'end'],
-  decision: ['dialog', 'action', 'end'],
   action: ['dialog', 'end'],
   end: [],
 };
@@ -140,8 +121,6 @@ export function getDefaultNodeData(type: FlowNodeType): FlowNodeData {
         interruptible: true,
         waitForResponse: false,
       };
-    case 'decision':
-      return { mode: 'intent', intents: [] };
     case 'action':
       return { actionType: 'transfer', config: {} };
     case 'end':
