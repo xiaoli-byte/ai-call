@@ -61,14 +61,18 @@ def _patch_connect(monkeypatch: pytest.MonkeyPatch, fake: FakeWS) -> None:
     monkeypatch.setattr(websockets, "connect", fake_connect)
 
 
-def _msg(event: str, payload: dict | None = None) -> str:
-    return json.dumps({"header": {"event": event}, "payload": payload or {}})
+def _msg(event: str, payload: dict | None = None, task_id: str | None = None) -> str:
+    header: dict = {"event": event}
+    if task_id is not None:
+        header["task_id"] = task_id
+    return json.dumps({"header": header, "payload": payload or {}})
 
 
-def _result(text: str, sentence_end: bool) -> str:
+def _result(text: str, sentence_end: bool, task_id: str | None = None) -> str:
     return _msg(
         "result-generated",
         {"output": {"sentence": {"text": text, "sentence_end": sentence_end}}},
+        task_id=task_id,
     )
 
 
@@ -224,6 +228,203 @@ async def test_end_speech_resets_task_for_next_utterance(monkeypatch: pytest.Mon
     assert run_tasks[0]["header"]["task_id"] != run_tasks[1]["header"]["task_id"]
     assert len(finish_tasks) == 1
     assert finish_tasks[0]["header"]["task_id"] == run_tasks[0]["header"]["task_id"]
+
+    await client.close()
+
+
+async def test_stale_final_from_finished_task_is_dropped(monkeypatch: pytest.MonkeyPatch) -> None:
+    """回归测试：真机曾出现"用户沉默却被记上一句"。根因：end_speech 本地合成
+    final 并发 finish-task 换新 task_id 后，服务端把旧 task 缓冲句 flush 成
+    sentence_end=true 的 result-generated（带旧 task_id）发回来——同一句话出了
+    第二个 final，被缓存成"待处理输入"并在下一问播完后当成回答消费。
+    修复后 _recv_loop 按当前活跃 task_id 过滤，旧 task 的迟到消息一律丢弃。
+    """
+    fake = FakeWS([_msg("task-started"), _result("收到了", False)])
+    _patch_connect(monkeypatch, fake)
+
+    events: list[tuple[str, str]] = []
+
+    async def on_event(ev) -> None:
+        events.append((ev.type, ev.text))
+
+    client = DashScopeFunASRClient(call_id="stale", api_key="k", on_event=on_event)
+    await client.connect()
+    await client.send_audio(b"\x00" * 640)
+    await _drain()
+
+    old_task_id = client._task_id
+    await client.end_speech()  # 本地合成 final「收到了」+ finish-task + 换新 task_id
+    assert ("final", "收到了") in events
+    assert client._task_id != old_task_id
+
+    # 服务端迟到的旧 task flush final（真机上带标点「收到了。」）→ 应被丢弃
+    events.clear()
+    fake._msgs.extend(
+        [
+            _result("收到了。", True, task_id=old_task_id),
+            _msg("task-finished", task_id=old_task_id),
+        ]
+    )
+    await _drain()
+    assert events == []  # 不产生重复 final/partial
+
+    # 下一句新 task 的结果正常放行（带新 task_id 与不带 task_id 都兼容）
+    fake._msgs.extend(
+        [
+            _msg("task-started", task_id=client._task_id),
+            _result("明天下午", False, task_id=client._task_id),
+        ]
+    )
+    await client.send_audio(b"\x00" * 640)
+    await _drain()
+    assert ("partial", "明天下午") in events
+
+    await client.close()
+
+
+async def test_end_speech_waits_for_server_flush_to_complete_text(monkeypatch: pytest.MonkeyPatch) -> None:
+    """flush 等待：真机复现快语速答"收到了"，speech_end 时 partial 只到"收"，
+    本地合成 final「收」→ LLM 判成"未收到"走错分支。修复后 end_speech 发
+    finish-task 后等服务端句末 flush（文本更完整），拿到就用它出 final。"""
+    fake = FakeWS([_msg("task-started"), _result("收", False)])
+    _patch_connect(monkeypatch, fake)
+
+    events: list[tuple[str, str]] = []
+
+    async def on_event(ev) -> None:
+        events.append((ev.type, ev.text))
+
+    client = DashScopeFunASRClient(call_id="flush", api_key="k", on_event=on_event)
+    await client.connect()
+    await client.send_audio(b"\x00" * 640)
+    await _drain()
+    assert client._current_text == "收"
+
+    old_task_id = client._task_id
+    end_task = asyncio.create_task(client.end_speech())
+    await _drain()  # end_speech 已发 finish-task、正在等 flush
+    assert not end_task.done()
+
+    # 服务端 flush 完整句子（旧 task_id）→ end_speech 用它出 final
+    fake._msgs.extend(
+        [
+            _result("收到了。", True, task_id=old_task_id),
+            _msg("task-finished", task_id=old_task_id),
+        ]
+    )
+    await asyncio.wait_for(end_task, timeout=2)
+    finals = [e for e in events if e[0] == "final"]
+    assert finals == [("final", "收到了。")]  # 完整文本，且只有一条（不重复）
+    assert client._flush_rescue_task_id is None
+
+    await client.close()
+
+
+async def test_end_speech_flush_timeout_falls_back_to_partial(monkeypatch: pytest.MonkeyPatch) -> None:
+    """flush 超时：服务端一直不回 → 回退最近 partial 合成 final（老行为），
+    且关闭救援窗口——此后旧 task 迟到的 flush 视为重复丢弃，不出第二条 final。"""
+    fake = FakeWS([_msg("task-started"), _result("收到了", False)])
+    _patch_connect(monkeypatch, fake)
+
+    events: list[tuple[str, str]] = []
+
+    async def on_event(ev) -> None:
+        events.append((ev.type, ev.text))
+
+    client = DashScopeFunASRClient(
+        call_id="flush-to", api_key="k", on_event=on_event, flush_wait_ms=50
+    )
+    await client.connect()
+    await client.send_audio(b"\x00" * 640)
+    await _drain()
+
+    old_task_id = client._task_id
+    await client.end_speech()  # 50ms 内无 flush → 超时回退
+    assert ("final", "收到了") in events
+    assert client._flush_rescue_task_id is None
+
+    # 超时后迟到的 flush → 丢弃
+    events.clear()
+    fake._msgs.append(_result("收到了。", True, task_id=old_task_id))
+    await _drain()
+    assert events == []
+
+    await client.close()
+
+
+async def test_slow_recognition_rescued_by_old_task_flush(monkeypatch: pytest.MonkeyPatch) -> None:
+    """救援窗口：语音段短于云端识别延迟时，speech_end 时刻一个 partial 都没到、
+    本地合成不出 final——此时旧 task 的句末 flush 是这句话唯一的识别结果，必须
+    放行（真机复现：第一句"喂"整句丢失）。放行第一条 final 后窗口关闭，
+    后续同 task 消息照常丢弃；在途 partial 不放行也不污染新 task 的 _current_text。
+    """
+    fake = FakeWS([_msg("task-started")])
+    _patch_connect(monkeypatch, fake)
+
+    events: list[tuple[str, str]] = []
+
+    async def on_event(ev) -> None:
+        events.append((ev.type, ev.text))
+
+    client = DashScopeFunASRClient(call_id="rescue", api_key="k", on_event=on_event)
+    await client.connect()
+    await client.send_audio(b"\x00" * 640)
+    await _drain()
+
+    old_task_id = client._task_id
+    await client.end_speech()  # 无 partial → 本地不合成 final，开救援窗口
+    assert events == []
+    assert client._flush_rescue_task_id == old_task_id
+
+    # 旧 task 在途 partial → 丢弃；句末 flush final → 放行并关窗
+    fake._msgs.extend(
+        [
+            _result("喂", False, task_id=old_task_id),
+            _result("喂。", True, task_id=old_task_id),
+            _msg("task-finished", task_id=old_task_id),
+        ]
+    )
+    await _drain()
+    assert events == [("final", "喂。")]
+    assert client._flush_rescue_task_id is None
+    assert client._current_text == ""  # 救援不污染新 task 的 partial 缓存
+
+    # 关窗后同 task 再来消息不再放行
+    events.clear()
+    fake._msgs.append(_result("幽灵", True, task_id=old_task_id))
+    await _drain()
+    assert events == []
+
+    await client.close()
+
+
+async def test_rescue_window_closes_on_task_finished_without_text(monkeypatch: pytest.MonkeyPatch) -> None:
+    """旧 task 收尾（task-finished/task-failed）时始终没出词 → 关窗，
+    避免陈旧救援窗口误放行更晚的消息。"""
+    fake = FakeWS([_msg("task-started")])
+    _patch_connect(monkeypatch, fake)
+
+    events: list[tuple[str, str]] = []
+
+    async def on_event(ev) -> None:
+        events.append((ev.type, ev.text))
+
+    client = DashScopeFunASRClient(call_id="rescue2", api_key="k", on_event=on_event)
+    await client.connect()
+    await client.send_audio(b"\x00" * 640)
+    await _drain()
+
+    old_task_id = client._task_id
+    await client.end_speech()
+    assert client._flush_rescue_task_id == old_task_id
+
+    fake._msgs.append(_msg("task-finished", task_id=old_task_id))
+    await _drain()
+    assert client._flush_rescue_task_id is None
+
+    fake._msgs.append(_result("迟到文本", True, task_id=old_task_id))
+    await _drain()
+    assert events == []
 
     await client.close()
 

@@ -227,6 +227,7 @@ class DashScopeFunASRClient:
         on_event: Optional[Callable[[STTEvent], Awaitable[None]]] = None,
         ws_url: Optional[str] = None,
         connect_timeout_s: float = 10.0,
+        flush_wait_ms: int = 600,
     ) -> None:
         self._call_id = call_id
         self._api_key = api_key
@@ -247,6 +248,12 @@ class DashScopeFunASRClient:
         self._pending_audio: list[bytes] = []
         # 最近一次 partial 文本，供 end_speech 在服务端未自判句尾时兜底成 final
         self._current_text = ""
+        # 救援窗口：end_speech 时本地没合成出 final 的旧 task_id（见 end_speech）
+        self._flush_rescue_task_id: Optional[str] = None
+        # end_speech 等待服务端句末 flush 的 waiter（见 end_speech）
+        self._flush_waiter: Optional[asyncio.Future[Optional[str]]] = None
+        # 等 flush 的最长时间（ms）：0 关闭等待（退回纯本地合成 + 救援窗口）
+        self._flush_wait_ms = flush_wait_ms
         # run-task 是否已发：延迟到首帧真实音频再发，避免 task 空闲 23s 超时
         self._run_task_sent = False
 
@@ -358,43 +365,85 @@ class DashScopeFunASRClient:
            下一句话会在上一句文本后面继续拼接（真机复现：第一轮"到了呀"，第二轮
            变成"到了呀，明天下午2点"）。发 finish-task 后立即（不等服务端确认）
            重置本地状态，下一句第一帧音频触发全新 run-task，服务端从零识别。
+
+        出 final 的取词顺序（真机复现：快语速答"收到了"，speech_end 时 partial 只到
+        "收"，本地合成 final「收」走错分支）：
+        a) 发 finish-task 后等服务端句末 flush 最多 _flush_wait_ms（服务端文本更完整、
+           带标点），拿到就用它；
+        b) 超时则回退最近 partial 合成（老行为）；
+        c) 两者皆空则保留救援窗口，迟到的 flush 由 _recv_loop 直接放行补出。
         """
         if self._closed:
             return
         text = self._current_text
         self._current_text = ""
-        if text and self._on_event is not None:
-            try:
-                await self._on_event(STTEvent(type="final", text=text))
-            except Exception as err:
-                logger.exception(
-                    "[FunASR/Cloud] call_id=%s end_speech final callback error: %s",
-                    self._call_id,
-                    err,
-                )
 
+        flush_text: Optional[str] = None
         if self._run_task_sent and self._ws is not None:
+            old_task_id = self._task_id
+            waiter: asyncio.Future[Optional[str]] = (
+                asyncio.get_running_loop().create_future()
+            )
+            self._flush_waiter = waiter
+            self._flush_rescue_task_id = old_task_id
+            finish_sent = False
             try:
                 finish_task = {
                     "header": {
                         "action": "finish-task",
-                        "task_id": self._task_id,
+                        "task_id": old_task_id,
                         "streaming": "duplex",
                     },
                     "payload": {"input": {}},
                 }
                 await self._ws.send(json.dumps(finish_task))
+                finish_sent = True
             except Exception as err:
                 logger.warning(
                     "[FunASR/Cloud] call_id=%s end_speech finish-task failed: %s",
                     self._call_id,
                     err,
                 )
-            # 不等服务端 task-finished 确认：立即重置，下一句第一帧音频即可开新 task。
-            # WS 连接保留（DashScope 协议支持单连接多 task 复用），_recv_loop 继续收。
+            # 不等服务端 task-finished 确认即重置本地状态：下一句第一帧音频即可开新
+            # task（WS 连接保留，DashScope 协议支持单连接多 task 复用）。flush 等待
+            # 期间到达的下一句音频走 send_audio 缓冲，不受影响。
             self._run_task_sent = False
             self._task_id = uuid4().hex
             self._started.clear()
+
+            if finish_sent and self._flush_wait_ms > 0:
+                try:
+                    flush_text = await asyncio.wait_for(
+                        waiter, timeout=self._flush_wait_ms / 1000
+                    )
+                except asyncio.TimeoutError:
+                    flush_text = None
+            self._flush_waiter = None
+            if flush_text:
+                # 服务端 flush 已取到，本句完结，关救援窗口
+                self._flush_rescue_task_id = None
+                if text and flush_text != text:
+                    logger.info(
+                        "[FunASR/Cloud] call_id=%s 句末 flush 补全: %r -> %r",
+                        self._call_id,
+                        text,
+                        flush_text,
+                    )
+            elif text:
+                # 本地有词可兜底：旧 task 迟到的 flush 一律视为重复丢弃
+                self._flush_rescue_task_id = None
+            # else: 两者皆空，保留救援窗口等迟到 flush（见 _recv_loop）
+
+        final_text = flush_text or text
+        if final_text and self._on_event is not None:
+            try:
+                await self._on_event(STTEvent(type="final", text=final_text))
+            except Exception as err:
+                logger.exception(
+                    "[FunASR/Cloud] call_id=%s end_speech final callback error: %s",
+                    self._call_id,
+                    err,
+                )
 
     async def close(self) -> None:
         if self._closed:
@@ -448,6 +497,29 @@ class DashScopeFunASRClient:
                 header = msg.get("header", {}) or {}
                 event = header.get("event", "")
 
+                # 只处理当前活跃 task 的事件：end_speech 发 finish-task 后立即换新
+                # task_id（不等服务端确认），但服务端随后会把旧 task 缓冲的句子
+                # flush 成 sentence_end=true 的 result-generated（带旧 task_id）——
+                # 该句 final 本地已在 end_speech 合成上报过，不过滤会重复出词
+                # （真机复现：用户沉默却被记上一句"收到了。"并被当成下一问的回答）。
+                # 例外（救援窗口）：本地没合成出 final 时，旧 task 的 flush 是这句话
+                # 唯一的识别结果，放行其 result-generated 并在出词后关窗。
+                msg_task_id = header.get("task_id", "")
+                if msg_task_id and msg_task_id != self._task_id:
+                    if not (
+                        msg_task_id == self._flush_rescue_task_id
+                        and event == "result-generated"
+                    ):
+                        if event in ("task-finished", "task-failed") and (
+                            msg_task_id == self._flush_rescue_task_id
+                        ):
+                            # 旧 task 已收尾但始终没出词：关窗，避免陈旧窗口误放行；
+                            # end_speech 若还在等 flush，提前结束等待（不再有词了）
+                            self._flush_rescue_task_id = None
+                            if self._flush_waiter is not None and not self._flush_waiter.done():
+                                self._flush_waiter.set_result(None)
+                        continue
+
                 if event == "task-started":
                     self._started.set()
                     continue
@@ -481,11 +553,30 @@ class DashScopeFunASRClient:
                 is_final = bool(
                     isinstance(sentence, dict) and sentence.get("sentence_end", False)
                 )
-                # 记录最近 partial 供 end_speech 兜底；服务端自判句尾则清空避免重复
-                self._current_text = "" if is_final else text
-                stt_event = STTEvent(
-                    type="final" if is_final else "partial", text=text
-                )
+
+                if msg_task_id and msg_task_id == self._flush_rescue_task_id:
+                    # 旧 task 的结果：只关心句末 flush final（文本最完整），在途
+                    # partial 丢弃；不碰 _current_text（属于新 task）。
+                    if not is_final:
+                        continue
+                    self._flush_rescue_task_id = None
+                    if self._flush_waiter is not None and not self._flush_waiter.done():
+                        # end_speech 正在等：交给它出 final（补全/替代本地合成文本）
+                        self._flush_waiter.set_result(text)
+                        continue
+                    # end_speech 已超时返回且本地没出过词：救援直接补出
+                    stt_event = STTEvent(type="final", text=text)
+                    logger.info(
+                        "[FunASR/Cloud] call_id=%s 救援旧 task 句末 flush: %s",
+                        self._call_id,
+                        text,
+                    )
+                else:
+                    # 记录最近 partial 供 end_speech 兜底；服务端自判句尾则清空避免重复
+                    self._current_text = "" if is_final else text
+                    stt_event = STTEvent(
+                        type="final" if is_final else "partial", text=text
+                    )
 
                 if self._on_event is not None:
                     try:
@@ -531,12 +622,17 @@ def create_stt_client(
             return FunASRClient(
                 ws_url, call_id, mode=mode, hotwords=hotwords, on_event=on_event
             )
+        try:
+            flush_wait_ms = int(os.getenv("ASR_FLUSH_WAIT_MS", "600"))
+        except ValueError:
+            flush_wait_ms = 600
         return DashScopeFunASRClient(
             call_id=call_id,
             api_key=api_key,
             model=model,
             hotwords=hotwords,
             on_event=on_event,
+            flush_wait_ms=flush_wait_ms,
         )
     return FunASRClient(
         ws_url, call_id, mode=mode, hotwords=hotwords, on_event=on_event
