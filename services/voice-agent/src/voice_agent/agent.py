@@ -127,6 +127,7 @@ class VoiceAgent:
         asr_tts_gate_enabled: bool = True,
         asr_tts_gate_web_enabled: bool = False,
         asr_tts_tail_guard_ms: int = 500,
+        asr_tail_guard_ms: int = 800,
         barge_in_during_tts_enabled: bool = False,
         barge_in_min_ms: int = 500,
         barge_in_rms_threshold: float = 0.08,
@@ -139,6 +140,8 @@ class VoiceAgent:
         # AI providers（共享实例）
         self._llm = llm
         self._tts = tts
+        # 按场景 ttsConfig.provider 动态创建的 TTS 实例缓存（provider → 实例）。
+        self._tts_overrides: dict[str, Any] = {}
         self._rag = rag or RagService()
         self._tools = tools or ToolDispatcher()
         self._tasks = tasks or TaskClient()
@@ -188,6 +191,10 @@ class VoiceAgent:
         self._asr_tts_gate_enabled = asr_tts_gate_enabled
         self._asr_tts_gate_web_enabled = asr_tts_gate_web_enabled
         self._asr_tts_tail_guard_ms = max(0, asr_tts_tail_guard_ms)
+        # 拖尾保护（TailGuard）兜底窗口：utterance 起始信号缺失时（首个 partial 丢失、
+        # 短语只出 final），用「final 到达 - 本轮 speak 起始 < 窗口」判定拖尾。
+        # 设 0 关闭兜底（此时仅靠 partial 起始信号判定）。
+        self._asr_tail_guard_window_ms = max(0, asr_tail_guard_ms)
         self._barge_in_during_tts_enabled = barge_in_during_tts_enabled
         self._barge_in_min_ms = max(0, barge_in_min_ms)
         self._barge_in_rms_threshold = max(0.0, barge_in_rms_threshold)
@@ -208,6 +215,11 @@ class VoiceAgent:
         # 语义延长日志去重：provider 每帧被查询，仅在本 utterance 首次生效时打一行。
         self._semantic_extend_logged: set[str] = set()
         self._speaking: dict[str, bool] = {}
+        # 拖尾保护：本轮 TTS 开口时刻（_speak 设 _speaking=True 时记）。
+        self._speak_started_at: dict[str, float] = {}
+        # 拖尾保护：本 ASR utterance 起始时刻（本句首个 partial 到达时记，
+        # final/speech_start/speech_end 消费并清除）。缺失时走兜底窗口。
+        self._utterance_started_at: dict[str, float] = {}
         self._channels: dict[str, str] = {}  # call_id → 会话通道（freeswitch|web）
         self._asr_suppressed_until: dict[str, float] = {}
         self._asr_gate_logged: set[str] = set()
@@ -231,11 +243,21 @@ class VoiceAgent:
         channel: str = "freeswitch",
     ) -> None:
         """启动新通话会话。channel 来自首帧 metadata（freeswitch|web），决定门控策略。"""
-        # 初始化 session
-        system_msg = ChatMessage(
-            role="system",
-            content=fill_template(scenario.system_prompt, variables),
-        )
+        # 初始化 session。system prompt 末尾追加音色人设/沟通风格，
+        # 主循环与流程 AI 话术节点共用这条 system 消息，话术语气随音色变化。
+        from .voice_personas import build_voice_style_prompt
+
+        system_content = fill_template(scenario.system_prompt, variables)
+        style_prompt = build_voice_style_prompt(scenario)
+        system_content += style_prompt
+        if style_prompt:
+            logger.info(
+                "[VoiceAgent] call_id=%s 注入音色人设/风格段（voice=%s, %d 字）",
+                call_id,
+                (scenario.tts_config or {}).get("voice"),
+                len(style_prompt),
+            )
+        system_msg = ChatMessage(role="system", content=system_content)
         session = CallSession(
             call_id=call_id,
             scenario=scenario.scenario.value if hasattr(scenario.scenario, "value") else str(scenario.scenario),
@@ -279,7 +301,7 @@ class VoiceAgent:
 
         委托给 FlowExecutor（flow_executor.py），支持 5 节点系统的完整执行：
         - Dialog: script/question/ai 三模式 + retryCount 重试
-        - Decision: condition 表达式 + intent LLM 分类
+        - Edge: label + intentExamples 意图路由
         - Action: transfer/sms/crm/api 四类显式分发
         - End: complete vs hangup
         """
@@ -458,6 +480,49 @@ class VoiceAgent:
         finally:
             self._endpoint_waiters.pop(call_id, None)
 
+    def _resolve_tts(self, call_id: str, scenario: Optional[ScenarioConfig]) -> Any:
+        """按场景 ttsConfig.provider 选择 TTS 实例。
+
+        场景未指定 provider、或与默认实例一致时用默认实例（TTS_PROVIDER 环境变量创建）；
+        否则按 provider 惰性创建并缓存。目标 provider 凭证缺失（工厂降级为 mock）时
+        回退默认实例，避免真实通话被静默替换成无声 mock。
+        """
+        default = self._tts
+        provider = ""
+        if scenario:
+            provider = str((scenario.tts_config or {}).get("provider") or "").strip().lower()
+        if not provider or default is None:
+            return default
+
+        # 实例 name 与 provider 键的对齐（QwenTTS.name == "qwen-tts"）。
+        default_provider = {"qwen-tts": "qwen"}.get(
+            str(getattr(default, "name", "") or ""), str(getattr(default, "name", "") or "")
+        )
+        if provider == default_provider:
+            return default
+
+        cached = self._tts_overrides.get(provider)
+        if cached is not None:
+            return cached
+
+        from .tts_factory import create_tts
+
+        instance = create_tts(provider)
+        if provider != "mock" and str(getattr(instance, "name", "")) == "mock":
+            logger.warning(
+                "[VoiceAgent] call_id=%s 场景要求 TTS provider=%s 但配置缺失，回退默认 %s",
+                call_id,
+                provider,
+                default_provider,
+            )
+            instance = default
+        else:
+            logger.info(
+                "[VoiceAgent] call_id=%s 按场景切换 TTS provider=%s", call_id, provider
+            )
+        self._tts_overrides[provider] = instance
+        return instance
+
     async def _speak(self, call_id: str, text: str) -> None:
         """文本转语音并播放。支持 barge-in。"""
         callbacks = self._callbacks.get(call_id)
@@ -467,10 +532,14 @@ class VoiceAgent:
         if self._dry_run.get(call_id):
             return
 
-        if self._tts is None:
+        scenario = self._scenario_configs.get(call_id)
+        tts = self._resolve_tts(call_id, scenario)
+        if tts is None:
             return
 
         self._speaking[call_id] = True
+        # 拖尾保护：记录本轮开口时刻，用于判定后续 ASR 语音是否开始于开口之前。
+        self._speak_started_at[call_id] = time.monotonic()
         self._asr_suppressed_until.pop(call_id, None)
         self._barge_in_voice_ms.pop(call_id, None)
         self._barge_in_low_ms.pop(call_id, None)
@@ -489,7 +558,6 @@ class VoiceAgent:
                     tts_bytes += len(chunk.audio)
                     await callbacks.on_audio_output(chunk.audio)
 
-            scenario = self._scenario_configs.get(call_id)
             tts_config = scenario.tts_config if scenario else {}
             speaker = tts_config.get("voice")
             instruct_text = (
@@ -497,7 +565,7 @@ class VoiceAgent:
                 or tts_config.get("style_prompt")
                 or (scenario.communication_style_prompt if scenario else None)
             )
-            await self._tts.synthesize(
+            await tts.synthesize(
                 text,
                 on_chunk,
                 speaker=str(speaker) if speaker else None,
@@ -532,6 +600,8 @@ class VoiceAgent:
                 self._barge_in_low_ms.pop(call_id, None)
                 self._barge_in_probe.pop(call_id, None)
             self._speaking.pop(call_id, None)
+            # 开口时刻随本轮播报结束失效，避免跨轮/跨测试泄漏。
+            self._speak_started_at.pop(call_id, None)
 
     def _interrupt_speaking(self, call_id: str) -> None:
         """barge-in：用户开始说话时中断 TTS 和 LLM 生成。"""
@@ -542,6 +612,9 @@ class VoiceAgent:
         self._reset_semantic_partial(call_id)
         if self._tts is not None:
             self._tts.interrupt()
+        for override in self._tts_overrides.values():
+            if override is not None and override is not self._tts:
+                override.interrupt()
         if self._llm is not None:
             self._llm.cancel()
         logger.info(
@@ -599,6 +672,55 @@ class VoiceAgent:
         """
         self._recent_partial.pop(call_id, None)
         self._semantic_extend_logged.discard(call_id)
+
+    def _classify_tail(
+        self, call_id: str, utterance_started_at: Optional[float], event_time: float
+    ) -> tuple[bool, str]:
+        """判定当前 ASR 语音是否为「agent 本轮开口之前就已开始」的拖尾。
+
+        仅在 agent 正在播报（_speaking=True）且本轮 speak 起始时刻存在时才可能判为拖尾；
+        speak 起始缺失（如单测直接置 _speaking 而未走 _speak）时恒返回 False，保持既有打断语义。
+
+        信号优先级：
+          1) 本 utterance 起始时刻（首个 partial 到达时）<= 开口时刻 + epsilon → 拖尾；
+             起始时刻晚于开口 = 开口后才开始说 = 真打断，返回 False。
+          2) utterance 起始时刻缺失（首个 partial 丢失 / 短语只出 final）→ 兜底窗口：
+             event 到达时刻 - 开口时刻 < ASR_TAIL_GUARD_MS 判为拖尾（窗口为 0 时关闭兜底）。
+        返回 (is_tail, 判定依据文本，含真正决定判定的那个时间差)。
+        """
+        speak_at = self._speak_started_at.get(call_id)
+        if speak_at is None:
+            return False, ""
+        epsilon = 0.05  # 50ms 容差：近乎同时开始也算拖尾
+        if utterance_started_at is not None:
+            if utterance_started_at <= speak_at + epsilon:
+                lead_ms = int((speak_at - utterance_started_at) * 1000)
+                return True, f"utterance 早于开口 {lead_ms}ms（partial 信号）"
+            return False, ""
+        # 兜底窗口：无 utterance 起始信号时才启用
+        if self._asr_tail_guard_window_ms <= 0:
+            return False, ""
+        delta_ms = (event_time - speak_at) * 1000
+        if delta_ms < self._asr_tail_guard_window_ms:
+            return True, (
+                f"final 距开口 {int(delta_ms)}ms < {self._asr_tail_guard_window_ms}ms（兜底窗）"
+            )
+        return False, ""
+
+    def _merge_tail_into_last_user_message(self, call_id: str, text: str) -> None:
+        """把拖尾文本合并进 session.messages 里最后一条 user 消息，保对话史完整。
+
+        找不到 user 消息（理论上不该发生，流程会在消费用户语音后追加 user 消息）时，
+        保守追加一条新的 user 消息，避免拖尾文本彻底丢失。
+        """
+        session = self._sessions.get(call_id)
+        if not session:
+            return
+        for msg in reversed(session.messages):
+            if msg.role == "user":
+                msg.content = f"{msg.content} {text}".strip() if msg.content else text
+                return
+        session.messages.append(ChatMessage(role="user", content=text))
 
     def _semantic_extra_silence_frames(self, call_id: str) -> int:
         """VAD 的 extra_silence_frames_provider：按最近 partial 结尾计算延长帧数。
@@ -757,16 +879,18 @@ class VoiceAgent:
         for frame in audio.split_into_frames(audio_bytes, self._vad_frame_ms, 16000):
             state, frames_to_send = vad.feed(frame)
             if state == "speech_start":
-                # 新 utterance 起说：复位上一句遗留的 partial 结尾状态。
+                # 新 utterance 起说：复位上一句遗留的 partial 结尾状态与拖尾起始时刻。
                 self._reset_semantic_partial(call_id)
+                self._utterance_started_at.pop(call_id, None)
                 logger.info(
                     "[VAD] call_id=%s speech_start flush_ms=%d",
                     call_id,
                     getattr(vad, "last_flush_ms", 0),
                 )
             elif state == "speech_end":
-                # utterance 结束：清掉本句 partial，避免带进下一句端点判定。
+                # utterance 结束：清掉本句 partial 与拖尾起始时刻，避免带进下一句判定。
                 self._reset_semantic_partial(call_id)
+                self._utterance_started_at.pop(call_id, None)
                 logger.info(
                     "[VAD] call_id=%s speech_end segment_ms=%d",
                     call_id,
@@ -794,8 +918,25 @@ class VoiceAgent:
             "[ASR] call_id=%s type=%s text=%s", call_id, event.type, event.text
         )
         if event.type == "partial" and event.text:
-            # 用户开始说话 → barge-in
+            now = time.monotonic()
+            # 记录本 utterance 起始时刻（首个 partial）。供拖尾判定与后续 final 兜底。
+            if call_id not in self._utterance_started_at:
+                self._utterance_started_at[call_id] = now
+            # 拖尾保护：agent 正在播报，且本 utterance 起始于开口之前 → 上一轮拖尾，
+            # 不是对 agent 的打断。不打断、不写 _recent_partial（不污染下一句端点）。
             if self._speaking.get(call_id):
+                is_tail, detail = self._classify_tail(
+                    call_id, self._utterance_started_at.get(call_id), now
+                )
+                if is_tail:
+                    logger.info(
+                        "[TailGuard] call_id=%s partial 拖尾不打断 %s text=%s",
+                        call_id,
+                        detail,
+                        event.text,
+                    )
+                    return
+                # 用户开始说话 → barge-in
                 logger.info(
                     "[BargeIn] call_id=%s channel=%s source=stt_partial barge_in",
                     call_id,
@@ -806,6 +947,9 @@ class VoiceAgent:
             # 否则触发 barge-in 的这条 partial 会被 _interrupt_speaking 的复位清掉。
             self._recent_partial[call_id] = event.text
         elif event.type == "final":
+            now = time.monotonic()
+            # 本 utterance 结束：消费并清除其起始时刻（无论是否退化/空，均不残留）。
+            utterance_started_at = self._utterance_started_at.pop(call_id, None)
             if event.text and _is_degenerate_transcript(event.text):
                 # 退化识别（回声/噪声幻觉）：既不落转写也不驱动对话，
                 # 更不触发端点/打断，防止 agent 被自己的回声带偏。
@@ -815,6 +959,22 @@ class VoiceAgent:
                     event.text,
                 )
                 return
+            # 拖尾保护：agent 正在播报，且这句语音开始于本轮开口之前 → 上一轮拖尾。
+            # 不作为对当前问题的回答（不解析 waiter、不进 _injected_text、不打断），
+            # 只合并进上一条 user 消息保对话史完整。须在 waiter 解析之前判定。
+            if event.text and self._speaking.get(call_id):
+                is_tail, detail = self._classify_tail(
+                    call_id, utterance_started_at, now
+                )
+                if is_tail:
+                    self._merge_tail_into_last_user_message(call_id, event.text)
+                    logger.info(
+                        "[TailGuard] call_id=%s final 拖尾合并入上轮 %s text=%s",
+                        call_id,
+                        detail,
+                        event.text,
+                    )
+                    return
             fut = self._endpoint_waiters.get(call_id)
             if fut and not fut.done():
                 fut.set_result(event.text)
@@ -869,6 +1029,8 @@ class VoiceAgent:
         self._callbacks.pop(call_id, None)
         self._injected_text.pop(call_id, None)
         self._speaking.pop(call_id, None)
+        self._speak_started_at.pop(call_id, None)
+        self._utterance_started_at.pop(call_id, None)
         self._channels.pop(call_id, None)
         self._asr_suppressed_until.pop(call_id, None)
         self._asr_gate_logged.discard(call_id)
@@ -886,6 +1048,10 @@ class VoiceAgent:
             await self._llm.close()
         if self._tts:
             await self._tts.close()
+        for override in self._tts_overrides.values():
+            if override is not None and override is not self._tts:
+                await override.close()
+        self._tts_overrides.clear()
 
 
 class _FlowExecutorAdapter:

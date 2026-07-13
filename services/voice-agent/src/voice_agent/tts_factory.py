@@ -20,8 +20,9 @@ from .tts import CosyVoiceTTS, MockTTS
 logger = logging.getLogger(__name__)
 
 
-def create_tts() -> Any:
-    """根据环境变量创建 TTS 实例。
+def create_tts(provider: str | None = None) -> Any:
+    """创建 TTS 实例。provider 显式传入时优先（按场景 ttsConfig.provider 动态选择），
+    否则回退 TTS_PROVIDER 环境变量。
 
     返回的实例满足 TTS 协议：
         name: str
@@ -29,7 +30,7 @@ def create_tts() -> Any:
         interrupt() -> None
         close() -> None
     """
-    provider = os.getenv("TTS_PROVIDER", "mock").lower()
+    provider = (provider or os.getenv("TTS_PROVIDER", "mock")).lower()
 
     if provider == "mock":
         logger.info("TTS provider: mock")

@@ -15,6 +15,7 @@ from voice_agent.flow_executor import render_template
 from voice_agent.scenarios import SCENARIO_CONFIGS, DEFAULT_VARIABLES
 from voice_agent.types import (
     CallOutcome,
+    CallSession,
     ChatMessage,
     LLMEvent,
     STTEvent,
@@ -869,7 +870,7 @@ async def test_executes_immutable_flow_snapshot(
 
 
 @pytest.mark.asyncio
-async def test_flow_decision_uses_label_then_default(
+async def test_flow_dialog_uses_edge_intent_then_default(
     agent: VoiceAgent,
     scenario_config,
     variables,
@@ -884,15 +885,13 @@ async def test_flow_decision_uses_label_then_default(
                 "type": "dialog",
                 "data": {"mode": "question", "prompt": "您感兴趣吗？", "waitForResponse": True},
             },
-            {"id": "decision", "type": "decision", "data": {"mode": "intent"}},
             {"id": "yes", "type": "end", "data": {"farewell": "好的，为您登记"}},
             {"id": "no", "type": "end", "data": {"farewell": "感谢接听"}},
         ],
         "edges": [
             {"id": "e1", "source": "start", "target": "question"},
-            {"id": "e2", "source": "question", "target": "decision"},
-            {"id": "e3", "source": "decision", "target": "yes", "label": "感兴趣/考虑"},
-            {"id": "e4", "source": "decision", "target": "no", "label": "default"},
+            {"id": "e2", "source": "question", "target": "yes", "label": "感兴趣/考虑"},
+            {"id": "e3", "source": "question", "target": "no", "label": "default"},
         ],
     }
     task = asyncio.create_task(
@@ -913,7 +912,7 @@ async def test_flow_decision_uses_label_then_default(
 
 
 @pytest.mark.asyncio
-async def test_flow_ai_dialog_generates_once_then_decision_uses_user_input(
+async def test_flow_ai_dialog_generates_once_then_edge_intent_uses_user_input(
     agent: VoiceAgent,
     mock_llm,
     scenario_config,
@@ -938,19 +937,13 @@ async def test_flow_ai_dialog_generates_once_then_decision_uses_user_input(
                     "waitForResponse": True,
                 },
             },
-            {
-                "id": "decision",
-                "type": "decision",
-                "data": {"mode": "intent", "intents": ["满意", "未收到"]},
-            },
             {"id": "received", "type": "end", "data": {"farewell": "感谢反馈"}},
             {"id": "missing", "type": "end", "data": {"farewell": "我来帮您登记售后"}},
         ],
         "edges": [
             {"id": "e1", "source": "start", "target": "ai"},
-            {"id": "e2", "source": "ai", "target": "decision"},
-            {"id": "e3", "source": "decision", "target": "received", "label": "满意"},
-            {"id": "e4", "source": "decision", "target": "missing", "label": "未收到"},
+            {"id": "e2", "source": "ai", "target": "received", "label": "满意"},
+            {"id": "e3", "source": "ai", "target": "missing", "label": "未收到"},
         ],
     }
 
@@ -1172,3 +1165,166 @@ async def test_speak_swallows_barge_in_cancellation(agent: VoiceAgent) -> None:
     # 直接以任务运行以便 current_task().cancelling() 有意义;不应抛出
     await asyncio.create_task(agent._speak(call_id, "你好"))
     assert call_id not in agent._speaking
+
+
+# ---------------------------------------------------------------------------
+# 拖尾保护（TailGuard）：开始于 agent 本轮开口之前的 ASR 语音属于上一轮拖尾，
+# 不应触发打断、不应被当作对当前问题的回答，只合并进上一条 user 消息。
+# ---------------------------------------------------------------------------
+
+
+def _seed_tail_session(agent: VoiceAgent, call_id: str) -> CallSession:
+    """构造一个已含一条 user 消息的 session（模拟流程已消费上一轮用户语音）。"""
+    session = CallSession(
+        call_id=call_id,
+        scenario="ecommerce",
+        variables={},
+        messages=[
+            ChatMessage(role="user", content="啊是的是的"),
+            ChatMessage(role="assistant", content="邀约话术"),
+        ],
+    )
+    agent._sessions[call_id] = session
+    return session
+
+
+@pytest.mark.asyncio
+async def test_tail_final_via_fallback_window_merges_not_answer(
+    agent: VoiceAgent, mock_tts
+) -> None:
+    """兜底窗口：无 partial（final-only）且 final 落在开口后窗口内 → 判拖尾。
+
+    复刻真机 bug：拖尾 final 早于 agent 开口就在说，只出 final 不出 partial。
+    应不打断、不进 _injected_text、不解析 waiter，只合并进上一条 user 消息。
+    """
+    call_id = "tail-fallback"
+    agent._callbacks[call_id] = NoopCallbacks()
+    agent._channels[call_id] = "web"
+    session = _seed_tail_session(agent, call_id)
+    agent._speaking[call_id] = True
+    agent._speak_started_at[call_id] = time.monotonic()  # 刚开口，final 将在 800ms 窗口内
+
+    await agent._on_stt_event(call_id, STTEvent(type="final", text="挺满意的挺满意的"))
+
+    assert not mock_tts.interrupt_called  # 不打断
+    assert agent._speaking.get(call_id) is True  # 播报继续
+    assert call_id not in agent._injected_text  # 不进缓冲
+    assert call_id not in agent._endpoint_waiters  # 未凭空建 waiter
+    assert session.messages[0].content == "啊是的是的 挺满意的挺满意的"  # 合并入上轮
+
+
+@pytest.mark.asyncio
+async def test_tail_final_via_primary_partial_signal_merges(
+    agent: VoiceAgent, mock_tts
+) -> None:
+    """主信号：utterance 起始（首个 partial）早于开口 → 判拖尾，即便 final 距开口很久。"""
+    call_id = "tail-primary"
+    agent._callbacks[call_id] = NoopCallbacks()
+    agent._channels[call_id] = "web"
+    session = _seed_tail_session(agent, call_id)
+    agent._speaking[call_id] = True
+    t = time.monotonic()
+    agent._speak_started_at[call_id] = t
+    agent._utterance_started_at[call_id] = t - 0.5  # utterance 早于开口 0.5s
+
+    await agent._on_stt_event(call_id, STTEvent(type="final", text="挺满意的"))
+
+    assert not mock_tts.interrupt_called
+    assert agent._speaking.get(call_id) is True
+    assert call_id not in agent._injected_text
+    assert session.messages[0].content == "啊是的是的 挺满意的"
+
+
+@pytest.mark.asyncio
+async def test_tail_partial_pre_speak_does_not_interrupt(
+    agent: VoiceAgent, mock_tts, mock_llm
+) -> None:
+    """拖尾 partial（utterance 起始早于开口）不打断，也不写 _recent_partial。"""
+    call_id = "tail-partial"
+    agent._callbacks[call_id] = NoopCallbacks()
+    agent._channels[call_id] = "web"
+    agent._speaking[call_id] = True
+    t = time.monotonic()
+    agent._speak_started_at[call_id] = t
+    agent._utterance_started_at[call_id] = t - 0.3
+
+    await agent._on_stt_event(call_id, STTEvent(type="partial", text="挺满意"))
+
+    assert not mock_tts.interrupt_called
+    assert not mock_llm.cancel_called
+    assert agent._speaking.get(call_id) is True
+    assert agent._recent_partial.get(call_id) is None  # 拖尾 partial 不污染端点缓存
+
+
+@pytest.mark.asyncio
+async def test_post_speak_partial_still_interrupts(
+    agent: VoiceAgent, mock_tts, mock_llm
+) -> None:
+    """反例：agent 开口之后才到达的 partial = 真打断，行为不变。"""
+    call_id = "post-partial"
+    agent._callbacks[call_id] = NoopCallbacks()
+    agent._channels[call_id] = "web"
+    agent._speaking[call_id] = True
+    agent._speak_started_at[call_id] = time.monotonic() - 1.0  # 开口在 1s 前
+
+    await agent._on_stt_event(call_id, STTEvent(type="partial", text="停一下"))
+
+    assert mock_tts.interrupt_called
+    assert mock_llm.cancel_called
+    assert not agent._speaking.get(call_id)
+    assert agent._recent_partial.get(call_id) == "停一下"
+
+
+@pytest.mark.asyncio
+async def test_post_speak_final_with_utterance_start_buffers_not_tail(
+    agent: VoiceAgent, mock_tts
+) -> None:
+    """反例：utterance 起始晚于开口（有 partial）→ 真打断，final 照常缓冲。"""
+    call_id = "post-final-utt"
+    agent._callbacks[call_id] = NoopCallbacks()
+    agent._channels[call_id] = "web"
+    agent._speaking[call_id] = True
+    t = time.monotonic()
+    agent._speak_started_at[call_id] = t
+    agent._utterance_started_at[call_id] = t + 0.1  # 开口后才开始
+
+    await agent._on_stt_event(call_id, STTEvent(type="final", text="停一下"))
+
+    assert mock_tts.interrupt_called
+    assert not agent._speaking.get(call_id)
+    assert await agent._wait_for_user_speech(call_id) == "停一下"
+
+
+@pytest.mark.asyncio
+async def test_tail_fallback_disabled_final_only_buffers(
+    agent: VoiceAgent, mock_tts
+) -> None:
+    """兜底窗口关闭（ASR_TAIL_GUARD_MS=0）+ 无 partial → 非拖尾，final 照常缓冲打断。"""
+    call_id = "no-fallback"
+    agent._asr_tail_guard_window_ms = 0
+    agent._callbacks[call_id] = NoopCallbacks()
+    agent._channels[call_id] = "web"
+    agent._speaking[call_id] = True
+    agent._speak_started_at[call_id] = time.monotonic()  # 窗口内，但兜底已关
+
+    await agent._on_stt_event(call_id, STTEvent(type="final", text="停一下"))
+
+    assert mock_tts.interrupt_called
+    assert await agent._wait_for_user_speech(call_id) == "停一下"
+
+
+@pytest.mark.asyncio
+async def test_no_speak_started_at_keeps_legacy_barge_in(
+    agent: VoiceAgent, mock_tts
+) -> None:
+    """失效保护：_speaking 为 True 但无 _speak_started_at（未走 _speak）时，
+    拖尾判定恒不成立，保持既有打断/缓冲语义（现有单测据此保持绿色）。"""
+    call_id = "legacy-safe"
+    agent._callbacks[call_id] = NoopCallbacks()
+    agent._channels[call_id] = "web"
+    agent._speaking[call_id] = True  # 未设置 _speak_started_at
+
+    await agent._on_stt_event(call_id, STTEvent(type="final", text="停一下"))
+
+    assert mock_tts.interrupt_called
+    assert await agent._wait_for_user_speech(call_id) == "停一下"

@@ -108,6 +108,8 @@ def _build_agent() -> tuple[VoiceAgent, TaskClient, Any]:
     asr_tts_gate_enabled = _env_bool("ASR_TTS_GATE_ENABLED", True)
     asr_tts_gate_web_enabled = _env_bool("ASR_TTS_GATE_WEB_ENABLED", False)
     asr_tts_tail_guard_ms = int(os.getenv("ASR_TTS_TAIL_GUARD_MS", "500"))
+    # 拖尾保护兜底窗口（ms）：utterance 起始信号缺失时判定拖尾用；0 关闭兜底。
+    asr_tail_guard_ms = int(os.getenv("ASR_TAIL_GUARD_MS", "800"))
     barge_in_during_tts_enabled = _env_bool("BARGE_IN_DURING_TTS_ENABLED", True)
     barge_in_min_ms = int(os.getenv("BARGE_IN_MIN_MS", "500"))
     barge_in_rms_threshold = float(os.getenv("BARGE_IN_RMS_THRESHOLD", "0.08"))
@@ -140,6 +142,7 @@ def _build_agent() -> tuple[VoiceAgent, TaskClient, Any]:
         asr_tts_gate_enabled=asr_tts_gate_enabled,
         asr_tts_gate_web_enabled=asr_tts_gate_web_enabled,
         asr_tts_tail_guard_ms=asr_tts_tail_guard_ms,
+        asr_tail_guard_ms=asr_tail_guard_ms,
         barge_in_during_tts_enabled=barge_in_during_tts_enabled,
         barge_in_min_ms=barge_in_min_ms,
         barge_in_rms_threshold=barge_in_rms_threshold,
