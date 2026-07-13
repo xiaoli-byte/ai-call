@@ -257,9 +257,11 @@ python -m voice_agent.main
 在 `apps/dashboard/.env.local` 中配置：
 
 ```ini
-# Voice Agent WebSocket（Python 后端，含 /asr-stream + /tts-stream）
-# 不配置时按当前页面协议派生（http→ws / https→wss）+ 当前主机 + 8090。
-# 生产 https 部署请显式配 wss://（ws:// 会被浏览器按混合内容拦截）。
+# Voice Agent WebSocket（Python 后端，含 /audio-stream + /asr-stream + /tts-stream）
+# 不配置时：本地(localhost/127.0.0.1)按页面协议直连 <ws|wss>://<host>:8090；
+# 生产同源、不带端口（<ws|wss>://<域名>），由 nginx 按路径反向代理转发到 voice-agent。
+# 仅当走独立子域/自定义前缀时才显式配（如 wss://voice.example.com、wss://app.example.com/voice-ws）。
+# 生产 nginx 需为 /audio-stream、/asr-stream、/tts-stream 配 WebSocket upgrade + proxy_pass 到 :8090。
 NEXT_PUBLIC_VOICE_AGENT_WS_URL=ws://localhost:8090
 
 # FunASR（仅用于显示，实际连接由 Python 后端代理）
