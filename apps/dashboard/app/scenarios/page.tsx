@@ -110,7 +110,6 @@ function toggleCommunicationStyle(value: string, style: string): string {
 }
 
 function isSelectablePublishedFlow(flow: TaskFlow): boolean {
-  if (flow.status === FlowStatus.ARCHIVED) return false;
   return flow.status === FlowStatus.PUBLISHED || flow.version > 0;
 }
 
@@ -573,7 +572,7 @@ function RobotConfigTab({
             </select>
             <Link href="/task-flows" className="scenario-text-link">管理流程</Link>
           </div>
-          <span className="scenario-field-hint">仅显示至少发布过一个版本且未归档的流程。</span>
+          <span className="scenario-field-hint">仅显示至少发布过一个版本的流程。</span>
           {boundFlowUnavailable && (
             <div className="scenario-inline-warning" role="alert">
               原绑定流程已不可用，请重新选择已发布流程，或
@@ -944,7 +943,7 @@ export default function ScenariosPage() {
       return;
     }
     if (draft.defaultFlowId && !flows.some((flow) => flow.id === draft.defaultFlowId)) {
-      appToast.error(new Error('外呼流程只能绑定已发布且未归档的版本'));
+      appToast.error(new Error('外呼流程只能绑定已发布的版本'));
       return;
     }
     setSubmitting(true);

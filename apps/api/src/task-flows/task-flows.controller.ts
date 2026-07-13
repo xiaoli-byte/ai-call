@@ -31,7 +31,6 @@ import { Public } from '../auth/decorators.js';
  *  - PATCH  /api/task-flows/:id        更新
  *  - DELETE /api/task-flows/:id        删除
  *  - POST   /api/task-flows/:id/publish   发布（status → published, version++）
- *  - POST   /api/task-flows/:id/archive   归档（status → archived）
  *  - POST   /api/task-flows/:id/duplicate 复制（基于现有创建新草稿）
  */
 @Controller('task-flows')
@@ -92,12 +91,6 @@ export class TaskFlowsController {
   @Permissions(PERMISSIONS.FLOW_PUBLISH)
   publish(@Param('id') id: string) {
     return this.taskFlowsService.publish(id);
-  }
-
-  @Post(':id/archive')
-  @Permissions(PERMISSIONS.FLOW_UPDATE)
-  archive(@Param('id') id: string) {
-    return this.taskFlowsService.archive(id);
   }
 
   @Post(':id/duplicate')

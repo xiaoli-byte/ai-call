@@ -83,28 +83,4 @@ describe('ScenariosService published flow binding', () => {
     assert.equal(createData?.defaultFlowId, 'published-snapshot-flow');
     assert.equal(created.defaultFlowId, 'published-snapshot-flow');
   });
-
-  it('rejects an archived flow even when it has published versions', async () => {
-    let updated = false;
-    const prisma = {
-      outboundScenario: {
-        findFirst: async () => scenarioRecord(),
-        update: async () => {
-          updated = true;
-          return scenarioRecord();
-        },
-      },
-      taskFlow: {
-        findUnique: async () => ({ status: FlowStatus.ARCHIVED, version: 3 }),
-      },
-    };
-    const service = new ScenariosService(prisma as any);
-
-    await assert.rejects(
-      () => service.update('scenario-1', { defaultFlowId: 'archived-flow' }),
-      (error: unknown) => error instanceof BadRequestException
-        && /未归档/.test(error.message),
-    );
-    assert.equal(updated, false);
-  });
 });

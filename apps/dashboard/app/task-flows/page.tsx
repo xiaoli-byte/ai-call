@@ -6,13 +6,11 @@ import { FlowRowActions } from './FlowRowActions';
 const STATUS_LABELS: Record<FlowStatus, string> = {
   draft: '草稿',
   published: '已发布',
-  archived: '已归档',
 };
 
 const STATUS_BADGE: Record<FlowStatus, string> = {
   draft: 'badge-neutral',
   published: 'badge-success',
-  archived: 'badge-warning',
 };
 
 export default async function TaskFlowsPage() {

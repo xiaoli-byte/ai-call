@@ -34,8 +34,6 @@ export function taskFlowsEndpoints(http: HttpAdapter) {
       http.request<void>(`/task-flows/${id}`, { method: 'DELETE' }),
     publish: (id: string) =>
       http.request<TaskFlow>(`/task-flows/${id}/publish`, { method: 'POST' }),
-    archive: (id: string) =>
-      http.request<TaskFlow>(`/task-flows/${id}/archive`, { method: 'POST' }),
     duplicate: (id: string) =>
       http.request<TaskFlow>(`/task-flows/${id}/duplicate`, { method: 'POST' }),
     versions: (id: string) =>

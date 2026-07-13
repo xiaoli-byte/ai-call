@@ -22,7 +22,6 @@ export type FlowNodeType = 'start' | 'dialog' | 'action' | 'end';
 export const FlowStatus = {
   DRAFT: 'draft',
   PUBLISHED: 'published',
-  ARCHIVED: 'archived',
 } as const;
 export type FlowStatus = (typeof FlowStatus)[keyof typeof FlowStatus];
 

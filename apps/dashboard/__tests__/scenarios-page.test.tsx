@@ -121,12 +121,11 @@ beforeEach(() => {
 });
 
 describe('/scenarios 创建页', () => {
-  it('只显示有已发布版本且未归档的流程，并移除性别字段', () => {
+  it('只显示有已发布版本的流程，并移除性别字段', () => {
     mocks.flows = [
       flow('published', FlowStatus.PUBLISHED, 1, '当前已发布'),
       flow('draft-new', FlowStatus.DRAFT, 0, '从未发布草稿'),
       flow('draft-edited', FlowStatus.DRAFT, 2, '发布后修改'),
-      flow('archived', FlowStatus.ARCHIVED, 3, '已归档'),
     ];
 
     openCreate();
@@ -137,7 +136,6 @@ describe('/scenarios 创建页', () => {
     expect(options).toContain('当前已发布 v1');
     expect(options).toContain('发布后修改 v2（有草稿修改，绑定已发布版本）');
     expect(options.join(' ')).not.toContain('从未发布草稿');
-    expect(options.join(' ')).not.toContain('已归档');
   });
 
   it('沟通风格支持多选且不显示输入框', () => {

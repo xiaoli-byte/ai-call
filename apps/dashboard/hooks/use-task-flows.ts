@@ -70,12 +70,6 @@ export function useTaskFlowMutations() {
       await invalidateLists();
       return flow;
     },
-    archive: async (id: string) => {
-      const flow = await apiClient.taskFlows.archive(id);
-      await mutate(taskFlowKey(id), flow, { revalidate: false });
-      await invalidateLists();
-      return flow;
-    },
     duplicate: async (id: string) => {
       const flow = await apiClient.taskFlows.duplicate(id);
       await invalidateLists();

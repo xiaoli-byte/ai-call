@@ -165,11 +165,10 @@ export class ScenariosService {
     });
     const hasPublishedVersion = Boolean(
       flow
-      && flow.status !== FlowStatus.ARCHIVED
       && (flow.status === FlowStatus.PUBLISHED || flow.version > 0),
     );
     if (!hasPublishedVersion) {
-      throw new BadRequestException('外呼流程只能绑定已发布且未归档的版本');
+      throw new BadRequestException('外呼流程只能绑定已发布的版本');
     }
   }
 

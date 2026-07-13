@@ -22,13 +22,13 @@ interface FlowRowActionsProps {
   name: string;
 }
 
-type Action = 'publish' | 'archive' | 'duplicate' | 'delete' | null;
+type Action = 'publish' | 'duplicate' | 'delete' | null;
 
 export function FlowRowActions({ id, status, name }: FlowRowActionsProps) {
   const router = useRouter();
   const [pending, setPending] = useState<Action>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const { publish, archive, duplicate, remove } = useTaskFlowMutations();
+  const { publish, duplicate, remove } = useTaskFlowMutations();
 
   async function run(action: Action, fn: () => Promise<unknown>, successMsg: string) {
     setPending(action);
@@ -49,7 +49,6 @@ export function FlowRowActions({ id, status, name }: FlowRowActionsProps) {
   }
 
   const canPublish = status === 'draft';
-  const canArchive = status !== 'archived';
 
   return (
     <div className="row-actions" style={{ justifyContent: 'flex-end' }}>
@@ -64,16 +63,6 @@ export function FlowRowActions({ id, status, name }: FlowRowActionsProps) {
           onClick={() => run('publish', () => publish(id), '流程已发布')}
         >
           {pending === 'publish' ? '发布中…' : '发布'}
-        </button>
-      )}
-      {canArchive && (
-        <button
-          type="button"
-          className="btn btn-secondary btn-sm"
-          disabled={pending !== null}
-          onClick={() => run('archive', () => archive(id), '流程已归档')}
-        >
-          {pending === 'archive' ? '归档中…' : '归档'}
         </button>
       )}
       <button
@@ -103,7 +92,7 @@ export function FlowRowActions({ id, status, name }: FlowRowActionsProps) {
               <div className="flex flex-col gap-1.5 pt-1">
                 <DialogTitle>确认删除流程？</DialogTitle>
                 <DialogDescription>
-                  将永久删除流程「{name}」，此操作不可撤销。若该流程已发布过版本或仍被任务引用，删除会被拒绝，请改用「归档」。
+                  将永久删除流程「{name}」及其所有历史版本，此操作不可撤销。若该流程仍被外呼任务引用，删除会被拒绝。
                 </DialogDescription>
               </div>
             </div>

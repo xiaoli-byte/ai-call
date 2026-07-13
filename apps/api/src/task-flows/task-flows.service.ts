@@ -74,9 +74,6 @@ export class TaskFlowsService {
 
   async update(id: string, dto: UpdateTaskFlowDto): Promise<TaskFlow> {
     const current = await this.get(id);
-    if (current.status === FlowStatus.ARCHIVED) {
-      throw new BadRequestException('Archived flows cannot be edited');
-    }
     const data: Record<string, unknown> = {};
     if (dto.name !== undefined) data.name = dto.name;
     if (dto.description !== undefined) data.description = dto.description;
@@ -108,24 +105,21 @@ export class TaskFlowsService {
   async remove(id: string): Promise<void> {
     const flow = await this.get(id);
     try {
-      await this.prisma.taskFlow.delete({ where: { id } });
+      // 发布过的流程会留下不可变版本快照（task_flow_versions，onDelete: Restrict）。删除
+      // 流程时在同一事务里一并删掉这些快照。但若仍有外呼任务（outbound_tasks）锁定该流程
+      // 或其某个版本执行，数据库的 Restrict 外键会拒绝删除——强删会破坏历史通话记录并违反
+      //「不可变流程执行」不变量（见 CLAUDE.md）。此时把裸 FK 错误转成可读的 409。
+      await this.prisma.$transaction(async (tx) => {
+        await tx.taskFlowVersion.deleteMany({ where: { flowId: id } });
+        await tx.taskFlow.delete({ where: { id } });
+      });
     } catch (err) {
-      // task_flow_versions/outbound_tasks 对 flow 都是 onDelete: Restrict——发布过的流程
-      // 留有不可变版本快照（可能仍被历史任务锁定执行），数据库会拒绝删除。这是设计使然
-      // （见 CLAUDE.md「Immutable flow execution」），把裸 FK 500 转成可读的 409。
-      // status 会因编辑已发布流程回落成 draft，光看列表的「草稿」标签判断不出这段历史，
-      // 报错里把具体数量列出来，避免用户误以为“草稿=从未发布=可以删”。
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2003') {
-        const [versionCount, taskCount] = await Promise.all([
-          this.prisma.taskFlowVersion.count({ where: { flowId: id } }),
-          this.prisma.outboundTask.count({ where: { flowId: id } }),
-        ]);
-        const reasons = [
-          versionCount > 0 ? `${versionCount} 个已发布版本` : null,
-          taskCount > 0 ? `${taskCount} 个任务仍在引用` : null,
-        ].filter((r): r is string => r !== null);
+        const taskCount = await this.prisma.outboundTask.count({
+          where: { OR: [{ flowId: id }, { flowVersion: { flowId: id } }] },
+        });
         throw new ConflictException(
-          `流程「${flow.name}」无法删除：存在${reasons.join('、') || '未知的关联数据'}。请先归档而非删除。`,
+          `流程「${flow.name}」无法删除：仍有 ${taskCount || '若干'} 个外呼任务引用该流程。请先删除或改派相关任务后再试。`,
         );
       }
       throw err;
@@ -196,18 +190,6 @@ export class TaskFlowsService {
       throw new BadRequestException(`TaskFlow ${flowId} has no published version`);
     }
     return this.toVersionDomain(record);
-  }
-
-  /** 归档流程：status → archived */
-  async archive(id: string): Promise<TaskFlow> {
-    await this.get(id);
-    const record = await this.prisma.taskFlow.update({
-      where: { id },
-      data: { status: FlowStatus.ARCHIVED },
-      include: this.flowInclude,
-    });
-    this.logger.log(`archived task-flow id=${id}`);
-    return this.toDomain(record);
   }
 
   /** 复制流程（基于现有流程创建新草稿） */
