@@ -63,11 +63,13 @@ export class VoiceClonesService {
   private readonly cosyVoiceBaseUrl = process.env.COSYVOICE_BASE_URL?.replace(/\/+$/, '');
   private readonly cosyVoiceSampleRate = Number(process.env.COSYVOICE_SAMPLE_RATE ?? 24000);
   private readonly cosyVoiceTimeoutMs = Number(process.env.COSYVOICE_TIMEOUT_MS ?? 30000);
+  // 云端 CosyVoice 声音复刻绑定的合成模型（复刻创建与后续合成须用同一模型）。
+  private readonly cosyVoiceCloneTargetModel = process.env.COSYVOICE_CLONE_TARGET_MODEL?.trim() || 'cosyvoice-v2';
   private readonly dashScopeApiKey = process.env.DASHSCOPE_API_KEY ?? '';
   private readonly dashScopeBaseUrl = resolveDashScopeBaseUrl();
   private readonly dashScopeTimeoutMs = Number(process.env.DASHSCOPE_TTS_TIMEOUT_MS ?? 60000);
   private readonly qwenVoiceCloneModel = process.env.QWEN_VOICE_CLONE_MODEL ?? 'qwen-voice-enrollment';
-  private readonly qwenVoiceCloneTargetModel = process.env.QWEN_VOICE_CLONE_TARGET_MODEL?.trim() || 'qwen3-tts-vc-2026-01-22';
+  private readonly qwenVoiceCloneTargetModel = process.env.QWEN_VOICE_CLONE_TARGET_MODEL?.trim() || 'qwen3-tts-vc-realtime-2026-01-15';
   private readonly qwenVoiceCloneLanguage = process.env.QWEN_VOICE_CLONE_LANGUAGE ?? 'zh';
   private readonly qwenTtsLanguageType = process.env.QWEN_TTS_LANGUAGE_TYPE ?? 'Chinese';
 
@@ -317,6 +319,13 @@ export class VoiceClonesService {
     const voiceId = isLocalDraftVoiceId(record.voiceId)
       ? await this.createDashScopeQwenVoice(record)
       : record.voiceId;
+    // realtime 复刻音色（vc-realtime）绑定到 WebSocket 流式模型，只能在实时通话
+    // （voice-agent）里合成；dashboard 侧的 HTTP 非流式试听接口不支持该模型。
+    // 此时跳过 HTTP 试听、用源音频作试听兜底，确保音色照常创建入库供通话使用。
+    if (isRealtimeQwenTargetModel(this.qwenVoiceCloneTargetModel)) {
+      const source = await readFile(this.resolveStoragePath(record.sourceFilePath));
+      return { buffer: source, mimeType: record.sourceMimeType, voiceId };
+    }
     const audio = await this.synthesizeDashScopeQwenVoice(voiceId, text);
     return { ...audio, voiceId };
   }
@@ -325,7 +334,8 @@ export class VoiceClonesService {
     if (!this.dashScopeApiKey) {
       throw new Error('未配置 DASHSCOPE_API_KEY，无法调用 Qwen 声音复刻');
     }
-    assertHttpQwenVoiceCloneTargetModel(this.qwenVoiceCloneTargetModel);
+    // 复刻音色的创建接口（customization/create）接受 realtime target_model，
+    // 音色即绑定到该模型；不在此拦截 realtime（仅 HTTP 合成路径不支持，见下）。
     const promptAudio = await readFile(this.resolveStoragePath(record.sourceFilePath));
     const response = await this.requestDashScopeJson(`${this.dashScopeBaseUrl}/services/audio/tts/customization`, {
       model: this.qwenVoiceCloneModel,
@@ -414,46 +424,42 @@ export class VoiceClonesService {
     record: VoiceCloneRecord,
     text: string,
   ): Promise<GeneratedAudio> {
-    if (!this.cosyVoiceBaseUrl) {
-      throw new Error('未配置 COSYVOICE_BASE_URL');
+    // 云端 CosyVoice：本地草稿 voiceId → 调 DashScope 声音复刻创建云端音色（绑定 target_model）。
+    const voiceId = isLocalDraftVoiceId(record.voiceId)
+      ? await this.createDashScopeCosyVoice(record)
+      : record.voiceId;
+    // 云端 CosyVoice 合成只有 WebSocket 流式接口（tts_v2），dashboard 侧 HTTP 试听
+    // 不便直连；试听暂用源音频兜底，真实克隆效果在实时通话（voice-agent CosyVoice）中体验。
+    const source = await readFile(this.resolveStoragePath(record.sourceFilePath));
+    return { buffer: source, mimeType: record.sourceMimeType, voiceId };
+  }
+
+  private async createDashScopeCosyVoice(record: VoiceCloneRecord): Promise<string> {
+    if (!this.dashScopeApiKey) {
+      throw new Error('未配置 DASHSCOPE_API_KEY，无法调用 CosyVoice 声音复刻');
     }
     const promptAudio = await readFile(this.resolveStoragePath(record.sourceFilePath));
-    const form = new FormData();
-    form.set('tts_text', text);
-    form.set('prompt_text', record.promptText);
-    form.set('zero_shot_spk_id', record.voiceId);
-    form.set('stream', 'false');
-    form.set(
-      'prompt_wav',
-      new Blob([new Uint8Array(promptAudio)], { type: record.sourceMimeType }),
-      record.sourceFilename,
+    // CosyVoice 复刻接口的 url 字段实测接受 base64 data URL，免公网音频托管。
+    const dataUrl = `data:${record.sourceMimeType};base64,${promptAudio.toString('base64')}`;
+    const response = await this.requestDashScopeJson(
+      `${this.dashScopeBaseUrl}/services/audio/tts/customization`,
+      {
+        model: 'voice-enrollment',
+        input: {
+          action: 'create_voice',
+          target_model: this.cosyVoiceCloneTargetModel,
+          prefix: buildCosyVoicePrefix(record),
+          url: dataUrl,
+        },
+      },
     );
-
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.cosyVoiceTimeoutMs);
-    try {
-      const response = await fetch(`${this.cosyVoiceBaseUrl}/inference_zero_shot`, {
-        method: 'POST',
-        body: form,
-        signal: controller.signal,
-      });
-      if (!response.ok) {
-        const body = await response.text().catch(() => '');
-        throw new Error(`HTTP ${response.status}${body ? ` ${body.slice(0, 200)}` : ''}`);
-      }
-      const mimeType = response.headers.get('content-type') ?? 'application/octet-stream';
-      const raw = Buffer.from(await response.arrayBuffer());
-      if (raw.length === 0) throw new Error('empty audio response');
-      if (mimeType.includes('wav') || hasWavHeader(raw)) {
-        return { buffer: raw, mimeType: 'audio/wav' };
-      }
-      return {
-        buffer: wrapPcm16AsWav(raw, this.cosyVoiceSampleRate),
-        mimeType: 'audio/wav',
-      };
-    } finally {
-      clearTimeout(timer);
+    const voice =
+      readNestedString(response, ['output', 'voice_id']) ??
+      readNestedString(response, ['output', 'voice']);
+    if (!voice) {
+      throw new Error(`CosyVoice 声音复刻未返回 voice_id：${JSON.stringify(response).slice(0, 300)}`);
     }
+    return voice;
   }
 
   private assertAudioFile(file: Express.Multer.File): void {
@@ -531,6 +537,11 @@ function buildPreferredVoiceName(record: VoiceCloneRecord): string {
   return `vc${record.id.replace(/-/g, '').slice(0, 14)}`;
 }
 
+function buildCosyVoicePrefix(record: VoiceCloneRecord): string {
+  // CosyVoice 复刻 prefix 要求：仅小写字母和数字，长度 < 10。
+  return `cv${record.id.replace(/-/g, '').slice(0, 7)}`.toLowerCase();
+}
+
 function normalizeOriginalFilename(filename: string): string {
   const value = basename(filename);
   if (!value) return '';
@@ -557,9 +568,13 @@ function resolveDashScopeBaseUrl(): string {
   return 'https://dashscope.aliyuncs.com/api/v1';
 }
 
+function isRealtimeQwenTargetModel(model: string): boolean {
+  return model.includes('realtime');
+}
+
 function assertHttpQwenVoiceCloneTargetModel(model: string): void {
-  if (model.includes('realtime')) {
-    throw new Error(`当前音色克隆试听使用 HTTP 非流式 Qwen TTS，请将 QWEN_VOICE_CLONE_TARGET_MODEL 配置为 qwen3-tts-vc-2026-01-22；${model} 需要接入 WebSocket realtime TTS`);
+  if (isRealtimeQwenTargetModel(model)) {
+    throw new Error(`Qwen TTS HTTP 非流式合成接口不支持 realtime 模型 ${model}（realtime 复刻音色只能走 WebSocket 流式合成，试听已改为源音频兜底）`);
   }
 }
 

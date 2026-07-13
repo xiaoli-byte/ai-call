@@ -43,6 +43,7 @@ class QwenTTS:
         self,
         api_key: str,
         model: str = "qwen3-tts-flash-realtime",
+        clone_model: Optional[str] = None,
         voice: str = "Cherry",
         url: str = "wss://dashscope.aliyuncs.com/api-ws/v1/realtime",
         target_sample_rate: int = 16000,
@@ -50,6 +51,9 @@ class QwenTTS:
     ) -> None:
         self._api_key = api_key
         self._model = model
+        # 复刻音色（qwen-tts-vc- 前缀）需用 vc-realtime 模型走 WebSocket 流式合成；
+        # 预设系统音色（Cherry 等）用 _model。缺省 clone_model 时不区分（保持旧行为）。
+        self._clone_model = clone_model
         self._voice = voice
         self._url = url
         self._target_sr = target_sample_rate
@@ -65,6 +69,18 @@ class QwenTTS:
     @property
     def name(self) -> str:
         return "qwen-tts"
+
+    def _resolve_model(self, voice: Optional[str]) -> str:
+        """按音色选合成模型：复刻音色（qwen-tts-vc- 前缀）用 vc-realtime 模型，
+        其余（系统预设音色）用默认 _model。两者都走 realtime WebSocket 流式。
+
+        依据阿里云约定：复刻音色绑定到 target_model=qwen3-tts-vc-realtime-*，
+        不能跨模型使用；用非 vc 的 flash-realtime 合成复刻音色会被服务端拒绝
+        （Invalid voice specified），导致通话无声。
+        """
+        if self._clone_model and voice and voice.startswith("qwen-tts-vc-"):
+            return self._clone_model
+        return self._model
 
     async def synthesize(
         self,
@@ -133,6 +149,9 @@ class QwenTTS:
                 # 事件循环已关闭，忽略
                 pass
 
+        active_voice = speaker or self._voice
+        active_model = self._resolve_model(active_voice)
+
         def run_sync() -> None:
             """在 executor 线程中跑 dashscope SDK 同步调用。"""
             try:
@@ -155,7 +174,7 @@ class QwenTTS:
 
             class Callback(QwenTtsRealtimeCallback):
                 def on_open(self) -> None:
-                    logger.info("[QwenTTS] connection opened model=%s voice=%s", self_outer._model, speaker or self_outer._voice)
+                    logger.info("[QwenTTS] connection opened model=%s voice=%s", active_model, active_voice)
 
                 def on_close(self, code: int, msg: str) -> None:
                     nonlocal response_completed
@@ -207,7 +226,7 @@ class QwenTTS:
 
             self_outer = self
             synth = QwenTtsRealtime(
-                model=self._model,
+                model=active_model,
                 callback=Callback(),
                 url=self._url,
             )
@@ -221,7 +240,7 @@ class QwenTTS:
                     logger.info("[QwenTTS] synthesis cancelled (barge-in)")
                     return
                 session_kwargs: dict = {
-                    "voice": speaker or self._voice,
+                    "voice": active_voice,
                     "response_format": AudioFormat.PCM_24000HZ_MONO_16BIT,
                     "mode": "commit",
                 }

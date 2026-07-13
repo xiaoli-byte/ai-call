@@ -28,11 +28,11 @@ def _make_mock() -> MockTTS:
 
 
 def _make_cosyvoice(monkeypatch: pytest.MonkeyPatch) -> CosyVoiceTTS:
-    async def hang(self, text, on_chunk, speaker, instruct_text):
+    async def hang(self, text, on_chunk, speaker, instruct_text, cancel_event):
         await asyncio.Event().wait()
 
-    monkeypatch.setattr(CosyVoiceTTS, "_do_synthesize", hang)
-    return CosyVoiceTTS(base_url="http://localhost:1")
+    monkeypatch.setattr(CosyVoiceTTS, "_run_synthesis", hang)
+    return CosyVoiceTTS(api_key="test-key")
 
 
 def _make_qwen(monkeypatch: pytest.MonkeyPatch) -> QwenTTS:

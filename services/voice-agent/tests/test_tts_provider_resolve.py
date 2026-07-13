@@ -19,7 +19,7 @@ def _scenario(**tts_config):
 
 def test_create_tts_explicit_provider_overrides_env(monkeypatch) -> None:
     monkeypatch.setenv("TTS_PROVIDER", "qwen")
-    monkeypatch.setenv("COSYVOICE_BASE_URL", "http://localhost:50000")
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "sk-test")
     assert isinstance(create_tts("mock"), MockTTS)
     assert isinstance(create_tts("cosyvoice"), CosyVoiceTTS)
 
@@ -51,7 +51,7 @@ def test_resolve_tts_qwen_name_alias_matches_default() -> None:
 
 
 def test_resolve_tts_creates_and_caches_override(monkeypatch) -> None:
-    monkeypatch.setenv("COSYVOICE_BASE_URL", "http://localhost:50000")
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "sk-test")
     default = MockTTS()
     agent = VoiceAgent(tts=default)
     scenario = _scenario(provider="cosyvoice", voice="clone-voice-1")
@@ -63,7 +63,7 @@ def test_resolve_tts_creates_and_caches_override(monkeypatch) -> None:
 
 
 def test_resolve_tts_missing_credentials_falls_back_to_default(monkeypatch) -> None:
-    monkeypatch.delenv("COSYVOICE_BASE_URL", raising=False)
+    monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
     default = MockTTS()
     agent = VoiceAgent(tts=default)
 
