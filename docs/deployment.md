@@ -183,9 +183,11 @@ STT 和意图 embedding 都支持「本地模型」或「阿里云百炼（DashS
 | STT | funasr-server（GPU 友好） | Fun-ASR 实时（`fun-asr-realtime`） | `STT_PROVIDER=funasr` \| `dashscope` |
 | 意图 embedding | funasr-server `/embed`（bge-small） | text-embedding-v4 | `INTENT_EMBED_PROVIDER=funasr` \| `dashscope` |
 | LLM | —（本就云端 / 可 mock） | DeepSeek / Qwen | `LLM_PROVIDER` |
-| TTS | CosyVoice（本地部署） | Qwen-TTS | `TTS_PROVIDER` |
+| TTS | —（可 mock） | CosyVoice v2 云端 / Qwen-TTS（均阿里云百炼） | `TTS_PROVIDER=cosyvoice` \| `qwen` \| `mock` |
 
 相关模型名 env：`FUNASR_CLOUD_MODEL=fun-asr-realtime`、`INTENT_EMBED_MODEL=text-embedding-v4`（均有默认值，通常无需改）。
+
+TTS 说明：CosyVoice 现走**云端 tts_v2 流式**（非旧的本地 `/inference_sft` 部署），复用 `DASHSCOPE_API_KEY`；生产 CosyVoice 优先（`TTS_PROVIDER=cosyvoice`）。实际每通话的 provider/音色由**场景 `ttsConfig.provider` + `voice`** 决定（选克隆音色时前端按克隆模型写入），`TTS_PROVIDER` 仅作场景未指定时的兜底默认。音色克隆试听经 api → voice-agent `/tts-stream` 代理真合成。相关：`COSYVOICE_MODEL`、`COSYVOICE_CLONE_TARGET_MODEL`、`COSYVOICE_VOICE`；`COSYVOICE_ENABLE_INSTRUCT=false`（cosyvoice-v2 不支持 instruction，带上会 428 无声，务必保持关闭）。
 
 ### 全云化（STT + embedding 都 `dashscope`）—— 无 GPU 服务器推荐形态
 
@@ -229,7 +231,10 @@ pm2 start ecosystem.config.js --only dashboard   # = next start -p 3000
 分两类，机制不同：
 
 **① `NEXT_PUBLIC_*`（浏览器可见，`next build` 时内联进产物 —— 改了必须重新 build 才生效）：**
-- `NEXT_PUBLIC_VOICE_AGENT_WS_URL`：浏览器**直连** voice-agent 的 WebSocket（首页浏览器模拟外呼 / 语音 demo 用）。生产必须填**浏览器可达**的地址；站点走 HTTPS 时必须是 `wss://`（经反向代理），**不能**是 `ws://localhost:8090`。
+- `NEXT_PUBLIC_VOICE_AGENT_WS_URL`：浏览器连 voice-agent 的 WebSocket 基地址（首页浏览器模拟外呼 `/audio-stream`、语音 demo `/asr-stream` + `/tts-stream` 用）。**通常留空**，由 `apps/dashboard/lib/voice-agent-ws.ts` 的 `voiceAgentWsBaseUrl()` 按运行环境派生：
+  - 本地（localhost/127.0.0.1）→ 直连 `<ws|wss>://<host>:8090`；
+  - **生产域名 → 同源、不带端口 `<ws|wss>://<域名>`**，由 nginx 按路径反代到 voice-agent（见下方「反向代理」）。协议随页面自动 ws/wss，HTTPS 站点绝不会退化成 `ws://`。
+  - **仅当** voice-agent 走独立子域或自定义路径前缀时才显式填（如 `wss://voice.example.com` 或 `wss://app.example.com/voice-ws`）；显式值优先级最高。切勿在生产填 `:8090`——那是内网监听端口，不对浏览器暴露。
 - `NEXT_PUBLIC_FUNASR_*` / `NEXT_PUBLIC_QWEN_TTS_*` / `NEXT_PUBLIC_TTS_SAMPLE_RATE`：仅前端展示用，实际 STT/TTS 由 Python 后端代理，值不精确也不影响功能。
 
 **② 服务端私有（不暴露浏览器，运行时读取，改了重启即可）：**
@@ -240,6 +245,40 @@ pm2 start ecosystem.config.js --only dashboard   # = next start -p 3000
 
 - 对外只暴露 dashboard（:3000）作为站点入口；
 - `/api/*` 由 dashboard server 转发到 NestJS（:3001）—— **NestJS 不必开公网**，仅供 dashboard server 内网访问；
-- 语音 WebSocket 需**单独暴露**（`NEXT_PUBLIC_VOICE_AGENT_WS_URL` 指向它）：反代 `wss://` → voice-agent :8090，注意开启 WebSocket upgrade。
+- 语音 WebSocket 与站点**同域同源**：nginx 按路径把 `/audio-stream`、`/asr-stream`、`/tts-stream` 反代到 voice-agent :8090（`NEXT_PUBLIC_VOICE_AGENT_WS_URL` 留空即走此形态）。若改走独立子域/前缀，另配并在该变量显式指向。
 
-典型 nginx：`/` → `:3000`（dashboard）、`/voice-ws`（或独立子域）→ `:8090`（voice-agent，WebSocket）、`:3001`（NestJS）不开公网。
+推荐同源拓扑：`/`→`:3000`（dashboard）、三个语音 WS 路径→`:8090`（voice-agent）、`:8090` 与 `:3001` 均不开公网。三个 WS 路径的 nginx 配置（关键在 `Upgrade`/`Connection` 头与长超时）：
+
+```nginx
+# 站点入口（HTTPS 终止在 nginx）
+server {
+    listen 443 ssl;
+    server_name app.example.com;
+    # ... ssl_certificate 等 ...
+
+    # 语音 WebSocket：同源按路径反代到 voice-agent（内网 :8090）
+    location ~ ^/(audio-stream|asr-stream|tts-stream)$ {
+        proxy_pass http://127.0.0.1:8090;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_read_timeout 3600s;   # 通话是长连接，别用默认 60s
+        proxy_send_timeout 3600s;
+    }
+
+    # 站点其余流量 → dashboard（:3000，含 /api/* 由 dashboard server 端转发）
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;   # Next.js HMR / 潜在 WS
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+}
+```
+
+> 注意：`VOICE_AGENT_WS_TOKEN` 配置后，`/audio-stream` 的 metadata 与 demo WS query 必须携带 token（见第 5 节清单）；此鉴权在 voice-agent 侧校验，nginx 只需透传。
+> api → voice-agent 的**服务端调用**（音色克隆试听经 `/tts-stream` 代理合成）走内网直连 `VOICE_AGENT_WS_URL`/`127.0.0.1:8090`，不经过上面的浏览器同源反代，无需额外配置。
