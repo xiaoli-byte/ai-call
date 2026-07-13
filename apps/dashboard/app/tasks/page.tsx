@@ -15,6 +15,7 @@ import { cn } from '@/lib/utils';
 import { EmptyState } from '@/components/outbound/empty-state';
 import { StatusBadge, type StatusTone } from '@/components/outbound/status-badge';
 import { TaskStatus, type ScenarioKey } from '@ai-call/shared';
+import { TaskListPoller } from './task-list-poller';
 
 import styles from './tasks.module.scss';
 
@@ -99,6 +100,7 @@ export default async function TasksPage({
 
   return (
     <div className={cn('outbound-page', styles.page)}>
+      <TaskListPoller />
       <header className={styles.header}>
         <div>
           <h1>外呼任务</h1>
