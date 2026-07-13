@@ -36,6 +36,8 @@ export interface TtsVoiceConfig {
   pitch?: number;
   /** 指令式 TTS 的风格提示词。 */
   stylePrompt?: string;
+  /** 音色人设描述，注入 LLM system prompt，使话术语气与音色匹配。 */
+  voicePersona?: string;
 }
 
 export interface ScenarioConfig {

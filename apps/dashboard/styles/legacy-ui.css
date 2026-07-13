@@ -472,9 +472,9 @@
   transition: color 0.15s;
 }
 
-:where([data-dashboard-shell]) a:hover {
+/* :where([data-dashboard-shell]) a:hover {
   color: var(--primary-700);
-}
+} */
 
 :where([data-dashboard-shell]) .link-primary {
   color: var(--primary-600);

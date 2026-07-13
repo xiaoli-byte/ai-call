@@ -25,7 +25,7 @@ import { useScenarioMutations, useScenarios } from '@/hooks/use-scenarios';
 import { useTaskFlows } from '@/hooks/use-task-flows';
 import { useVoiceCloneMutations, useVoiceClones } from '@/hooks/use-voice-clones';
 import { useTTS } from '@/hooks/useTTS';
-import { BUILT_IN_TTS_VOICES, isBuiltInTtsVoice } from '@/lib/tts-voices';
+import { BUILT_IN_TTS_VOICES, getBuiltInVoicePersona, isBuiltInTtsVoice } from '@/lib/tts-voices';
 import { cn } from '@/lib/utils';
 import { appToast } from '@/lib/toast';
 import { ScenarioPageTitle, ScenarioTab, ScenarioTabs } from '@/components/scenario-workbench/page-chrome';
@@ -47,6 +47,7 @@ interface ScenarioDraft {
   ttsSpeakingRate: string;
   ttsPitch: string;
   ttsStylePrompt: string;
+  ttsVoicePersona: string;
   agentIdentity: string;
   communicationStyle: string;
   communicationStylePrompt: string;
@@ -73,6 +74,7 @@ const EMPTY_DRAFT: ScenarioDraft = {
   ttsSpeakingRate: '',
   ttsPitch: '',
   ttsStylePrompt: '',
+  ttsVoicePersona: getBuiltInVoicePersona('Cherry'),
   agentIdentity: '',
   communicationStyle: '',
   communicationStylePrompt: '',
@@ -134,6 +136,7 @@ function toDraft(scenario?: ScenarioConfig): ScenarioDraft {
     ttsSpeakingRate: scenario.ttsConfig?.speakingRate !== undefined ? String(scenario.ttsConfig.speakingRate) : '',
     ttsPitch: scenario.ttsConfig?.pitch !== undefined ? String(scenario.ttsConfig.pitch) : '',
     ttsStylePrompt: scenario.ttsConfig?.stylePrompt ?? '',
+    ttsVoicePersona: scenario.ttsConfig?.voicePersona ?? '',
     agentIdentity: scenario.agentIdentity ?? '',
     communicationStyle: scenario.communicationStyle ?? '',
     communicationStylePrompt: scenario.communicationStylePrompt ?? '',
@@ -185,6 +188,7 @@ function draftToDto(draft: ScenarioDraft): CreateScenarioDto {
       speakingRate: numberValue(draft.ttsSpeakingRate),
       pitch: numberValue(draft.ttsPitch),
       stylePrompt: draft.ttsStylePrompt || undefined,
+      voicePersona: draft.ttsVoicePersona.trim() || undefined,
     },
     agentIdentity: draft.agentIdentity,
     communicationStyle: draft.communicationStyle,
@@ -373,14 +377,14 @@ function ScenarioListView({
 
   return (
     <div className={styles.workbench}>
-      <ScenarioPageTitle title="大模型场景列表" breadcrumb="智能外呼 / 场景管理 / 大模型场景列表" />
+      <ScenarioPageTitle title="场景配置" breadcrumb="智能外呼 / 场景配置" />
 
       <ScenarioTabs>
-        <ScenarioTab active>大模型场景列表</ScenarioTab>
-        <ScenarioTab>测试记录</ScenarioTab>
+        <ScenarioTab active>场景列表</ScenarioTab>
+        {/* <ScenarioTab>测试记录</ScenarioTab> */}
       </ScenarioTabs>
 
-      <div className="scenario-guide">
+      {/* <div className="scenario-guide">
         <div className="scenario-guide-title">创建方式</div>
         <div className="scenario-guide-steps">
           <div className="scenario-guide-step">
@@ -405,7 +409,7 @@ function ScenarioListView({
             </div>
           </div>
         </div>
-      </div>
+      </div> */}
 
       <div className="scenario-toolbar">
         <button type="button" className="btn" onClick={onCreate}>
@@ -445,7 +449,7 @@ function ScenarioListView({
                   <td>
                     <div className="scenario-row-actions">
                       <button type="button" onClick={() => onEdit(scenario)}>进入</button>
-                      <Link href={`/scenarios/${scenario.id ?? scenario.scenario}/tests`}>测试记录</Link>
+                      {/* <Link href={`/scenarios/${scenario.id ?? scenario.scenario}/tests`}>测试记录</Link> */}
                       <button type="button" onClick={() => onPublish(scenario)}>发布</button>
                       <button type="button" onClick={() => onDeactivate(scenario)}>停用</button>
                     </div>
@@ -640,6 +644,7 @@ function VoiceTab({
         ttsVoice: voice,
         ttsVoiceCloneId: '',
         ttsProvider: 'qwen',
+        ttsVoicePersona: getBuiltInVoicePersona(voice),
       }));
       return;
     }
@@ -653,6 +658,7 @@ function VoiceTab({
         ttsVoice: clone.voiceId,
         ttsVoiceCloneId: clone.id,
         ttsProvider: clone.model,
+        ttsVoicePersona: '',
       }));
       return;
     }
@@ -662,6 +668,7 @@ function VoiceTab({
       ttsVoice: '',
       ttsVoiceCloneId: '',
       ttsProvider: '',
+      ttsVoicePersona: '',
     }));
   }
 
@@ -736,6 +743,20 @@ function VoiceTab({
             )}
           </select>
           <Link href="/voice-clones" className="scenario-text-link">管理克隆音色</Link>
+        </div>
+      </FieldRow>
+      <FieldRow label="音色人设">
+        <div className="scenario-counted-field textarea">
+          <textarea
+            className="form-textarea"
+            aria-label="音色人设"
+            value={draft.ttsVoicePersona}
+            maxLength={300}
+            onChange={(event) => setDraft((prev) => ({ ...prev, ttsVoicePersona: event.target.value }))}
+            placeholder="描述该音色的人设与说话风格，AI 生成话术时会依据它调整语气措辞（选择内置音色时自动填入，可修改）"
+            style={{ minHeight: 72 }}
+          />
+          <span>{draft.ttsVoicePersona.length}/300</span>
         </div>
       </FieldRow>
       <FieldRow label="音色试听">

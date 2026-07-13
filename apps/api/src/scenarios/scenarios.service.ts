@@ -258,6 +258,7 @@ function asTtsConfig(value: unknown): TtsVoiceConfig {
     speakingRate: typeof source.speakingRate === 'number' ? source.speakingRate : undefined,
     pitch: typeof source.pitch === 'number' ? source.pitch : undefined,
     stylePrompt: typeof source.stylePrompt === 'string' ? source.stylePrompt : undefined,
+    voicePersona: typeof source.voicePersona === 'string' ? source.voicePersona : undefined,
   };
 }
 

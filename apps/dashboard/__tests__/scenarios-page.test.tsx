@@ -132,7 +132,7 @@ describe('/scenarios 创建页', () => {
     openCreate();
 
     expect(screen.queryByText('性别')).toBeNull();
-    const flowRow = screen.getByText('外呼任务流程').closest('.scenario-field-row')!;
+    const flowRow = screen.getByText('外呼任务流程').closest<HTMLElement>('.scenario-field-row')!;
     const options = within(flowRow).getAllByRole('option').map((item) => item.textContent);
     expect(options).toContain('当前已发布 v1');
     expect(options).toContain('发布后修改 v2（有草稿修改，绑定已发布版本）');
@@ -143,7 +143,7 @@ describe('/scenarios 创建页', () => {
   it('沟通风格支持多选且不显示输入框', () => {
     openCreate();
 
-    const row = screen.getByText('沟通风格').closest('.scenario-field-row')!;
+    const row = screen.getByText('沟通风格').closest<HTMLElement>('.scenario-field-row')!;
     expect(row.querySelector('input')).toBeNull();
     const friendly = within(row).getByRole('button', { name: '亲切' });
     const professional = within(row).getByRole('button', { name: '专业' });
