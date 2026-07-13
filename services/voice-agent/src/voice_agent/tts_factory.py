@@ -77,6 +77,9 @@ def create_tts(provider: str | None = None) -> Any:
             default_speaker=os.getenv("COSYVOICE_VOICE", "longxiaochun_v2"),
             source_sample_rate=24000,
             target_sample_rate=16000,
+            # cosyvoice-v2 不支持 instruction（428 无声），默认关闭；仅在配了支持 instruct 的模型时开启。
+            enable_instruct=os.getenv("COSYVOICE_ENABLE_INSTRUCT", "false").strip().lower()
+            in {"1", "true", "yes", "on"},
         )
         logger.info(
             "TTS provider: cosyvoice (model=%s, voice=%s)",

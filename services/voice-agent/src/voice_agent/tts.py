@@ -46,12 +46,17 @@ class CosyVoiceTTS:
         target_sample_rate: int = 16000,
         timeout: float = 30.0,
         api_key: Optional[str] = None,
+        enable_instruct: bool = False,
     ) -> None:
         self._model = model
         self._default_speaker = default_speaker
         self._source_sr = source_sample_rate
         self._target_sr = target_sample_rate
         self._timeout = timeout
+        # cosyvoice-v2（tts_v2）不支持 instruction 参数：预设/复刻音色带上都会被服务端
+        # 拒为 428 InvalidParameter → task-failed → 整通无声（2026-07-14 真机根因）。
+        # 故默认关闭；仅当配置了支持 instruct 的模型时由 COSYVOICE_ENABLE_INSTRUCT 显式开启。
+        self._enable_instruct = enable_instruct
         # 缺省时延迟到合成路径读环境变量，构造期不触碰凭证 / 不连网。
         self._api_key = api_key
         # 当前合成「子任务」。interrupt() 只取消它，绝不取消调用方任务——
@@ -211,8 +216,14 @@ class CosyVoiceTTS:
                 "callback": Callback(),
             }
             if instruct_text:
-                # CosyVoice v2 指令模式：自然语言控制语气/情感（可选，缺省不传）。
-                synth_kwargs["instruction"] = instruct_text
+                if self_outer._enable_instruct:
+                    synth_kwargs["instruction"] = instruct_text
+                else:
+                    # cosyvoice-v2 不认 instruction（428），静默丢弃并记一笔，避免整通无声。
+                    logger.debug(
+                        "[CosyVoice] 丢弃 instruct_text（cosyvoice-v2 不支持 instruction）: %s",
+                        instruct_text[:40],
+                    )
             synth = SpeechSynthesizer(**synth_kwargs)
             self._synth = synth
             try:

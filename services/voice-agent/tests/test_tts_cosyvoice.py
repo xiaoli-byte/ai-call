@@ -6,9 +6,14 @@
 
 from __future__ import annotations
 
+import sys
+import types
+from typing import Any
+
 import pytest
 
 from voice_agent.tts import CosyVoiceTTS
+from voice_agent.types import TTSChunk
 
 
 def test_default_construction_no_network() -> None:
@@ -69,3 +74,80 @@ async def test_synthesize_raises_when_closed() -> None:
 
     with pytest.raises(RuntimeError):
         await tts.synthesize("你好", _noop)  # type: ignore[arg-type]
+
+
+def test_enable_instruct_defaults_false() -> None:
+    """默认不启用 instruct（cosyvoice-v2 不支持 instruction，带上会 428 无声）。"""
+    assert CosyVoiceTTS()._enable_instruct is False
+    assert CosyVoiceTTS(enable_instruct=True)._enable_instruct is True
+
+
+class _FakeSynth:
+    """伪 SpeechSynthesizer：记录构造 kwargs，streaming 时回吐一个音频块 + 完成。"""
+
+    last_kwargs: dict[str, Any] = {}
+
+    def __init__(self, **kwargs: Any) -> None:
+        _FakeSynth.last_kwargs = kwargs
+        self._cb = kwargs.get("callback")
+
+    def streaming_call(self, text: str) -> None:
+        if self._cb:
+            self._cb.on_data(b"\x00\x01" * 120)
+
+    def streaming_complete(self, complete_timeout_millis: int = 0) -> None:
+        if self._cb:
+            self._cb.on_complete()
+
+    def streaming_cancel(self) -> None:  # pragma: no cover - 本用例不触发
+        pass
+
+
+def _install_fake_dashscope(monkeypatch: pytest.MonkeyPatch) -> None:
+    """把伪 dashscope 注入 sys.modules，避免连网并捕获合成 kwargs。"""
+    dashscope = types.ModuleType("dashscope")
+    dashscope.api_key = None  # type: ignore[attr-defined]
+    audio_mod = types.ModuleType("dashscope.audio")
+    tts_v2 = types.ModuleType("dashscope.audio.tts_v2")
+
+    class AudioFormat:
+        PCM_24000HZ_MONO_16BIT = "pcm_24000"
+
+    class ResultCallback:  # run_sync 里的 Callback 继承它
+        pass
+
+    tts_v2.AudioFormat = AudioFormat  # type: ignore[attr-defined]
+    tts_v2.ResultCallback = ResultCallback  # type: ignore[attr-defined]
+    tts_v2.SpeechSynthesizer = _FakeSynth  # type: ignore[attr-defined]
+
+    monkeypatch.setitem(sys.modules, "dashscope", dashscope)
+    monkeypatch.setitem(sys.modules, "dashscope.audio", audio_mod)
+    monkeypatch.setitem(sys.modules, "dashscope.audio.tts_v2", tts_v2)
+
+
+async def _collect(tts: CosyVoiceTTS, instruct: str | None) -> None:
+    async def on_chunk(_chunk: TTSChunk) -> None:
+        return None
+
+    await tts.synthesize("你好", on_chunk, speaker="cosyvoice-v2-x", instruct_text=instruct)
+
+
+async def test_synthesize_drops_instruction_when_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """enable_instruct=False（默认）时不把 instruct_text 传给 SpeechSynthesizer。"""
+    _install_fake_dashscope(monkeypatch)
+    _FakeSynth.last_kwargs = {}
+    await _collect(CosyVoiceTTS(api_key="k"), instruct="用热情亲切的语气")
+    assert "instruction" not in _FakeSynth.last_kwargs
+    assert _FakeSynth.last_kwargs.get("voice") == "cosyvoice-v2-x"
+
+
+async def test_synthesize_passes_instruction_when_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """显式开启 enable_instruct 时才透传 instruction（供未来支持 instruct 的模型）。"""
+    _install_fake_dashscope(monkeypatch)
+    _FakeSynth.last_kwargs = {}
+    await _collect(CosyVoiceTTS(api_key="k", enable_instruct=True), instruct="用热情亲切的语气")
+    assert _FakeSynth.last_kwargs.get("instruction") == "用热情亲切的语气"
