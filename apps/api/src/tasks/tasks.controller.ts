@@ -70,6 +70,12 @@ export class TasksController {
     return this.tasksService.list(query);
   }
 
+  @Get('summary')
+  @Permissions(PERMISSIONS.TASK_READ)
+  summary() {
+    return this.tasksService.summary();
+  }
+
   /** FreeSWITCH/Voice bridge writes provider-side call events back into task history. */
   @Post('provider-events')
   @Public()

@@ -107,6 +107,7 @@ def _build_agent() -> tuple[VoiceAgent, TaskClient, Any]:
     vad_silero_threshold = _env_float("VAD_SILERO_THRESHOLD", 0.5)
     asr_tts_gate_enabled = _env_bool("ASR_TTS_GATE_ENABLED", True)
     asr_tts_gate_web_enabled = _env_bool("ASR_TTS_GATE_WEB_ENABLED", False)
+    asr_tts_echo_guard_enabled = _env_bool("ASR_TTS_ECHO_GUARD_ENABLED", True)
     asr_tts_tail_guard_ms = int(os.getenv("ASR_TTS_TAIL_GUARD_MS", "500"))
     # 拖尾保护兜底窗口（ms）：utterance 起始信号缺失时判定拖尾用；0 关闭兜底。
     asr_tail_guard_ms = int(os.getenv("ASR_TAIL_GUARD_MS", "800"))
@@ -141,6 +142,7 @@ def _build_agent() -> tuple[VoiceAgent, TaskClient, Any]:
         turn_timeout_s=int(os.getenv("TURN_TIMEOUT_S", "30")),
         asr_tts_gate_enabled=asr_tts_gate_enabled,
         asr_tts_gate_web_enabled=asr_tts_gate_web_enabled,
+        asr_tts_echo_guard_enabled=asr_tts_echo_guard_enabled,
         asr_tts_tail_guard_ms=asr_tts_tail_guard_ms,
         asr_tail_guard_ms=asr_tail_guard_ms,
         barge_in_during_tts_enabled=barge_in_during_tts_enabled,

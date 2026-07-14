@@ -152,6 +152,14 @@ export interface TaskListPage {
   nextCursor?: string;
 }
 
+export interface TaskSummary {
+  currentMonthTasks: number;
+  totalAttempts: number;
+  connectedTasks: number;
+  failedTasks: number;
+  connectRate: number;
+}
+
 /** 外呼历史列表项：以实际拨打尝试为维度。 */
 export interface CallHistoryItem {
   id: string;

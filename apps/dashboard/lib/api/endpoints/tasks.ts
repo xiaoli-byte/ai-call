@@ -7,6 +7,7 @@ import type {
   ScenarioKey,
   TaskBatchCreateResult,
   TaskListPage,
+  TaskSummary,
   TaskStatus,
   CallOutcome,
 } from '@ai-call/shared';
@@ -39,6 +40,7 @@ export function tasksEndpoints(http: HttpAdapter) {
       http.request<TaskListPage>(
         `/tasks${buildQuery(params as Record<string, unknown> | undefined)}`,
       ),
+    summary: () => http.request<TaskSummary>('/tasks/summary'),
     get: (id: string) => http.request<OutboundTask>(`/tasks/${id}`),
     create: (dto: CreateTaskDto) =>
       http.request<OutboundTask>('/tasks', { method: 'POST', body: dto }),

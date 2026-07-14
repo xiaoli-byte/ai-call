@@ -698,6 +698,96 @@ async def test_stt_partial_triggers_interrupt_and_on_interrupted(
 
 
 @pytest.mark.asyncio
+async def test_web_echo_guard_ignores_tolerant_tts_echo(
+    agent: VoiceAgent, mock_llm, mock_tts
+) -> None:
+    """ASR 对 TTS 有少量错字时也应判回声，partial/final 均不打断。"""
+    call_id = "echo-guard-web-1"
+    agent._channels[call_id] = "web"
+    agent._speaking[call_id] = True
+    agent._speak_started_at[call_id] = time.monotonic() - 1.0
+    agent._tts_reference_text[call_id] = (
+        "您好，我是示例公司的客服，请问您购买的商品收到了吗？"
+    )
+
+    await agent._on_stt_event(call_id, STTEvent(type="partial", text="你好"))
+    await agent._on_stt_event(
+        call_id, STTEvent(type="partial", text="你好，我是实力公司的客服")
+    )
+    await agent._on_stt_event(
+        call_id, STTEvent(type="final", text="你好，我是实力公司的客服。")
+    )
+
+    assert not mock_tts.interrupt_called
+    assert not mock_llm.cancel_called
+    assert agent._speaking.get(call_id) is True
+    assert call_id not in agent._injected_text
+
+
+@pytest.mark.asyncio
+async def test_web_echo_guard_distinct_partial_interrupts(
+    agent: VoiceAgent, mock_llm, mock_tts
+) -> None:
+    """与当前 TTS 明显不同的插话应在 partial 阶段立即打断。"""
+    call_id = "echo-guard-web-2"
+    agent._channels[call_id] = "web"
+    agent._speaking[call_id] = True
+    agent._speak_started_at[call_id] = time.monotonic() - 1.0
+    agent._tts_reference_text[call_id] = "您好，我是示例公司的客服。"
+
+    await agent._on_stt_event(
+        call_id, STTEvent(type="partial", text="等一下，我还有问题")
+    )
+
+    assert mock_tts.interrupt_called
+    assert mock_llm.cancel_called
+    assert not agent._speaking.get(call_id)
+    assert agent._recent_partial.get(call_id) == "等一下，我还有问题"
+
+
+@pytest.mark.asyncio
+async def test_web_echo_guard_defers_short_overlap_until_final(
+    agent: VoiceAgent, mock_tts
+) -> None:
+    """短回答与问题文字重叠时，partial 不抢停，但 final 仍可打断并入队。"""
+    call_id = "echo-guard-web-3"
+    agent._channels[call_id] = "web"
+    agent._speaking[call_id] = True
+    agent._speak_started_at[call_id] = time.monotonic() - 1.0
+    agent._tts_reference_text[call_id] = "请问您购买的商品收到了吗？"
+
+    await agent._on_stt_event(call_id, STTEvent(type="partial", text="收到了"))
+    assert not mock_tts.interrupt_called
+    assert agent._speaking.get(call_id) is True
+
+    await agent._on_stt_event(call_id, STTEvent(type="final", text="收到了。"))
+
+    assert mock_tts.interrupt_called
+    assert not agent._speaking.get(call_id)
+    assert await agent._wait_for_user_speech(call_id) == "收到了。"
+
+
+@pytest.mark.asyncio
+async def test_web_echo_guard_drops_delayed_echo_final(
+    agent: VoiceAgent, mock_tts
+) -> None:
+    """TTS 刚播完后的延迟 echo final 不得抢占下一轮 waiter。"""
+    call_id = "echo-guard-web-4"
+    agent._channels[call_id] = "web"
+    agent._tts_reference_text[call_id] = "您好，我是示例公司的客服。"
+    agent._tts_reference_until[call_id] = time.monotonic() + 0.5
+    waiter: asyncio.Future[str] = asyncio.get_running_loop().create_future()
+    agent._endpoint_waiters[call_id] = waiter
+
+    await agent._on_stt_event(
+        call_id, STTEvent(type="final", text="你好，我是实力公司的客服。")
+    )
+
+    assert not mock_tts.interrupt_called
+    assert not waiter.done()
+
+
+@pytest.mark.asyncio
 async def test_interrupt_without_on_interrupted_callback_is_noop(
     agent: VoiceAgent,
     mock_tts,

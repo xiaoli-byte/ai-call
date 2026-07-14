@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import asyncio
+from difflib import SequenceMatcher
 import logging
 import re
 import time
@@ -65,6 +66,97 @@ def _is_degenerate_transcript(text: str) -> bool:
         if compact.count(dominant_char) / len(compact) >= 0.7:
             return True
     return False
+
+
+_BARGE_IN_COMMANDS = (
+    "停一下",
+    "等一下",
+    "等等",
+    "打住",
+    "暂停",
+    "别说了",
+    "先别说",
+)
+_SHORT_BARGE_IN_ANSWERS = frozenset(
+    {
+        "收到了",
+        "没收到",
+        "没有",
+        "好的",
+        "可以",
+        "不可以",
+        "方便",
+        "不方便",
+    }
+)
+
+
+def _normalize_echo_text(text: str) -> str:
+    """Normalize ASR/TTS text for tolerant echo comparison."""
+    normalized = re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", text.lower())
+    # ASR commonly normalizes 您好 to 你好; treating them alike avoids a false
+    # mismatch at the beginning of customer-service prompts.
+    return normalized.replace("您", "你")
+
+
+def _max_window_similarity(candidate: str, reference: str) -> float:
+    """Return the best similarity against a similarly sized reference window."""
+    if not candidate or not reference:
+        return 0.0
+    if candidate in reference:
+        return 1.0
+    if reference in candidate:
+        return SequenceMatcher(None, candidate, reference).ratio()
+
+    candidate_len = len(candidate)
+    best = 0.0
+    min_window = max(1, candidate_len - 2)
+    max_window = min(len(reference), candidate_len + 2)
+    for window_len in range(min_window, max_window + 1):
+        for start in range(0, len(reference) - window_len + 1):
+            score = SequenceMatcher(
+                None, candidate, reference[start : start + window_len]
+            ).ratio()
+            if score > best:
+                best = score
+    return best
+
+
+def _classify_tts_echo(
+    transcript: str, reference_text: str, *, is_final: bool
+) -> tuple[str, float]:
+    """Classify an ASR event during web TTS as echo, distinct, or ambiguous.
+
+    Short partials are deliberately deferred: one or two characters are too weak
+    to stop playback. A short final answer such as ``收到了`` remains actionable,
+    even when those words also occur in the agent's question.
+    """
+    candidate = _normalize_echo_text(transcript)
+    reference = _normalize_echo_text(reference_text)
+    if not candidate or not reference:
+        return "ambiguous", 0.0
+
+    if any(command in candidate for command in _BARGE_IN_COMMANDS):
+        return "distinct", 0.0
+
+    score = _max_window_similarity(candidate, reference)
+    if len(candidate) <= 2:
+        return ("echo" if score == 1.0 else "ambiguous"), score
+
+    # A single unstable Latin token (for example FunASR's transient "That") is
+    # not enough evidence for barge-in during Chinese TTS.
+    if re.fullmatch(r"[a-z0-9]+", candidate):
+        return ("echo" if score >= 0.85 else "ambiguous"), score
+
+    if len(candidate) <= 4:
+        if is_final and candidate in _SHORT_BARGE_IN_ANSWERS:
+            return "distinct", score
+        if score == 1.0:
+            return "echo", score
+        return "distinct", score
+
+    threshold = 0.72 if len(candidate) >= 6 else 0.78
+    return ("echo" if score >= threshold else "distinct"), score
 
 
 # 语义自适应端点检测（B-P1b）的判定表：常量置于模块级便于真机调参。
@@ -126,6 +218,7 @@ class VoiceAgent:
         turn_timeout_s: int = 30,
         asr_tts_gate_enabled: bool = True,
         asr_tts_gate_web_enabled: bool = False,
+        asr_tts_echo_guard_enabled: bool = True,
         asr_tts_tail_guard_ms: int = 500,
         asr_tail_guard_ms: int = 800,
         barge_in_during_tts_enabled: bool = False,
@@ -190,6 +283,7 @@ class VoiceAgent:
         # 播报期间照常送 ASR，STT partial 即可语义级打断。
         self._asr_tts_gate_enabled = asr_tts_gate_enabled
         self._asr_tts_gate_web_enabled = asr_tts_gate_web_enabled
+        self._asr_tts_echo_guard_enabled = asr_tts_echo_guard_enabled
         self._asr_tts_tail_guard_ms = max(0, asr_tts_tail_guard_ms)
         # 拖尾保护（TailGuard）兜底窗口：utterance 起始信号缺失时（首个 partial 丢失、
         # 短语只出 final），用「final 到达 - 本轮 speak 起始 < 窗口」判定拖尾。
@@ -215,6 +309,10 @@ class VoiceAgent:
         # 语义延长日志去重：provider 每帧被查询，仅在本 utterance 首次生效时打一行。
         self._semantic_extend_logged: set[str] = set()
         self._speaking: dict[str, bool] = {}
+        # Web echo guard reference: current TTS text plus a short post-playback
+        # validity window, so a delayed ASR final cannot become the next answer.
+        self._tts_reference_text: dict[str, str] = {}
+        self._tts_reference_until: dict[str, float] = {}
         # 拖尾保护：本轮 TTS 开口时刻（_speak 设 _speaking=True 时记）。
         self._speak_started_at: dict[str, float] = {}
         # 拖尾保护：本 ASR utterance 起始时刻（本句首个 partial 到达时记，
@@ -538,6 +636,9 @@ class VoiceAgent:
             return
 
         self._speaking[call_id] = True
+        if self._asr_tts_echo_guard_enabled:
+            self._tts_reference_text[call_id] = text
+            self._tts_reference_until.pop(call_id, None)
         # 拖尾保护：记录本轮开口时刻，用于判定后续 ASR 语音是否开始于开口之前。
         self._speak_started_at[call_id] = time.monotonic()
         self._asr_suppressed_until.pop(call_id, None)
@@ -599,6 +700,14 @@ class VoiceAgent:
                 self._barge_in_voice_ms.pop(call_id, None)
                 self._barge_in_low_ms.pop(call_id, None)
                 self._barge_in_probe.pop(call_id, None)
+            if self._asr_tts_echo_guard_enabled:
+                if was_interrupted:
+                    self._tts_reference_text.pop(call_id, None)
+                    self._tts_reference_until.pop(call_id, None)
+                else:
+                    self._tts_reference_until[call_id] = (
+                        time.monotonic() + self._asr_tts_tail_guard_ms / 1000
+                    )
             self._speaking.pop(call_id, None)
             # 开口时刻随本轮播报结束失效，避免跨轮/跨测试泄漏。
             self._speak_started_at.pop(call_id, None)
@@ -672,6 +781,42 @@ class VoiceAgent:
         """
         self._recent_partial.pop(call_id, None)
         self._semantic_extend_logged.discard(call_id)
+
+    def _active_tts_reference(self, call_id: str) -> Optional[str]:
+        """Return the web TTS text currently eligible for echo comparison."""
+        if (
+            not self._asr_tts_echo_guard_enabled
+            or self._channels.get(call_id) != "web"
+        ):
+            return None
+        reference = self._tts_reference_text.get(call_id)
+        if not reference:
+            return None
+        if self._speaking.get(call_id):
+            return reference
+        valid_until = self._tts_reference_until.get(call_id, 0.0)
+        if time.monotonic() < valid_until:
+            return reference
+        self._tts_reference_text.pop(call_id, None)
+        self._tts_reference_until.pop(call_id, None)
+        return None
+
+    def _log_echo_guard(
+        self,
+        call_id: str,
+        event_type: str,
+        decision: str,
+        similarity: float,
+        text: str,
+    ) -> None:
+        logger.info(
+            "[EchoGuard] call_id=%s type=%s decision=%s similarity=%.3f text=%s",
+            call_id,
+            event_type,
+            decision,
+            similarity,
+            text,
+        )
 
     def _classify_tail(
         self, call_id: str, utterance_started_at: Optional[float], event_time: float
@@ -922,6 +1067,16 @@ class VoiceAgent:
             # 记录本 utterance 起始时刻（首个 partial）。供拖尾判定与后续 final 兜底。
             if call_id not in self._utterance_started_at:
                 self._utterance_started_at[call_id] = now
+            reference = self._active_tts_reference(call_id)
+            if reference:
+                decision, similarity = _classify_tts_echo(
+                    event.text, reference, is_final=False
+                )
+                self._log_echo_guard(
+                    call_id, event.type, decision, similarity, event.text
+                )
+                if decision != "distinct":
+                    return
             # 拖尾保护：agent 正在播报，且本 utterance 起始于开口之前 → 上一轮拖尾，
             # 不是对 agent 的打断。不打断、不写 _recent_partial（不污染下一句端点）。
             if self._speaking.get(call_id):
@@ -950,6 +1105,19 @@ class VoiceAgent:
             now = time.monotonic()
             # 本 utterance 结束：消费并清除其起始时刻（无论是否退化/空，均不残留）。
             utterance_started_at = self._utterance_started_at.pop(call_id, None)
+            echo_guard_distinct = False
+            reference = self._active_tts_reference(call_id)
+            if event.text and reference:
+                decision, similarity = _classify_tts_echo(
+                    event.text, reference, is_final=True
+                )
+                self._log_echo_guard(
+                    call_id, event.type, decision, similarity, event.text
+                )
+                if decision != "distinct":
+                    self._reset_semantic_partial(call_id)
+                    return
+                echo_guard_distinct = True
             if event.text and _is_degenerate_transcript(event.text):
                 # 退化识别（回声/噪声幻觉）：既不落转写也不驱动对话，
                 # 更不触发端点/打断，防止 agent 被自己的回声带偏。
@@ -966,6 +1134,11 @@ class VoiceAgent:
                 is_tail, detail = self._classify_tail(
                     call_id, utterance_started_at, now
                 )
+                # A final-only utterance normally falls back to the time-based
+                # tail guard. Text that is positively distinct from current TTS
+                # is stronger evidence and must remain eligible for barge-in.
+                if echo_guard_distinct and utterance_started_at is None:
+                    is_tail = False
                 if is_tail:
                     self._merge_tail_into_last_user_message(call_id, event.text)
                     logger.info(
@@ -1029,6 +1202,8 @@ class VoiceAgent:
         self._callbacks.pop(call_id, None)
         self._injected_text.pop(call_id, None)
         self._speaking.pop(call_id, None)
+        self._tts_reference_text.pop(call_id, None)
+        self._tts_reference_until.pop(call_id, None)
         self._speak_started_at.pop(call_id, None)
         self._utterance_started_at.pop(call_id, None)
         self._channels.pop(call_id, None)

@@ -27,6 +27,7 @@ import type {
   TaskBatchCreateResult,
   TaskFlowVersion,
   TaskListPage,
+  TaskSummary,
   TranscriptTurn,
 } from '@ai-call/shared';
 import { FreeSwitchService } from '../freeswitch/freeswitch.service.js';
@@ -256,6 +257,34 @@ export class TasksService {
     });
     if (!record) throw new NotFoundException(`Task ${id} not found`);
     return this.toDomain(record);
+  }
+
+  async summary(): Promise<TaskSummary> {
+    const visibility = await this.buildTaskVisibilityWhere();
+    const month = localMonthRange(new Date());
+
+    const [currentMonthTasks, totalAttempts, connectedTasks, failedTasks] = await Promise.all([
+      this.prisma.outboundTask.count({
+        where: { AND: [visibility, { createdAt: { gte: month.start, lt: month.end } }] },
+      }),
+      this.prisma.callAttempt.count({ where: { task: visibility } }),
+      this.prisma.outboundTask.count({
+        where: { AND: [visibility, { status: { in: [TaskStatus.COMPLETED, TaskStatus.IN_CALL] } }] },
+      }),
+      this.prisma.outboundTask.count({
+        where: { AND: [visibility, { status: { in: [TaskStatus.FAILED, TaskStatus.NO_ANSWER] } }] },
+      }),
+    ]);
+
+    return {
+      currentMonthTasks,
+      totalAttempts,
+      connectedTasks,
+      failedTasks,
+      connectRate: totalAttempts
+        ? Math.round((connectedTasks / totalAttempts) * 1000) / 10
+        : 0,
+    };
   }
 
   /**
@@ -1547,6 +1576,12 @@ function localDayRange(at: Date): { start: Date; end: Date } {
   start.setHours(0, 0, 0, 0);
   const end = new Date(start);
   end.setDate(end.getDate() + 1);
+  return { start, end };
+}
+
+function localMonthRange(at: Date): { start: Date; end: Date } {
+  const start = new Date(at.getFullYear(), at.getMonth(), 1);
+  const end = new Date(at.getFullYear(), at.getMonth() + 1, 1);
   return { start, end };
 }
 

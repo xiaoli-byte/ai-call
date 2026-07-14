@@ -69,17 +69,25 @@ export default async function TasksPage({
   searchParams: { scenario?: ScenarioKey; status?: TaskStatus; cursor?: string; query?: string };
 }) {
   let page: Awaited<ReturnType<typeof apiServer.tasks.list>> = { items: [] };
+  let summary: Awaited<ReturnType<typeof apiServer.tasks.summary>> = {
+    currentMonthTasks: 0,
+    totalAttempts: 0,
+    connectedTasks: 0,
+    failedTasks: 0,
+    connectRate: 0,
+  };
   let scenarios: Awaited<ReturnType<typeof apiServer.scenarios.list>> = [];
   let error: string | null = null;
 
   try {
-    [page, scenarios] = await Promise.all([
+    [page, summary, scenarios] = await Promise.all([
       apiServer.tasks.list({
         scenario: searchParams.scenario,
         status: searchParams.status,
         cursor: searchParams.cursor,
         limit: 50,
       }),
+      apiServer.tasks.summary(),
       apiServer.scenarios.list(),
     ]);
   } catch (cause) {
@@ -93,11 +101,6 @@ export default async function TasksPage({
     const scenarioName = scenarioNames.get(task.scenario) ?? task.scenario;
     return `${task.id} ${task.to} ${scenarioName}`.toLowerCase().includes(query);
   });
-  const totalCalls = tasks.reduce((sum, task) => sum + Math.max(task.attemptCount, 1), 0);
-  const connected = tasks.filter((task) => task.status === 'completed' || task.status === 'in_call').length;
-  const failed = tasks.filter((task) => task.status === 'failed' || task.status === 'no_answer').length;
-  const connectRate = totalCalls ? Math.round((connected / totalCalls) * 1000) / 10 : 0;
-
   return (
     <div className={cn('outbound-page', styles.page)}>
       <TaskListPoller />
@@ -116,25 +119,25 @@ export default async function TasksPage({
         <section className={styles.statGrid} aria-label="任务统计">
           <article className={styles.statCard}>
             <div className={styles.statLabel}><span>本月任务总数</span><CalendarDays size={16} /></div>
-            <strong>{number(tasks.length)}</strong>
+            <strong>{number(summary.currentMonthTasks)}</strong>
             <small>当前列表任务</small>
             <p className={styles.positive}><TrendingUp size={12} /> 实时同步任务数据</p>
           </article>
           <article className={styles.statCard}>
             <div className={styles.statLabel}><span>累计外呼量</span><PhoneCall size={16} /></div>
-            <strong>{number(totalCalls)}</strong>
+            <strong>{number(summary.totalAttempts)}</strong>
             <small>当前任务累计</small>
-            <p className={styles.positive}><TrendingUp size={12} /> 接通率 {connectRate}%</p>
+            <p className={styles.positive}><TrendingUp size={12} /> 接通率 {summary.connectRate}%</p>
           </article>
           <article className={styles.statCard}>
             <div className={styles.statLabel}><span>成功接通</span><CheckCircle2 size={16} /></div>
-            <strong>{number(connected)}</strong>
+            <strong>{number(summary.connectedTasks)}</strong>
             <small>已接通通话数</small>
-            <p className={styles.muted}>失败或未接听 {number(failed)}</p>
+            <p className={styles.muted}>失败或未接听 {number(summary.failedTasks)}</p>
           </article>
           <article className={styles.statCard}>
             <div className={styles.statLabel}><span>平均接通率</span><Activity size={16} /></div>
-            <strong>{connectRate}%</strong>
+            <strong>{summary.connectRate}%</strong>
             <small>当前列表均值</small>
             <p className={styles.positive}><TrendingUp size={12} /> 数据持续更新</p>
           </article>
