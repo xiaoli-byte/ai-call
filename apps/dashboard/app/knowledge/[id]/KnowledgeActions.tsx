@@ -5,12 +5,14 @@ import { useRouter } from 'next/navigation';
 import { Search, Upload } from 'lucide-react';
 import { apiClient } from '@/lib/api/client';
 import { appToast } from '@/lib/toast';
-import type { KnowledgeTestRetrieveResult } from '@ai-call/shared';
+import { PERMISSIONS, type KnowledgeTestRetrieveResult } from '@ai-call/shared';
+import { usePermission } from '@/hooks/use-permission';
 
 import styles from '../../tasks/tasks.module.scss';
 
 export function KnowledgeActions({ knowledgeBaseId }: { knowledgeBaseId: string }) {
   const router = useRouter();
+  const canUpload = usePermission(PERMISSIONS.KNOWLEDGE_CREATE);
   const fileRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState('');
   const [testing, setTesting] = useState(false);
@@ -75,13 +77,17 @@ export function KnowledgeActions({ knowledgeBaseId }: { knowledgeBaseId: string 
             {testing ? '测试中...' : '检索测试'}
           </button>
           <input ref={fileRef} type="file" style={{ display: 'none' }} />
-          <button type="button" className={styles.toolButton} onClick={() => fileRef.current?.click()}>
-            选择文件
-          </button>
-          <button type="button" className={styles.toolButton} onClick={uploadFile} disabled={uploading}>
-            <Upload size={14} />
-            {uploading ? '上传中...' : '上传文档'}
-          </button>
+          {canUpload && (
+            <button type="button" className={styles.toolButton} onClick={() => fileRef.current?.click()}>
+              选择文件
+            </button>
+          )}
+          {canUpload && (
+            <button type="button" className={styles.toolButton} onClick={uploadFile} disabled={uploading}>
+              <Upload size={14} />
+              {uploading ? '上传中...' : '上传文档'}
+            </button>
+          )}
         </div>
       </div>
 

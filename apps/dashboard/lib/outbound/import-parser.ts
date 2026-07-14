@@ -183,7 +183,7 @@ function getCellValueForHeader(row: ImportRow, header: string): string {
   return row.variables[trimmed] ?? '';
 }
 
-function escapeCell(value: string, delimiter: string): string {
+export function escapeCell(value: string, delimiter: string): string {
   if (!value) return '';
   const needsQuoting =
     value.includes(delimiter) || value.includes('"') || value.includes('\n') || value.includes('\r');

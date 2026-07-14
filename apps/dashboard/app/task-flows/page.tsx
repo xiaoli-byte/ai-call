@@ -2,6 +2,8 @@ import Link from 'next/link';
 import { apiServer } from '@/lib/api/server';
 import { FlowStatus } from '@ai-call/shared';
 import { FlowRowActions } from './FlowRowActions';
+import { NewFlowLink } from './NewFlowLink';
+import { NewFlowEmptyLink } from './NewFlowEmptyLink';
 
 const STATUS_LABELS: Record<FlowStatus, string> = {
   draft: '草稿',
@@ -30,13 +32,7 @@ export default async function TaskFlowsPage() {
           <p className="subtitle">可视化编排外呼话术与动作流程</p>
         </div>
         <div className="page-actions">
-          <Link href="/task-flows/new" className="btn">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="12" y1="5" x2="12" y2="19" />
-              <line x1="5" y1="12" x2="19" y2="12" />
-            </svg>
-            新建流程
-          </Link>
+          <NewFlowLink />
         </div>
       </div>
 
@@ -59,7 +55,7 @@ export default async function TaskFlowsPage() {
             </svg>
             <div className="empty-title">暂无流程配置</div>
             <div className="empty-desc">创建第一个可视化外呼流程</div>
-            <Link href="/task-flows/new" className="btn">创建第一个流程</Link>
+            <NewFlowEmptyLink />
           </div>
         </div>
       ) : (

@@ -5,12 +5,16 @@ import { CheckCircle2, PhoneForwarded, XCircle } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { apiClient } from '@/lib/api/client';
 import { appToast } from '@/lib/toast';
-import type { HandoffTicketStatus } from '@ai-call/shared';
+import { PERMISSIONS, type HandoffTicketStatus } from '@ai-call/shared';
+import { usePermissions } from '@/hooks/use-permission';
 
 import styles from '../tasks/tasks.module.scss';
 
 export function HandoffActions({ id, status }: { id: string; status: HandoffTicketStatus }) {
   const router = useRouter();
+  const { has } = usePermissions();
+  const canUpdate = has(PERMISSIONS.TASK_UPDATE);
+  const canCreate = has(PERMISSIONS.TASK_CREATE);
   const [pending, setPending] = useState<string | null>(null);
 
   async function update(nextStatus: HandoffTicketStatus, disposition?: string) {
@@ -48,23 +52,29 @@ export function HandoffActions({ id, status }: { id: string; status: HandoffTick
 
   return (
     <div className={styles.tools}>
-      {status === 'pending' ? (
+      {status === 'pending' && canUpdate ? (
         <button type="button" className={styles.toolButton} onClick={() => update('processing')} disabled={pending !== null}>
           认领
         </button>
       ) : null}
-      <button type="button" className={styles.toolButton} onClick={callback} disabled={pending !== null}>
-        <PhoneForwarded size={14} />
-        回拨
-      </button>
-      <button type="button" className={styles.toolButton} onClick={() => update('completed', 'contacted')} disabled={pending !== null}>
-        <CheckCircle2 size={14} />
-        完成
-      </button>
-      <button type="button" className={styles.toolButton} onClick={() => update('closed', 'closed')} disabled={pending !== null}>
-        <XCircle size={14} />
-        关闭
-      </button>
+      {canCreate && (
+        <button type="button" className={styles.toolButton} onClick={callback} disabled={pending !== null}>
+          <PhoneForwarded size={14} />
+          回拨
+        </button>
+      )}
+      {canUpdate && (
+        <button type="button" className={styles.toolButton} onClick={() => update('completed', 'contacted')} disabled={pending !== null}>
+          <CheckCircle2 size={14} />
+          完成
+        </button>
+      )}
+      {canUpdate && (
+        <button type="button" className={styles.toolButton} onClick={() => update('closed', 'closed')} disabled={pending !== null}>
+          <XCircle size={14} />
+          关闭
+        </button>
+      )}
     </div>
   );
 }

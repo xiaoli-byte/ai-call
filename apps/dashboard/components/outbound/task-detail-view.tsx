@@ -9,7 +9,6 @@ import {
   Download,
   Eye,
   Headphones,
-  Pause,
   PhoneCall,
   Radio,
   XCircle,
@@ -90,6 +89,22 @@ export function TaskDetailView({
     : 0;
   const customerName = task.variables.customerName || task.variables.name || '外呼客户';
 
+  // “导出任务”：把本视图已加载的任务字段（含通话转写 task.transcript）
+  // 导出为 JSON 文件，纯客户端生成，不发起额外网络请求。
+  function handleExportTask() {
+    const payload = { ...task, scenarioName };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      type: 'application/json;charset=utf-8',
+    });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    const dateStamp = new Date().toISOString().slice(0, 10);
+    anchor.download = `task-${task.id}-${dateStamp}.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <div className={cn('outbound-page', styles.page)}>
       <header className={styles.header}>
@@ -103,8 +118,7 @@ export function TaskDetailView({
             <p><code>{task.id}</code><span><PhoneCall size={12} />{scenarioName}</span><span><Clock3 size={12} />{formatDate(task.createdAt)}</span></p>
           </div>
           <div className={styles.headerActions}>
-            <button type="button" className={cn(styles.actionButton, styles.warningButton)}><Pause size={14} />暂停任务</button>
-            <button type="button" className={styles.actionButton}><Download size={14} />导出任务</button>
+            <button type="button" className={styles.actionButton} onClick={handleExportTask}><Download size={14} />导出任务</button>
           </div>
         </div>
       </header>

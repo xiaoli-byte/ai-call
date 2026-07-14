@@ -4,9 +4,7 @@ import {
   CalendarDays,
   ChevronRight,
   CheckCircle2,
-  Download,
   PhoneCall,
-  Plus,
   Search,
   TrendingUp,
 } from 'lucide-react';
@@ -16,6 +14,8 @@ import { EmptyState } from '@/components/outbound/empty-state';
 import { StatusBadge, type StatusTone } from '@/components/outbound/status-badge';
 import { TaskStatus, type ScenarioKey } from '@ai-call/shared';
 import { TaskListPoller } from './task-list-poller';
+import { NewTaskLink } from './new-task-link';
+import { ExportTasksButton, type TaskExportRow } from './export-tasks-button';
 
 import styles from './tasks.module.scss';
 
@@ -101,6 +101,25 @@ export default async function TasksPage({
     const scenarioName = scenarioNames.get(task.scenario) ?? task.scenario;
     return `${task.id} ${task.to} ${scenarioName}`.toLowerCase().includes(query);
   });
+  // “导出”按钮用的行数据：与下方表格同一份已筛选 tasks，派生字段口径保持一致。
+  const exportRows: TaskExportRow[] = tasks.map((task) => {
+    const attempts = Math.max(task.attemptCount, 1);
+    const taskConnected = task.status === 'completed' || task.status === 'in_call' ? 1 : 0;
+    const taskFailed = task.status === 'failed' || task.status === 'no_answer' ? 1 : 0;
+    const rate = Math.round((taskConnected / attempts) * 100);
+    return {
+      id: task.id,
+      to: task.to,
+      scenarioName: scenarioNames.get(task.scenario) ?? task.scenario,
+      statusLabel: STATUS_LABELS[task.status],
+      total: attempts,
+      connected: taskConnected,
+      failed: taskFailed,
+      rate,
+      scheduledAt: formatDate(task.scheduledAt),
+      duration: task.duration ?? null,
+    };
+  });
   return (
     <div className={cn('outbound-page', styles.page)}>
       <TaskListPoller />
@@ -109,10 +128,7 @@ export default async function TasksPage({
           <h1>外呼任务</h1>
           <p>管理和追踪所有外呼任务的执行情况</p>
         </div>
-        <Link href="/tasks/new" className={styles.primaryButton}>
-          <Plus size={15} />
-          发起外呼
-        </Link>
+        <NewTaskLink />
       </header>
 
       <main className={styles.content}>
@@ -162,7 +178,7 @@ export default async function TasksPage({
               <input name="query" defaultValue={searchParams.query} placeholder="搜索任务名称或 ID..." />
             </form>
             <button type="button" className={styles.toolButton}><CalendarDays size={14} />日期筛选</button>
-            <button type="button" className={styles.toolButton}><Download size={14} />导出</button>
+            <ExportTasksButton rows={exportRows} />
           </div>
         </section>
 

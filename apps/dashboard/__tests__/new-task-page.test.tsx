@@ -1,7 +1,8 @@
 import React from 'react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { ScenarioStatus } from '@ai-call/shared';
+import { ScenarioStatus, UserStatus } from '@ai-call/shared';
+import { useAuthStore } from '@/lib/auth-store';
 
 const mocks = vi.hoisted(() => ({
   createBatch: vi.fn(),
@@ -93,6 +94,15 @@ describe('NewTaskPage', () => {
     vi.clearAllMocks();
     mocks.createBatch.mockResolvedValue({ createdCount: 1, tasks: [] });
     mocks.flows = [];
+    // “创建 N 个任务”按钮受 task:create 权限门控，测试用户需具备该权限码
+    useAuthStore.getState().setUser({
+      id: 'user-1',
+      email: 'operator@example.com',
+      name: '测试操作员',
+      status: UserStatus.ACTIVE,
+      roles: ['operator'],
+      permissions: ['task:create'],
+    });
   });
 
   it('creates batch tasks directly without creating an activity', async () => {

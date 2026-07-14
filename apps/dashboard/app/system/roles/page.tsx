@@ -2,6 +2,8 @@
 
 import { useState } from 'react';
 import { useRoles, useRoleMutations } from '@/hooks/use-system-roles';
+import { usePermissions } from '@/hooks/use-permission';
+import { useThrottleFn } from '@/hooks/use-throttle-fn';
 import { appToast } from '@/lib/toast';
 import type { SystemRole } from '@/lib/api/endpoints/system';
 import { PERMISSIONS } from '@ai-call/shared';
@@ -71,6 +73,13 @@ const PERMISSION_GROUPS: Array<{ label: string; codes: PermissionCode[] }> = [
 export default function RolesPage() {
   const { data: rolesData, error: rolesError, isLoading: rolesLoading } = useRoles();
   const { remove } = useRoleMutations();
+  const { has } = usePermissions();
+  const canCreate = has(PERMISSIONS.SYSTEM_ROLE_CREATE);
+  const canUpdate = has(PERMISSIONS.SYSTEM_ROLE_UPDATE);
+  const canDelete = has(PERMISSIONS.SYSTEM_ROLE_DELETE);
+  // 删除按钮点击后直接发起网络请求且没有 pending 保护，用节流防止连点重复提交；
+  // handleDeleteRole 是函数声明（下方定义），会被提升，这里引用是安全的。
+  const throttledDeleteRole = useThrottleFn(handleDeleteRole);
   const roles: SystemRole[] = rolesData ?? [];
   const [showCreate, setShowCreate] = useState(false);
   const [editingRole, setEditingRole] = useState<SystemRole | null>(null);
@@ -101,7 +110,7 @@ export default function RolesPage() {
           <p className="subtitle">管理系统角色与权限分配</p>
         </div>
         <div className="page-actions">
-          <Button onClick={() => setShowCreate(true)}>新建角色</Button>
+          {canCreate && <Button onClick={() => setShowCreate(true)}>新建角色</Button>}
         </div>
       </div>
 
@@ -127,16 +136,18 @@ export default function RolesPage() {
                 <span className="badge badge-info">
                   {role.permissions.length} 权限
                 </span>
-                <button
-                  className="btn btn-secondary btn-sm"
-                  onClick={() => setEditingRole(role)}
-                >
-                  编辑权限
-                </button>
-                {role.name !== 'admin' && role.userCount === 0 && (
+                {canUpdate && (
+                  <button
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => setEditingRole(role)}
+                  >
+                    编辑权限
+                  </button>
+                )}
+                {canDelete && role.name !== 'admin' && role.userCount === 0 && (
                   <button
                     className="btn btn-danger btn-sm"
-                    onClick={() => handleDeleteRole(role)}
+                    onClick={() => throttledDeleteRole(role)}
                   >
                     删除
                   </button>

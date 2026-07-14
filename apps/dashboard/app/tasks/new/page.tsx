@@ -4,11 +4,12 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, CalendarDays, CircleHelp, Download, Settings2 } from 'lucide-react';
-import { FlowStatus, ScenarioStatus, TaskPriority, type TaskFlow } from '@ai-call/shared';
+import { FlowStatus, PERMISSIONS, ScenarioStatus, TaskPriority, type TaskFlow } from '@ai-call/shared';
 import { extractFlowVariables } from '@ai-call/shared';
 import { apiClient } from '@/lib/api/client';
 import { useTaskFlows } from '@/hooks/use-task-flows';
 import { useScenarios } from '@/hooks/use-scenarios';
+import { usePermission } from '@/hooks/use-permission';
 import { appToast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 import {
@@ -23,6 +24,7 @@ import styles from './new-task.module.scss';
 
 export default function NewTaskPage() {
   const router = useRouter();
+  const canCreateTask = usePermission(PERMISSIONS.TASK_CREATE);
   const [submitting, setSubmitting] = useState(false);
   const [scenarioKey, setScenarioKey] = useState('');
   const [flowId, setFlowId] = useState('');
@@ -216,9 +218,11 @@ export default function NewTaskPage() {
 
           <div className={styles.formActions}>
             <Link href="/tasks" className="btn btn-ghost">取消</Link>
-            <button type="submit" className="btn" disabled={submitting || validRows.length === 0}>
-              {submitting ? '创建中...' : `创建 ${validRows.length} 个任务`}
-            </button>
+            {canCreateTask && (
+              <button type="submit" className="btn" disabled={submitting || validRows.length === 0}>
+                {submitting ? '创建中...' : `创建 ${validRows.length} 个任务`}
+              </button>
+            )}
           </div>
         </div>
       </form>

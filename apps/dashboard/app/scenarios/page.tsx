@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import {
   FlowStatus,
+  PERMISSIONS,
   ScenarioStatus,
   VoiceCloneStatus,
   type CreateScenarioDto,
@@ -25,6 +26,8 @@ import { useScenarioMutations, useScenarios } from '@/hooks/use-scenarios';
 import { useTaskFlows } from '@/hooks/use-task-flows';
 import { useVoiceCloneMutations, useVoiceClones } from '@/hooks/use-voice-clones';
 import { useTTS } from '@/hooks/useTTS';
+import { usePermission } from '@/hooks/use-permission';
+import { useThrottleFn } from '@/hooks/use-throttle-fn';
 import { BUILT_IN_TTS_VOICES, getBuiltInVoicePersona, isBuiltInTtsVoice } from '@/lib/tts-voices';
 import { cn } from '@/lib/utils';
 import { appToast } from '@/lib/toast';
@@ -368,6 +371,11 @@ function ScenarioListView({
   onDeactivate: (scenario: ScenarioConfig) => void;
   onPublish: (scenario: ScenarioConfig) => void;
 }) {
+  const canWrite = usePermission(PERMISSIONS.SCENARIO_UPDATE);
+  // 发布/停用直接发起网络请求，且列表行按钮没有 pending/disabled 保护，
+  // 用节流防止连点导致重复请求（同一动作在所有行间共享节流窗口）。
+  const throttledPublish = useThrottleFn(onPublish);
+  const throttledDeactivate = useThrottleFn(onDeactivate);
   const [query, setQuery] = useState('');
   const filtered = scenarios.filter((item) => {
     const text = `${item.name} ${item.scenario} ${item.description}`.toLowerCase();
@@ -411,10 +419,12 @@ function ScenarioListView({
       </div> */}
 
       <div className="scenario-toolbar">
-        <button type="button" className="btn" onClick={onCreate}>
-          <Plus size={15} />
-          新建场景
-        </button>
+        {canWrite && (
+          <button type="button" className="btn" onClick={onCreate}>
+            <Plus size={15} />
+            新建场景
+          </button>
+        )}
         <div className="scenario-search">
           <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="请输入场景名称搜索" />
           <Search size={15} />
@@ -449,8 +459,8 @@ function ScenarioListView({
                     <div className="scenario-row-actions">
                       <button type="button" onClick={() => onEdit(scenario)}>进入</button>
                       {/* <Link href={`/scenarios/${scenario.id ?? scenario.scenario}/tests`}>测试记录</Link> */}
-                      <button type="button" onClick={() => onPublish(scenario)}>发布</button>
-                      <button type="button" onClick={() => onDeactivate(scenario)}>停用</button>
+                      {canWrite && <button type="button" onClick={() => throttledPublish(scenario)}>发布</button>}
+                      {canWrite && <button type="button" onClick={() => throttledDeactivate(scenario)}>停用</button>}
                     </div>
                   </td>
                 </tr>
@@ -854,6 +864,7 @@ function ScenarioDetailView({
   onBack: () => void;
   onSave: () => void;
 }) {
+  const canWrite = usePermission(PERMISSIONS.SCENARIO_UPDATE);
   const [tab, setTab] = useState<DetailTab>('robot');
 
   return (
@@ -887,10 +898,12 @@ function ScenarioDetailView({
       </div>
 
       <div className="scenario-save-bar">
-        <button type="button" className="btn" onClick={onSave} disabled={submitting}>
-          <Save size={15} />
-          {submitting ? '保存中...' : '保存'}
-        </button>
+        {canWrite && (
+          <button type="button" className="btn" onClick={onSave} disabled={submitting}>
+            <Save size={15} />
+            {submitting ? '保存中...' : '保存'}
+          </button>
+        )}
         <span>最近保存：{mode === 'create' ? '-' : formatDate(draft.updatedAt)}</span>
       </div>
     </div>

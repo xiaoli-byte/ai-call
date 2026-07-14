@@ -5,11 +5,14 @@ import { PlugZap, Send } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { apiClient } from '@/lib/api/client';
 import { appToast } from '@/lib/toast';
+import { PERMISSIONS } from '@ai-call/shared';
+import { usePermission } from '@/hooks/use-permission';
 
 import styles from '../tasks/tasks.module.scss';
 
 export function IntegrationActions({ defaultConnectorId }: { defaultConnectorId?: string }) {
   const router = useRouter();
+  const canManage = usePermission(PERMISSIONS.TASK_UPDATE);
   const [name, setName] = useState('CRM Webhook');
   const [endpoint, setEndpoint] = useState('mock://crm/leads');
   const [connectorId, setConnectorId] = useState(defaultConnectorId ?? '');
@@ -78,14 +81,18 @@ export function IntegrationActions({ defaultConnectorId }: { defaultConnectorId?
           />
         </div>
         <div className={styles.tools}>
-          <button type="button" className={styles.toolButton} onClick={createConnector} disabled={pending !== null}>
-            <PlugZap size={14} />
-            {pending === 'create' ? '创建中...' : '创建连接器'}
-          </button>
-          <button type="button" className={styles.primaryButton} onClick={testConnector} disabled={pending !== null}>
-            <Send size={14} />
-            {pending === 'test' ? '测试中...' : '测试调用'}
-          </button>
+          {canManage && (
+            <button type="button" className={styles.toolButton} onClick={createConnector} disabled={pending !== null}>
+              <PlugZap size={14} />
+              {pending === 'create' ? '创建中...' : '创建连接器'}
+            </button>
+          )}
+          {canManage && (
+            <button type="button" className={styles.primaryButton} onClick={testConnector} disabled={pending !== null}>
+              <Send size={14} />
+              {pending === 'test' ? '测试中...' : '测试调用'}
+            </button>
+          )}
         </div>
       </div>
     </section>

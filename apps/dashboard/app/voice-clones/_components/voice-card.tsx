@@ -8,6 +8,7 @@ import styles from './voice-card.module.scss';
 export function VoiceCard({
   clone,
   active,
+  canDelete,
   onPreview,
   onUse,
   onCopy,
@@ -15,6 +16,7 @@ export function VoiceCard({
 }: {
   clone: VoiceClone;
   active: boolean;
+  canDelete: boolean;
   onPreview: () => void;
   onUse: () => void;
   onCopy: () => void;
@@ -57,9 +59,11 @@ export function VoiceCard({
         <button type="button" className={styles.iconButton} title="复制音色 ID" onClick={onCopy}>
           <Copy size={14} />
         </button>
-        <button type="button" className={cn(styles.iconButton, styles.danger)} title="删除" onClick={onDelete}>
-          <Trash2 size={14} />
-        </button>
+        {canDelete && (
+          <button type="button" className={cn(styles.iconButton, styles.danger)} title="删除" onClick={onDelete}>
+            <Trash2 size={14} />
+          </button>
+        )}
       </div>
     </article>
   );

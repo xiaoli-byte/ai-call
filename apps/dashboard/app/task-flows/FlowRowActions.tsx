@@ -5,8 +5,9 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { AlertTriangle } from 'lucide-react';
 import { useTaskFlowMutations } from '@/hooks/use-task-flows';
+import { usePermissions } from '@/hooks/use-permission';
 import { appToast } from '@/lib/toast';
-import type { FlowStatus } from '@ai-call/shared';
+import { PERMISSIONS, type FlowStatus } from '@ai-call/shared';
 import {
   Dialog,
   DialogContent,
@@ -29,6 +30,11 @@ export function FlowRowActions({ id, status, name }: FlowRowActionsProps) {
   const [pending, setPending] = useState<Action>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const { publish, duplicate, remove } = useTaskFlowMutations();
+  const { has } = usePermissions();
+  const canUpdate = has(PERMISSIONS.FLOW_UPDATE);
+  const canPublishPermission = has(PERMISSIONS.FLOW_PUBLISH);
+  const canDuplicate = has(PERMISSIONS.FLOW_CREATE);
+  const canDelete = has(PERMISSIONS.FLOW_DELETE);
 
   async function run(action: Action, fn: () => Promise<unknown>, successMsg: string) {
     setPending(action);
@@ -52,10 +58,12 @@ export function FlowRowActions({ id, status, name }: FlowRowActionsProps) {
 
   return (
     <div className="row-actions" style={{ justifyContent: 'flex-end' }}>
-      <Link href={`/task-flows/${id}`} className="btn btn-secondary btn-sm">
-        编辑
-      </Link>
-      {canPublish && (
+      {canUpdate && (
+        <Link href={`/task-flows/${id}`} className="btn btn-secondary btn-sm">
+          编辑
+        </Link>
+      )}
+      {canPublish && canPublishPermission && (
         <button
           type="button"
           className="btn btn-sm"
@@ -65,22 +73,26 @@ export function FlowRowActions({ id, status, name }: FlowRowActionsProps) {
           {pending === 'publish' ? '发布中…' : '发布'}
         </button>
       )}
-      <button
-        type="button"
-        className="btn btn-secondary btn-sm"
-        disabled={pending !== null}
-        onClick={() => run('duplicate', () => duplicate(id), '流程已复制')}
-      >
-        {pending === 'duplicate' ? '复制中…' : '复制'}
-      </button>
-      <button
-        type="button"
-        className="btn btn-danger btn-sm"
-        disabled={pending !== null}
-        onClick={() => setConfirmDelete(true)}
-      >
-        删除
-      </button>
+      {canDuplicate && (
+        <button
+          type="button"
+          className="btn btn-secondary btn-sm"
+          disabled={pending !== null}
+          onClick={() => run('duplicate', () => duplicate(id), '流程已复制')}
+        >
+          {pending === 'duplicate' ? '复制中…' : '复制'}
+        </button>
+      )}
+      {canDelete && (
+        <button
+          type="button"
+          className="btn btn-danger btn-sm"
+          disabled={pending !== null}
+          onClick={() => setConfirmDelete(true)}
+        >
+          删除
+        </button>
+      )}
 
       <Dialog open={confirmDelete} onOpenChange={setConfirmDelete}>
         <DialogContent>

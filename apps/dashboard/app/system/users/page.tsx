@@ -3,8 +3,11 @@
 import { useMemo, useState } from 'react';
 import { useUsers, useUserMutations } from '@/hooks/use-system-users';
 import { useRoles } from '@/hooks/use-system-roles';
+import { usePermissions } from '@/hooks/use-permission';
+import { useThrottleFn } from '@/hooks/use-throttle-fn';
 import { useAuthStore } from '@/lib/auth-store';
 import { appToast } from '@/lib/toast';
+import { PERMISSIONS } from '@ai-call/shared';
 import type { SystemUser } from '@/lib/api/endpoints/system';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -25,6 +28,13 @@ export default function UsersPage() {
     [rolesData],
   );
   const { remove } = useUserMutations();
+  const { has } = usePermissions();
+  const canCreate = has(PERMISSIONS.SYSTEM_USER_CREATE);
+  const canUpdate = has(PERMISSIONS.SYSTEM_USER_UPDATE);
+  const canDelete = has(PERMISSIONS.SYSTEM_USER_DELETE);
+  // 删除按钮点击后直接发起网络请求且没有 pending 保护，用节流防止连点重复提交；
+  // handleDelete 是函数声明（下方定义），会被提升，这里引用是安全的。
+  const throttledDelete = useThrottleFn(handleDelete);
 
   const [showCreate, setShowCreate] = useState(false);
   const [editingUser, setEditingUser] = useState<SystemUser | null>(null);
@@ -56,7 +66,7 @@ export default function UsersPage() {
           <p className="subtitle">管理系统用户账号、角色分配与状态</p>
         </div>
         <div className="page-actions">
-          <Button onClick={() => setShowCreate(true)}>新建用户</Button>
+          {canCreate && <Button onClick={() => setShowCreate(true)}>新建用户</Button>}
         </div>
       </div>
 
@@ -111,25 +121,29 @@ export default function UsersPage() {
                   </td>
                   <td>
                     <div className="row-actions">
-                      <button
-                        className="btn btn-ghost btn-sm"
-                        onClick={() => setEditingUser(u)}
-                        title="编辑"
-                      >
-                        编辑
-                      </button>
-                      <button
-                        className="btn btn-ghost btn-sm"
-                        onClick={() => setResettingUser(u)}
-                        title="重置密码"
-                      >
-                        重置密码
-                      </button>
-                      {u.email !== 'admin@ai-call.local' && (
+                      {canUpdate && (
+                        <button
+                          className="btn btn-ghost btn-sm"
+                          onClick={() => setEditingUser(u)}
+                          title="编辑"
+                        >
+                          编辑
+                        </button>
+                      )}
+                      {canUpdate && (
+                        <button
+                          className="btn btn-ghost btn-sm"
+                          onClick={() => setResettingUser(u)}
+                          title="重置密码"
+                        >
+                          重置密码
+                        </button>
+                      )}
+                      {canDelete && u.email !== 'admin@ai-call.local' && (
                         <button
                           className="btn btn-ghost btn-sm"
                           style={{ color: 'var(--danger)' }}
-                          onClick={() => handleDelete(u)}
+                          onClick={() => throttledDelete(u)}
                         >
                           删除
                         </button>

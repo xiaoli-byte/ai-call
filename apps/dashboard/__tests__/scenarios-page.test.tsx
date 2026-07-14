@@ -1,7 +1,8 @@
 import React from 'react';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { FlowStatus, ScenarioStatus, VoiceCloneStatus } from '@ai-call/shared';
+import { FlowStatus, ScenarioStatus, UserStatus, VoiceCloneStatus } from '@ai-call/shared';
+import { useAuthStore } from '@/lib/auth-store';
 
 const mocks = vi.hoisted(() => ({
   flows: [] as any[],
@@ -104,6 +105,15 @@ beforeEach(() => {
   mocks.flows = [];
   mocks.clones = [];
   mocks.scenarios = [];
+  // “新建场景”“保存”等写操作按钮受 scenario:update 权限门控，测试用户需具备该权限码
+  useAuthStore.getState().setUser({
+    id: 'user-1',
+    email: 'operator@example.com',
+    name: '测试操作员',
+    status: UserStatus.ACTIVE,
+    roles: ['operator'],
+    permissions: ['scenario:update'],
+  });
   mocks.create.mockResolvedValue({
     id: 'scenario-1',
     scenario: 'scene-1',

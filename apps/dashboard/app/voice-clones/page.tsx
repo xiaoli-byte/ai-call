@@ -18,9 +18,10 @@ import {
   Wand2,
   X,
 } from 'lucide-react';
-import { VoiceCloneModel, VoiceCloneStatus, type VoiceClone } from '@ai-call/shared';
+import { PERMISSIONS, VoiceCloneModel, VoiceCloneStatus, type VoiceClone } from '@ai-call/shared';
 import { useAudioRecorder } from '@/hooks/useAudioRecorder';
 import { useVoiceCloneMutations, useVoiceClones } from '@/hooks/use-voice-clones';
+import { usePermission } from '@/hooks/use-permission';
 import { appToast } from '@/lib/toast';
 import { DEFAULT_PREVIEW_TEXT, MAX_AUDIO_BYTES, MODEL_OPTIONS } from './_components/constants';
 import { ModelCard } from './_components/model-card';
@@ -37,6 +38,7 @@ export default function VoiceClonesPage() {
   const clones = data ?? [];
   const { createPreview, synthesize, confirm, remove } = useVoiceCloneMutations();
   const recorder = useAudioRecorder({ enableVAD: true });
+  const canManageVoiceClones = usePermission(PERMISSIONS.SCENARIO_UPDATE);
 
   const [model, setModel] = useState<string>(VoiceCloneModel.QWEN);
   const [status, setStatus] = useState<CloneWorkbenchStatus>('idle');
@@ -365,7 +367,7 @@ export default function VoiceClonesPage() {
               录制或上传这个人说话的音频。建议 20-60 秒，在安静环境下清晰录制，效果更佳。
             </p>
 
-            {status === 'idle' && (
+            {status === 'idle' && canManageVoiceClones && (
               <div className={styles.sourceGrid}>
                 <button type="button" className={styles.sourceCard} onClick={startRecording}>
                   <span className={styles.sourceIcon}>
@@ -533,7 +535,7 @@ export default function VoiceClonesPage() {
             </section>
           )}
 
-          {status === 'ready' && (
+          {status === 'ready' && canManageVoiceClones && (
             <section className={styles.actionSection}>
               <button
                 type="button"
@@ -585,7 +587,7 @@ export default function VoiceClonesPage() {
                   />
                 )}
               </div>
-              {activePreviewClone.status === VoiceCloneStatus.PREVIEW && (
+              {activePreviewClone.status === VoiceCloneStatus.PREVIEW && canManageVoiceClones && (
                 <div className={styles.previewActions}>
                   <button
                     type="button"
@@ -662,6 +664,7 @@ export default function VoiceClonesPage() {
                   key={clone.id}
                   clone={clone}
                   active={(previewClone?.id ?? selectedClone?.id) === clone.id}
+                  canDelete={canManageVoiceClones}
                   onPreview={() => previewLibraryClone(clone)}
                   onUse={() => {
                     setSelectedId(clone.id);

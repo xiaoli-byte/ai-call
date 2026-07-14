@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { Toaster } from 'sonner';
 import { apiServer } from '@/lib/api/server';
 import { ApiError } from '@/lib/api/types';
 import { SWRProvider } from '@/hooks/swr-provider';
@@ -45,6 +46,9 @@ export default async function RootLayout({
         <SWRProvider fallback={fallback}>
           <ClientLayout>{children}</ClientLayout>
         </SWRProvider>
+        {/* 全局 toast 挂载点：app/lib/toast.ts 的 appToast 依赖它才能实际渲染，
+            此前仓库内一直未挂载，appToast 调用形同虚设。 */}
+        <Toaster />
       </body>
     </html>
   );

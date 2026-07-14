@@ -5,11 +5,14 @@ import { useRouter } from 'next/navigation';
 import { CopyPlus } from 'lucide-react';
 import { apiClient } from '@/lib/api/client';
 import { appToast } from '@/lib/toast';
+import { PERMISSIONS } from '@ai-call/shared';
+import { usePermission } from '@/hooks/use-permission';
 
 import styles from '../platform.module.scss';
 
 export function CloneTemplateButton({ templateId }: { templateId: string }) {
   const router = useRouter();
+  const canClone = usePermission(PERMISSIONS.PLATFORM_CREATE);
   const [loading, setLoading] = useState(false);
 
   const clone = async () => {
@@ -25,6 +28,8 @@ export function CloneTemplateButton({ templateId }: { templateId: string }) {
       setLoading(false);
     }
   };
+
+  if (!canClone) return null;
 
   return (
     <button type="button" className={styles.primaryButton} onClick={clone} disabled={loading}>

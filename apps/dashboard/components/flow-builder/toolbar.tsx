@@ -2,7 +2,8 @@
 
 import Link from 'next/link';
 import { useReactFlow } from '@xyflow/react';
-import type { FlowStatus } from '@ai-call/shared';
+import { PERMISSIONS, type FlowStatus } from '@ai-call/shared';
+import { usePermission } from '@/hooks/use-permission';
 import { useFlowStore } from './store/flow-store';
 import type { SaveStatus } from './hooks/use-flow-storage';
 import styles from './flow-builder.module.scss';
@@ -49,6 +50,8 @@ function IconBtn({
 }
 
 export function Toolbar({ flowName, flowVersion, flowStatus, onSave, saveStatus, onPublish, onTest }: ToolbarProps) {
+  const canUpdate = usePermission(PERMISSIONS.FLOW_UPDATE);
+  const canPublish = usePermission(PERMISSIONS.FLOW_PUBLISH);
   const undo = useFlowStore((s) => s.undo);
   const redo = useFlowStore((s) => s.redo);
   const organizeLayout = useFlowStore((s) => s.organizeLayout);
@@ -145,14 +148,16 @@ export function Toolbar({ flowName, flowVersion, flowStatus, onSave, saveStatus,
 
         <span className={styles.flowEditorDivider} />
 
-        <button type="button" onClick={onSave} className={styles.flowSaveBtn}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
-            <polyline points="17 21 17 13 7 13 7 21" />
-            <polyline points="7 3 7 8 15 8" />
-          </svg>
-          保存
-        </button>
+        {canUpdate && (
+          <button type="button" onClick={onSave} className={styles.flowSaveBtn}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+              <polyline points="17 21 17 13 7 13 7 21" />
+              <polyline points="7 3 7 8 15 8" />
+            </svg>
+            保存
+          </button>
+        )}
         {onTest && (
           <button
             type="button"
@@ -163,7 +168,7 @@ export function Toolbar({ flowName, flowVersion, flowStatus, onSave, saveStatus,
             测试
           </button>
         )}
-        {onPublish && (
+        {onPublish && canPublish && (
           <button
             type="button"
             onClick={onPublish}

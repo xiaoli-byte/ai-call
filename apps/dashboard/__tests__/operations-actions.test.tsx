@@ -1,6 +1,8 @@
 import React from 'react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { UserStatus } from '@ai-call/shared';
+import { useAuthStore } from '@/lib/auth-store';
 import type { IntegrationActions as IntegrationActionsType } from '../app/integrations/IntegrationActions';
 import type { HandoffActions as HandoffActionsType } from '../app/handoffs/HandoffActions';
 import type { KnowledgeActions as KnowledgeActionsType } from '../app/knowledge/[id]/KnowledgeActions';
@@ -69,6 +71,16 @@ describe('dashboard operation action components', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // 本文件覆盖的写操作按钮分别受 task:update（连接器）/ task:create（回拨任务）/
+    // knowledge:create（知识库上传）权限门控，测试用户需具备这些权限码
+    useAuthStore.getState().setUser({
+      id: 'user-1',
+      email: 'operator@example.com',
+      name: '测试操作员',
+      status: UserStatus.ACTIVE,
+      roles: ['operator'],
+      permissions: ['task:update', 'task:create', 'knowledge:create'],
+    });
   });
 
   afterEach(() => {
