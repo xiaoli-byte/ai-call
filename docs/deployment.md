@@ -1,7 +1,7 @@
 # 部署 / 上线运维手册
 
 > 面向：把 ai-call 从「本地手动裸进程」推到「PM2 常驻守护」的生产部署。
-> 关联文档：`CLAUDE.md`（命令总览）、`docs/backlog.md`（A6 死信落盘）、`docs/architecture-v2.md`（架构总览）。
+> 关联文档：`CLAUDE.md`（命令总览）、`docs/backlog.md`（A6 死信落盘）、`docs/architecture-v2.md`（架构总览）、`docs/knowledge-base-microfrontend.md`（知识库微前端设计）、`docs/authz-go-live-checklist.md`（统一权限上线清单）。
 > 本文档只讲**部署动作与运维铁律**，不讲功能设计。
 
 ---
@@ -282,3 +282,111 @@ server {
 
 > 注意：`VOICE_AGENT_WS_TOKEN` 配置后，`/audio-stream` 的 metadata 与 demo WS query 必须携带 token（见第 5 节清单）；此鉴权在 voice-agent 侧校验，nginx 只需透传。
 > api → voice-agent 的**服务端调用**（音色克隆试听经 `/tts-stream` 代理合成）走内网直连 `VOICE_AGENT_WS_URL`/`127.0.0.1:8090`，不经过上面的浏览器同源反代，无需额外配置。
+
+---
+
+## 10. 知识库（ai-knowledge）生产部署 —— 微前端 + RAG 检索链路
+
+> 设计与鉴权原理见 `docs/knowledge-base-microfrontend.md`（本节只讲部署动作）；完整安全项逐条核对见 `docs/authz-go-live-checklist.md`。
+> ai-knowledge 是**独立仓库**（Next.js 15 web + NestJS API + 自己的 Postgres），与 ai-call **必须部署在同一域名下**（cookie 共享是联合登录的前提），同一台机器最省事。
+> 截至本节写入时（2026-07-14），代码与本地联调均已完成（ai-knowledge 侧含 commit `f5c53ee` 的联合登录支持），**生产尚未部署**——本节即生产首次上线步骤。
+
+两条链路，可分开上线、分开验证：
+
+| 链路 | 作用 | 依赖 |
+|---|---|---|
+| **A. RAG 检索**（voice-agent → ai-call → ai-knowledge `/search/retrieve`） | 通话中知识库检索 | 只需 ai-knowledge **API** 起来 + 三个 service token 对齐；与前端无关 |
+| **B. 微前端管理界面**（dashboard `/knowledge/*` 内嵌 ai-knowledge web） | 建库/传文档/浏览 | 需 ai-knowledge **web** 以 zone 模式构建 + nginx 分流 + JWT 密钥统一 |
+
+### 10.1 端口与拓扑约定
+
+| 进程 | 端口 | 暴露 |
+|---|---|---|
+| ai-knowledge API（NestJS） | `:9999` | 仅内网（nginx 反代） |
+| ai-knowledge web（Next.js） | `:8888` | 仅内网（nginx 反代） |
+
+nginx 在现有站点 server 块（第 9 节）内按路径分流：`/knowledge/api/*` → `:9999`（剥 `/knowledge` 前缀）、`/knowledge/*` → `:8888`（保留前缀）、其余不变。
+
+### 10.2 ai-knowledge 侧：环境变量 + 构建 + 启动
+
+在 ai-knowledge 仓库目录内操作（构建命令以该仓库自己的 README/脚本为准，通常 `pnpm install && pnpm build`）：
+
+1. **API 侧 env**（运行时读取，改后重启即可）：
+   - `SERVICE_API_TOKEN=<强随机值>` —— 必须与 ai-call 的 `KNOWLEDGE_SERVICE_API_TOKEN` **完全一致**（检索链路第二跳鉴权）。生产缺失会拒绝服务调用。
+   - `JWT_ACCESS_SECRET=<与 ai-call 生产 JWT_SECRET 相同的值>` —— 联合登录验签前提。**必须是强随机值**；HS256 共享密钥意味着任一侧泄露即两侧全失守，泄露时两侧同步轮换。
+   - `FEDERATED_TENANT_ALLOWLIST=<逗号分隔的租户 id>` —— 生产建议设置，限制哪些 ai-call 租户可 JIT 开通联合身份；未设时仅要求租户已存在于 ai-knowledge `tenants` 表且 active（租户开通永远是显式运维动作，JIT 只到用户级）。
+2. **web 侧 env**（⚠️ 含**构建期**变量，改了必须重新 `next build`）：
+   - `WEB_BASE_PATH=/knowledge` —— 页面与 `_next` 资源全部挂到 `/knowledge` 前缀（zone 模式）。
+   - `NEXT_PUBLIC_API_URL=/knowledge/api` —— **构建期内联**！忘改的现象：内嵌页面的 API 请求打到裸 `/api/*`，被 ai-call 的 API 接住报 404/401。
+3. **数据库**：ai-knowledge 用自己的 Postgres 库，按其仓库文档执行生产迁移（等价于 `prisma migrate deploy`，同样绝不用 `migrate dev`）。目标租户需**预先存在**于其 `tenants` 表且 active（JIT 不建租户）。
+4. **构建并用 PM2 拉起**两个进程（web 构建必须在 env 设置**之后**；进程停止期间构建，同第 0 节铁律）：
+
+```bash
+# 在 ai-knowledge 仓库根目录
+pnpm install && pnpm build          # 以其仓库实际脚本为准
+pm2 start <其 API 入口> --name ai-kb-api     # 监听 :9999
+pm2 start <其 web 入口> --name ai-kb-web     # next start -p 8888
+pm2 save
+```
+
+### 10.3 ai-call 侧：环境变量（链路 A 的开关）
+
+`apps/api` 的生产 `.env` 中（模板见根 `.env.example` 42–44 行）：
+
+- `KNOWLEDGE_SERVICE_BASE_URL=http://127.0.0.1:9999/api` —— **含 `/api` 后缀**；为空 = 走 mock，RAG 不接真库。
+- `KNOWLEDGE_SERVICE_API_TOKEN=<同 ai-knowledge 的 SERVICE_API_TOKEN>`。
+- `KNOWLEDGE_SERVICE_TIMEOUT_MS=5000`（默认即可）。
+- `KNOWLEDGE_SERVICE_FALLBACK_USER_ID`（默认 `system`）：`ownerId=null` 的系统/历史任务将以此身份仅检索租户公开语料（`COMPANY/PUBLIC`），确认符合预期。
+- 复核第 5 节已有项：ai-call 入站 `SERVICE_API_TOKEN`（voice-agent 打 ai-call 用）与本节的 `KNOWLEDGE_SERVICE_API_TOKEN` 是**两个不同 token**，别配成同一个变量漏配另一个。
+
+改完重启 api 进程（`pm2 restart api`）。启动日志确认：无 `KNOWLEDGE_SERVICE_BASE_URL is set but ... token is empty` 类自检拒绝，且已进入外部知识库模式。
+
+dashboard 侧 `KNOWLEDGE_ZONE_URL` 在**有 nginx 分流的生产形态下可不设**（`/knowledge/*` 根本到不了 dashboard）；设了也无害（nginx 优先）。
+
+### 10.4 nginx：在现有 server 块中加两条 location
+
+插入到第 9 节现有 `server { ... }` 内。**必须用 `^~`**（现有语音 WS 是 regex location，不加 `^~` 会被 regex 抢走）；`/knowledge/api/` 比 `/knowledge/` 更长，最长前缀优先，天然先匹配：
+
+```nginx
+# /knowledge 无斜杠时补斜杠
+location = /knowledge { return 308 /knowledge/; }
+
+# ① 知识库 API：剥掉 /knowledge 前缀（/knowledge/api/x → /api/x）
+location ^~ /knowledge/api/ {
+    rewrite ^/knowledge(/api/.*)$ $1 break;
+    proxy_pass http://127.0.0.1:9999;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+
+# ② 知识库前端（含 /knowledge/_next 资源）：保留完整路径（与 basePath 一致）
+location ^~ /knowledge/ {
+    proxy_pass http://127.0.0.1:8888;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
+
+`nginx -t` 通过后 reload。注意：nginx 直接分流后，ai-call middleware 对 `/knowledge/*` 的未登录边缘重定向**不再生效**（请求不经过 dashboard）——未登录访客由 ai-knowledge web 客户端守卫整页跳 ai-call `/login?redirect=…`，属预期行为，见微前端文档「会话生命周期」。
+
+### 10.5 上线验证（按顺序，全部通过才算上线）
+
+1. **链路 A（RAG 检索）**：按 `docs/testing/call-10-cross-tenant-retrieval.md` 播种两租户各一篇 COMPANY 文档，脚本 env 指向**生产**，跑 `node scripts/call-10-cross-tenant-retrieval.mjs` —— 全部【必过】断言通过（含缺/错 `X-Service-Token` → 401，生产配了 token 后 dev 里 skip 的 2.1/2.2 应转为通过）。验证完**按脚本文档的 SQL 清理生产测试 fixtures**。
+2. **链路 B（界面 + 联合登录）**：浏览器登录 ai-call → 访问 `https://<域名>/knowledge` → 应看到 **ai-knowledge 原厂知识库界面**（不是 ai-call 的 mock 页），且**不用二次登录**即可拉出列表、上传文档（上传成功 = JIT 开通 + owner 归属正常；若报 `Foreign key constraint violated` 说明 JIT 未生效，查 JWT 密钥是否两侧一致）。
+3. **登出闭环**：在 `/knowledge` 内点退出 → 应作废 cookie 并回到登录页；重进 `/knowledge` 不应被自动拉起会话。
+4. **回归**：`/knowledge` 之外的 dashboard 页面、通话检索、「检索测试」按钮均不受影响；语音 WS 三路径仍正常。
+5. **CALL-12 按库过滤（配置对齐，零代码）**：把 ai-call 场景配置的 `knowledgeBaseId` 填成 ai-knowledge 中目标 **folder 的真实 id**；用 CALL-10 脚本场景 4（`KB_ID`/`KB_ID_OTHER` 设为两个文档不同的真实 folder id）验证断言 4.1 由 WARN 转为通过。id 不对齐时优雅兜底为租户级全库（不报错、不返回空），所以**不验证就等于没开**。
+
+### 10.6 回滚
+
+纯配置回滚，无代码操作：
+
+- 只回滚界面（链路 B）：删除 10.4 的两条 location + reload nginx → `/knowledge` 回落 dashboard 自带 mock 页（ai-knowledge 进程可留着不动）。
+- 只回滚检索（链路 A）：清空 ai-call 的 `KNOWLEDGE_SERVICE_BASE_URL` + `pm2 restart api` → 回落 mock 检索。
+- ai-knowledge web 恢复独立访问：清空 `WEB_BASE_PATH`、`NEXT_PUBLIC_API_URL` 还原为 `/api` 后**重新 build**。
