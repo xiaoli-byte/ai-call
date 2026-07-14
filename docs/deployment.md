@@ -288,7 +288,7 @@ server {
 ## 10. 知识库（ai-knowledge）生产部署 —— 微前端 + RAG 检索链路
 
 > 设计与鉴权原理见 `docs/knowledge-base-microfrontend.md`（本节只讲部署动作）；完整安全项逐条核对见 `docs/authz-go-live-checklist.md`。
-> ai-knowledge 是**独立仓库**（Next.js 15 web + NestJS API + 自己的 Postgres），与 ai-call **必须部署在同一域名下**（cookie 共享是联合登录的前提），同一台机器最省事。
+> ai-knowledge 是**独立仓库**（`https://github.com/xiaoli-byte/yixiu-ai-kb.git`，Next.js 15 web + NestJS API + 自己的 Postgres），与 ai-call **必须部署在同一域名下**（cookie 共享是联合登录的前提），同一台机器最省事。
 > 截至本节写入时（2026-07-14），代码与本地联调均已完成（ai-knowledge 侧含 commit `f5c53ee` 的联合登录支持），**生产尚未部署**——本节即生产首次上线步骤。
 
 两条链路，可分开上线、分开验证：
