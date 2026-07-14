@@ -89,6 +89,17 @@ export type ProviderActiveSnapshotResult = {
   reconciled: number;
 };
 
+export type ReapStaleCallsResult = {
+  scanned: number;
+  reaped: number;
+};
+
+export type ReapStaleCallsOptions = {
+  now?: Date;
+  callingTimeoutMs?: number;
+  inCallTimeoutMs?: number;
+};
+
 export type DispatchChannel = 'freeswitch' | 'web';
 
 export type DispatchTaskResult = OutboundTask & {
@@ -129,6 +140,10 @@ const STATUS_TRANSITIONS: Record<TaskStatus, ReadonlySet<TaskStatus>> = {
 const PROVIDER_EVENT_TRANSACTION_RETRIES = 3;
 const DEFAULT_PROVIDER_SNAPSHOT_GRACE_MS = 60_000;
 const EVENT_LOSS_RECONCILED = 'EVENT_LOSS_RECONCILED';
+const STALE_CALL_REAPED = 'STALE_CALL_REAPED';
+// 拨打中不该超过分钟级;通话中给足超长对话余量(用户口径:超 2 小时即不合理)。
+const DEFAULT_REAPER_CALLING_TIMEOUT_MS = 10 * 60_000;
+const DEFAULT_REAPER_IN_CALL_TIMEOUT_MS = 2 * 60 * 60_000;
 
 const PRIORITY_WEIGHT: Record<TaskPriority, number> = {
   [TaskPriority.HIGH]: 3,
@@ -816,6 +831,131 @@ export class TasksService {
           attemptedAt: observedAt,
         });
         result.reconciled += 1;
+      }
+
+      return result;
+    });
+  }
+
+  /**
+   * 时间驱动的兜底回收(由 scheduler-worker 周期调用):把停留超时的 CALLING/IN_CALL
+   * attempt 收口为终态。补上快照对账(recordProviderActiveSnapshot)管不到的三个盲区:
+   *  1. web 通道——快照对账只认 channel=freeswitch,浏览器模拟外呼断线(关标签页/服务重启)后无人收口;
+   *  2. providerJobId=null 的 freeswitch attempt——快照对账主动跳过(#3),而 outbox 歧义态死信
+   *     恰好保留 CALLING 且不写 providerJobId,落在两个机制之间的死角;
+   *  3. freeswitch-event-worker 停摆——快照对账依赖其存活上报,reaper 跑在 scheduler-worker
+   *     独立进程里,互为看门狗。
+   * 阈值远大于快照对账收口窗口(约 80s),正常路径总是先到,不互相踩踏;已终态的行不会被覆盖
+   * (查询只取 CALLING/IN_CALL)。
+   */
+  async reapStaleActiveCalls(options: ReapStaleCallsOptions = {}): Promise<ReapStaleCallsResult> {
+    const now = options.now ?? new Date();
+    const callingTimeoutMs = options.callingTimeoutMs
+      ?? reaperTimeoutMs('TASK_REAPER_CALLING_TIMEOUT_MS', DEFAULT_REAPER_CALLING_TIMEOUT_MS);
+    const inCallTimeoutMs = options.inCallTimeoutMs
+      ?? reaperTimeoutMs('TASK_REAPER_IN_CALL_TIMEOUT_MS', DEFAULT_REAPER_IN_CALL_TIMEOUT_MS);
+    const callingCutoff = new Date(now.getTime() - callingTimeoutMs);
+    const inCallCutoff = new Date(now.getTime() - inCallTimeoutMs);
+
+    return this.runSerializableTransaction(async (tx) => {
+      const attempts = await tx.callAttempt.findMany({
+        where: {
+          status: { in: [TaskStatus.CALLING, TaskStatus.IN_CALL] },
+          // DB 侧粗筛只为缩小 Serializable 读集、避免与快照对账在健康行上冲突;
+          // 精确的超时判定仍在下方内存判断里(锚点选择见注释)。
+          OR: [
+            { status: TaskStatus.CALLING, startedAt: { lt: callingCutoff } },
+            { status: TaskStatus.IN_CALL, answeredAt: { lt: inCallCutoff } },
+            { status: TaskStatus.IN_CALL, answeredAt: null, startedAt: { lt: inCallCutoff } },
+          ],
+        },
+        orderBy: { id: 'asc' },
+        select: {
+          id: true,
+          taskId: true,
+          attemptNo: true,
+          status: true,
+          startedAt: true,
+          answeredAt: true,
+          endedAt: true,
+          hangupCause: true,
+          task: {
+            select: {
+              status: true,
+              calledAt: true,
+              endedAt: true,
+              to: true,
+              outcome: true,
+              attemptCount: true,
+            },
+          },
+        },
+      });
+
+      const result: ReapStaleCallsResult = { scanned: attempts.length, reaped: 0 };
+
+      for (const attempt of attempts) {
+        const answeredAt = parseProviderDate(attempt.answeredAt);
+        const startedAt = parseProviderDate(attempt.startedAt) ?? now;
+        const inCall = attempt.status === TaskStatus.IN_CALL;
+        // IN_CALL 以接通时刻为锚(容忍超长通话),CALLING 以派发时刻为锚(拨号不该超过分钟级)。
+        const anchor = inCall ? (answeredAt ?? startedAt) : startedAt;
+        const timeoutMs = inCall ? inCallTimeoutMs : callingTimeoutMs;
+        if (now.getTime() - anchor.getTime() < timeoutMs) continue;
+
+        // IN_CALL 状态本身即接通证据:web 通道 answeredAt 缺失时不把真实发生过的对话误判 FAILED。
+        const answered = Boolean(answeredAt) || inCall;
+        const existingCause = normalizeHangupCause(attempt.hangupCause);
+        const terminalStatus = existingCause
+          ? deriveTerminalStatus(existingCause, answered)
+          : (answered ? TaskStatus.COMPLETED : TaskStatus.FAILED);
+        const reapedOutcome = existingCause ?? attempt.task.outcome ?? STALE_CALL_REAPED;
+
+        await tx.callAttempt.update({
+          where: { id: attempt.id },
+          data: {
+            status: terminalStatus,
+            endedAt: attempt.endedAt ?? now,
+            duration: durationSeconds(attempt.answeredAt, now),
+            hangupCause: existingCause ?? STALE_CALL_REAPED,
+          },
+        });
+
+        const taskStatus = attempt.task.status as TaskStatus;
+        const isLatestAttempt = attempt.task.attemptCount === attempt.attemptNo;
+        if (isLatestAttempt && !TERMINAL_STATUSES.has(taskStatus)) {
+          await tx.outboundTask.update({
+            where: { id: attempt.taskId },
+            data: {
+              status: terminalStatus,
+              endedAt: attempt.task.endedAt ?? now,
+              duration: durationSeconds(attempt.task.calledAt, now),
+            },
+          });
+        }
+        await tx.callEvent.create({
+          data: {
+            taskId: attempt.taskId,
+            attemptId: attempt.id,
+            type: 'call.stale_reaped',
+            payload: callEventPayload('call.stale_reaped', {
+              status: terminalStatus,
+              reason: STALE_CALL_REAPED,
+              stalledStatus: attempt.status as TaskStatus,
+              thresholdMs: timeoutMs,
+            }),
+          },
+        });
+        await recordContactAttemptHistory(tx, {
+          phoneNumber: attempt.task.to,
+          phoneHash: hashPhone(attempt.task.to),
+          taskId: attempt.taskId,
+          attemptId: attempt.id,
+          status: terminalStatus,
+          outcome: reapedOutcome,
+          attemptedAt: now,
+        });
+        result.reaped += 1;
       }
 
       return result;
@@ -1709,6 +1849,12 @@ function providerSnapshotGraceMs(): number {
   return configured !== undefined && Number.isFinite(parsed) && parsed >= 0
     ? parsed
     : DEFAULT_PROVIDER_SNAPSHOT_GRACE_MS;
+}
+
+function reaperTimeoutMs(envKey: string, fallback: number): number {
+  const configured = process.env[envKey];
+  const parsed = Number(configured);
+  return configured !== undefined && Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
 function safeErrorMessage(error: unknown): string {

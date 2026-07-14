@@ -1294,3 +1294,139 @@ describe('TasksService CALL-05 task ACL', () => {
     await service.assertTaskVisible('task-1'); // does not throw
   });
 });
+
+describe('TasksService.reapStaleActiveCalls', () => {
+  // 距 fixture now(2026-07-02T00:00:00Z)6 小时,远超 in_call 默认阈值 2h / calling 默认阈值 10min
+  const reapNow = new Date('2026-07-02T06:00:00.000Z');
+
+  it('reaps a stale web IN_CALL attempt to COMPLETED and finalizes the task', async () => {
+    const calls: Call[] = [];
+    const answeredAt = new Date('2026-07-02T00:00:05.000Z');
+    const prisma = providerEventPrisma(calls, {
+      task: taskRecord({ status: TaskStatus.IN_CALL, calledAt: answeredAt, outcome: null }),
+      attempt: attemptRecord({
+        channel: 'web',
+        providerCallId: null,
+        providerJobId: null,
+        status: TaskStatus.IN_CALL,
+        answeredAt,
+        startedAt: now,
+      }),
+    });
+    const service = new TasksService(prisma as never, {} as never, scenarios as never, {} as never);
+
+    const result = await service.reapStaleActiveCalls({ now: reapNow });
+
+    assert.equal(result.reaped, 1);
+    const attemptUpdate = calls.find(([name]) => name === 'callAttempt.update');
+    assert.ok(attemptUpdate);
+    // 真实发生过的通话(IN_CALL/answeredAt)收口为 COMPLETED,而非一律 FAILED
+    assert.equal(attemptUpdate[1].data.status, TaskStatus.COMPLETED);
+    assert.equal(attemptUpdate[1].data.hangupCause, 'STALE_CALL_REAPED');
+    const taskUpdate = calls.find(([name]) => name === 'outboundTask.update');
+    assert.ok(taskUpdate);
+    assert.equal(taskUpdate[1].data.status, TaskStatus.COMPLETED);
+    const event = calls.find(([name]) => name === 'callEvent.create');
+    assert.ok(event);
+    assert.equal(event[1].data.type, 'call.stale_reaped');
+  });
+
+  it('reaps a stale web CALLING attempt (providerJobId null, the snapshot blind spot) to FAILED', async () => {
+    const calls: Call[] = [];
+    const prisma = providerEventPrisma(calls, {
+      task: taskRecord({ status: TaskStatus.CALLING, calledAt: null }),
+      attempt: attemptRecord({
+        channel: 'web',
+        providerCallId: null,
+        providerJobId: null,
+        status: TaskStatus.CALLING,
+        answeredAt: null,
+        startedAt: now,
+      }),
+    });
+    const service = new TasksService(prisma as never, {} as never, scenarios as never, {} as never);
+
+    const result = await service.reapStaleActiveCalls({ now: reapNow });
+
+    assert.equal(result.reaped, 1);
+    const attemptUpdate = calls.find(([name]) => name === 'callAttempt.update');
+    assert.ok(attemptUpdate);
+    assert.equal(attemptUpdate[1].data.status, TaskStatus.FAILED);
+    assert.equal(attemptUpdate[1].data.hangupCause, 'STALE_CALL_REAPED');
+    const taskUpdate = calls.find(([name]) => name === 'outboundTask.update');
+    assert.ok(taskUpdate);
+    assert.equal(taskUpdate[1].data.status, TaskStatus.FAILED);
+  });
+
+  it('leaves fresh active attempts untouched', async () => {
+    const calls: Call[] = [];
+    const prisma = providerEventPrisma(calls, {
+      task: taskRecord({ status: TaskStatus.IN_CALL, calledAt: now }),
+      attempt: attemptRecord({
+        channel: 'web',
+        providerJobId: null,
+        status: TaskStatus.IN_CALL,
+        answeredAt: now,
+        startedAt: now,
+      }),
+    });
+    const service = new TasksService(prisma as never, {} as never, scenarios as never, {} as never);
+
+    // 仅过去 1 分钟:两个阈值都未到
+    const result = await service.reapStaleActiveCalls({ now: new Date(now.getTime() + 60_000) });
+
+    assert.equal(result.reaped, 0);
+    assert.equal(calls.some(([name]) => name === 'callAttempt.update'), false);
+    assert.equal(calls.some(([name]) => name === 'outboundTask.update'), false);
+  });
+
+  it('preserves an existing hangupCause and derives the terminal status from it', async () => {
+    const calls: Call[] = [];
+    const prisma = providerEventPrisma(calls, {
+      task: taskRecord({ status: TaskStatus.CALLING, calledAt: null }),
+      attempt: attemptRecord({
+        status: TaskStatus.CALLING,
+        answeredAt: null,
+        hangupCause: 'USER_BUSY',
+        startedAt: now,
+      }),
+    });
+    const service = new TasksService(prisma as never, {} as never, scenarios as never, {} as never);
+
+    const result = await service.reapStaleActiveCalls({ now: reapNow });
+
+    assert.equal(result.reaped, 1);
+    const attemptUpdate = calls.find(([name]) => name === 'callAttempt.update');
+    assert.ok(attemptUpdate);
+    // 已有真实挂断原因:保留 cause 并按其派生终态(USER_BUSY → NO_ANSWER),不写 STALE_CALL_REAPED
+    assert.equal(attemptUpdate[1].data.hangupCause, 'USER_BUSY');
+    assert.equal(attemptUpdate[1].data.status, TaskStatus.NO_ANSWER);
+    const history = calls.find(([name]) => name === 'contactAttemptHistory.upsert');
+    assert.ok(history);
+    assert.equal(history[1].update.outcome, 'USER_BUSY');
+  });
+
+  it('honors explicit timeout overrides', async () => {
+    const calls: Call[] = [];
+    const answeredAt = new Date('2026-07-02T00:00:00.000Z');
+    const prisma = providerEventPrisma(calls, {
+      task: taskRecord({ status: TaskStatus.IN_CALL, calledAt: answeredAt }),
+      attempt: attemptRecord({
+        channel: 'web',
+        providerJobId: null,
+        status: TaskStatus.IN_CALL,
+        answeredAt,
+        startedAt: now,
+      }),
+    });
+    const service = new TasksService(prisma as never, {} as never, scenarios as never, {} as never);
+
+    // 接通 3 分钟,但阈值收紧到 60s → 应被回收
+    const result = await service.reapStaleActiveCalls({
+      now: new Date(now.getTime() + 3 * 60_000),
+      inCallTimeoutMs: 60_000,
+    });
+
+    assert.equal(result.reaped, 1);
+  });
+});

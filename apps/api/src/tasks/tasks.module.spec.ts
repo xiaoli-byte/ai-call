@@ -51,8 +51,9 @@ describe('task runtime module wiring', () => {
       readFileSync(new URL('../../package.json', import.meta.url), 'utf8'),
     );
 
-    assert.equal(packageJson.scripts['dev:outbox'], 'tsx src/outbox-worker.main.ts');
-    assert.equal(packageJson.scripts['dev:scheduler'], 'tsx src/scheduler-worker.main.ts');
+    // dev 也跑编译产物:tsx 不产生 decorator metadata,worker 的 DI 注入会变 undefined(冷启动踩坑)。
+    assert.equal(packageJson.scripts['dev:outbox'], 'node dist/outbox-worker.main.js');
+    assert.equal(packageJson.scripts['dev:scheduler'], 'node dist/scheduler-worker.main.js');
     assert.equal(packageJson.scripts['start:outbox'], 'node dist/outbox-worker.main.js');
     assert.equal(packageJson.scripts['start:scheduler'], 'node dist/scheduler-worker.main.js');
   });

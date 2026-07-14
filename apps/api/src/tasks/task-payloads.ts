@@ -22,6 +22,7 @@ export type CallEventType =
   | 'call.hangup_requested'
   | 'call.hangup_request_failed'
   | 'call.event_loss_reconciled'
+  | 'call.stale_reaped'
   | 'call.provider_event'
   | 'call.dispatch_requested'
   | 'call.dispatch_accepted'
@@ -40,6 +41,7 @@ export type CallEventPayloadFor<T extends CallEventType> =
   T extends 'call.hangup_requested' ? { channelId?: string; outcome?: string; tags?: string[] } :
   T extends 'call.hangup_request_failed' ? { channelId?: string; error: string } :
   T extends 'call.event_loss_reconciled' ? { snapshotId: string; status: TaskStatus; reason: string } :
+  T extends 'call.stale_reaped' ? { status: TaskStatus; reason: string; stalledStatus: TaskStatus; thresholdMs: number } :
   T extends 'call.provider_event' ? ProviderCallEventPayload :
   T extends 'call.dispatch_requested' | `action.${FlowActionType}.delivered` ? Record<string, never> :
   T extends 'call.dispatch_accepted' ? {

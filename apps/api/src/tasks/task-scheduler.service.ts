@@ -8,7 +8,9 @@ import { TasksService } from './tasks.service.js';
 export class TaskSchedulerService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(TaskSchedulerService.name);
   private timer?: NodeJS.Timeout;
+  private reaperTimer?: NodeJS.Timeout;
   private processing = false;
+  private reaping = false;
 
   constructor(
     private readonly tasks: TasksService,
@@ -17,6 +19,17 @@ export class TaskSchedulerService implements OnModuleInit, OnModuleDestroy {
   ) {}
 
   onModuleInit(): void {
+    this.setupDispatcher();
+    // reaper 与派发器互相独立:派发被禁用时兜底回收仍应生效(反之亦然)。
+    this.setupReaper();
+  }
+
+  onModuleDestroy(): void {
+    if (this.timer) clearInterval(this.timer);
+    if (this.reaperTimer) clearInterval(this.reaperTimer);
+  }
+
+  private setupDispatcher(): void {
     if (process.env.TASK_SCHEDULER_ENABLED === 'false') return;
     const intervalMs = Number(process.env.TASK_SCHEDULER_INTERVAL_MS ?? 5000);
     if (!Number.isFinite(intervalMs) || intervalMs <= 0) return;
@@ -27,8 +40,15 @@ export class TaskSchedulerService implements OnModuleInit, OnModuleDestroy {
     this.logger.log(`scheduled task dispatcher enabled intervalMs=${intervalMs}`);
   }
 
-  onModuleDestroy(): void {
-    if (this.timer) clearInterval(this.timer);
+  private setupReaper(): void {
+    if (process.env.TASK_REAPER_ENABLED === 'false') return;
+    const intervalMs = Number(process.env.TASK_REAPER_INTERVAL_MS ?? 60_000);
+    if (!Number.isFinite(intervalMs) || intervalMs <= 0) return;
+
+    this.reaperTimer = setInterval(() => void this.processStaleCalls(), intervalMs);
+    this.reaperTimer.unref();
+    void this.processStaleCalls();
+    this.logger.log(`stale call reaper enabled intervalMs=${intervalMs}`);
   }
 
   async processDueTasks(): Promise<void> {
@@ -36,6 +56,12 @@ export class TaskSchedulerService implements OnModuleInit, OnModuleDestroy {
     return this.cls
       ? runAsSystem(this.cls, () => this.runDueTasks())
       : this.runDueTasks();
+  }
+
+  async processStaleCalls(): Promise<void> {
+    return this.cls
+      ? runAsSystem(this.cls, () => this.runStaleCallReap())
+      : this.runStaleCallReap();
   }
 
   private async runDueTasks(): Promise<void> {
@@ -60,6 +86,29 @@ export class TaskSchedulerService implements OnModuleInit, OnModuleDestroy {
     } finally {
       this.metrics?.observeDuration('scheduler.tick.duration_ms', Date.now() - startedAt);
       this.processing = false;
+    }
+  }
+
+  private async runStaleCallReap(): Promise<void> {
+    if (this.reaping) return;
+    const startedAt = Date.now();
+    this.reaping = true;
+    this.metrics?.incrementCounter('scheduler.reaper.tick');
+    try {
+      const result = await this.tasks.reapStaleActiveCalls();
+      this.metrics?.incrementCounter('scheduler.reaper.reaped', result.reaped);
+      this.metrics?.setGauge('scheduler.reaper.last_scanned', result.scanned);
+      if (result.reaped > 0) {
+        this.logger.warn(
+          `stale call reap scanned=${result.scanned} reaped=${result.reaped}`,
+        );
+      }
+    } catch (err) {
+      this.metrics?.incrementCounter('scheduler.reaper.failure');
+      this.logger.warn(`stale call reap tick failed: ${(err as Error).message}`);
+    } finally {
+      this.metrics?.observeDuration('scheduler.reaper.tick.duration_ms', Date.now() - startedAt);
+      this.reaping = false;
     }
   }
 }
