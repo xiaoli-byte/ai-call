@@ -39,6 +39,13 @@ def _load_env() -> None:
         level=os.getenv("LOG_LEVEL", "INFO"),
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
+    # dashscope SDK / websocket-client 把每次 TTS 会话的「正常关闭帧
+    # (opcode=8, code=1000)」误报成 ERROR，每通电话每次合成刷两条，掩盖真实
+    # 错误。客户端 finally 已主动 close(1000)，属预期关闭，安全丢弃；
+    # 真实错误（非 1000 关闭码/连接丢失/异常栈）原样放行。
+    from .tts_qwen import install_normal_close_log_filter
+
+    install_normal_close_log_filter()
 
 
 def _env_bool(name: str, default: bool = False) -> bool:

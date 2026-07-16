@@ -31,6 +31,47 @@ logger = logging.getLogger(__name__)
 # Qwen-TTS 固定输出 24kHz（PCM_24000HZ_MONO_16BIT）
 _QWEN_SOURCE_SAMPLE_RATE = 24000
 
+# 噪音来源 logger：dashscope SDK 与其底层 websocket-client 库
+# 均把「正常关闭帧」当 ERROR 记录，实测每次合成结束成对出现：
+#   [ERROR] dashscope: websocket error: fin=1 opcode=8 data=b'\x03\xe8Bye'
+#   [ERROR] websocket: fin=1 opcode=8 data=b'\x03\xe8Bye' - goodbye
+_NOISY_WS_LOGGERS = ("dashscope", "websocket")
+
+
+class NormalCloseFrameFilter(logging.Filter):
+    """丢弃 dashscope/websocket 库把「正常关闭帧」误报成 ERROR 的日志。
+
+    为什么这是安全的：
+    - opcode=8 是 WebSocket 关闭帧；\\x03\\xe8 是关闭码 1000（正常关闭）
+      的字节 repr——两者同时出现只可能是一次协议层的正常关闭握手。
+    - 客户端侧 _run_synthesis 的 run_sync finally 已主动
+      get_duplex_api().close(1000, "bye")，服务端回 "Bye" 关闭帧属预期行为，
+      不存在连接泄漏，这两条 ERROR 纯属第三方库的误级别记录。
+    - 真实错误一律放行：非 1000 关闭码（如 \\x03\\xe9=1001、1011 等）、
+      连接丢失（"Connection to remote host was lost"）、超时、异常栈
+      都不同时满足「opcode=8 + 关闭码 1000」，不受影响。
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        msg = record.getMessage()
+        # 只丢「关闭帧(opcode=8) 且 关闭码 1000(\x03\xe8)」的记录，其余原样放行
+        if "opcode=8" in msg and "\\x03\\xe8" in msg:
+            return False
+        return True
+
+
+def install_normal_close_log_filter() -> None:
+    """给 dashscope / websocket 两个 logger 挂上正常关闭帧过滤器（幂等）。
+
+    必须挂在这两个具体 logger 上（而非 root handler）：logging.Filter 挂在
+    logger 上时在记录产生的源头 logger 生效，能在传播到 root handler 之前
+    把噪音丢掉。重复调用不会重复挂载。
+    """
+    for name in _NOISY_WS_LOGGERS:
+        target = logging.getLogger(name)
+        if not any(isinstance(f, NormalCloseFrameFilter) for f in target.filters):
+            target.addFilter(NormalCloseFrameFilter())
+
 
 class QwenTTS:
     """Qwen-TTS Realtime 流式 TTS 客户端。
