@@ -25,14 +25,16 @@
 | AUTHZ-05 | P0 | kb | acl：ResourceGrant 判定 + `visibleWhereSql()` | 02 | 中 |
 | AUTHZ-06 | P0 | kb | prisma：统一模型片段 + seed 工具 | 02 | 低 |
 | AUTHZ-07 | P0→P2 | both | 跨仓分发（GitHub Packages / subtree）**需先确认方式** | 01–06 | 中 |
-| KB-01 | P1 | kb | 引入 `Tenant` 实体 | AUTHZ-06 | [高风险] |
+| KB-01 | P1 | kb | 引入 `Tenant` 实体 ✅已完成/关单（schema 已有 Tenant + JIT 租户准入校验，2026-07-16 复核） | AUTHZ-06 | [高风险] |
 | KB-02 | P1 | kb | `User.role` → `Membership.roles[]` | KB-01 | [高风险] |
-| KB-03 | P1 | kb | RBAC 硬编码 → 落库 | KB-02,AUTHZ-06 | 中 |
-| KB-04 | P1 | kb | 接入全局 Guard | KB-03,AUTHZ-04 | 中 |
-| KB-05 | P1 | kb | 修 `permissions.controller` 半成品 | KB-04 | 低 |
+| KB-03 | P1 | kb | RBAC 硬编码 → 落库 🟡部分完成（词表/映射/层级已收敛进 `@xiaoli-byte/authz@0.2.0`，权限矩阵落库推迟） | KB-02,AUTHZ-06 | 中 |
+| KB-04 | P1 | kb | 接入全局 Guard ✅已完成（2026-07-16，默认拒绝反转） | KB-03,AUTHZ-04 | 中 |
+| KB-05 | P1 | kb | 修 `permissions.controller` 半成品 ✅已完成（2026-07-16） | KB-04 | 低 |
 | KB-06 | P1 | kb | refresh token 全量哈希 | AUTHZ-03 | 低 |
 | KB-07 | P1 | kb | 前端 token localStorage → cookie | KB-06 | 中 |
 | KB-08 | P1 | kb | 检索接口强制 tenantId 过滤 + service guard | KB-04,AUTHZ-05 | [高风险] |
+| KB-09 | P1 | kb | 路由权限覆盖 CI 闸门（新增工单）✅已完成（2026-07-16） | KB-04 | 低 |
+| KB-10 | P1→P2 | both | 跨系统非对称签名 RS256/EdDSA 替代共享 HS256（新增工单，原 CALL-13(b) 提级）🔴未开始，高优先 | CALL-13(b) | [高风险] |
 | CALL-01 | P2 | call | 引入 `@xiaoli-byte/authz`，替换本地 auth ✅已完成 | AUTHZ-07 | 中 |
 | CALL-02 | P2 | call | 核心业务表补 `tenantId` ✅已完成 | CALL-01,KB-01 | [高风险] |
 | CALL-03 | P2 | call | CLS 租户注入 + 查询强制过滤 ✅已完成 | CALL-02 | [高风险] |
@@ -137,6 +139,7 @@
 ## P1 — ai-knowledge 落地（先做，被依赖方、风险小）
 
 ### KB-01 · 引入 `Tenant` 实体 **[高风险·迁移]**
+- **状态**：✅ 已完成 · 关单（2026-07-16 复核）——`schema.prisma` 已有 `Tenant` model；JIT 租户准入校验（token `tenantId` 须已存在于 `tenants` 表且 active，见 CALL-13(a) 的加固）也已随 2026-07-10 的改造落地。本工单目标已达成，无需再单独执行下方步骤。
 - **仓库**：ai-knowledge
 - **依赖**：AUTHZ-06
 - **步骤**：
@@ -151,16 +154,19 @@
 - **验收**：迁移后每 user 有对应 membership；旧接口仍可读到角色（过渡期双读）。
 
 ### KB-03 · RBAC 硬编码 → 落库
+- **状态**：🟡 部分完成（2026-07-16）——**词表/映射/层级部分**已收敛进 `@xiaoli-byte/authz@0.2.0` 的 `core/roles.ts`（`CANONICAL_ROLES`/`KB_ROLES`/`ROLE_RANK`/`TO_KB_ROLE`/`resolveKbRole`，带单测），ai-knowledge 侧已删除本地副本（`jwt.strategy` 的映射表、`permissions.types` 的层级数值改从包内取）。**权限矩阵落库部分**（下方步骤描述的 `Role`/`Permission`/`RolePermission` + seed）经用户决策**推迟**，触发条件：出现「租户自定义角色」需求时再启动。
 - **依赖**：KB-02, AUTHZ-06
 - **步骤**：把 `common/permissions/permissions.types.ts` 的 `ROLE_PERMISSIONS` 作为常量真相源，用 AUTHZ-06 的 seed 工具落库到 `Role`/`Permission`/`RolePermission`；权限码统一为 `kb:{module}:{action}`。
 - **验收**：seed 后库含全部 `kb:*` 权限码与 4 角色映射；`can()` 从库读映射判定与旧硬编码一致（对拍测试）。
 
 ### KB-04 · 接入全局 Guard
+- **状态**：✅ 已完成（2026-07-16）——实际做法与本工单原设想有出入，记录如下：`app.module` 全局注册 `JwtAuthGuard`+`PermissionsGuard`（`APP_GUARD`）；关键是 `PermissionsGuard` **反转为默认拒绝**（非 `@Public` 路由若无权限声明 → 403，而非原来的「无声明即放行」）；元数据读取改用 `getAllAndOverride`（使类级声明对整个 controller 生效）；新增 `@Public`（`common/decorators/public.decorator.ts`）与 `@AnyAuthenticated` 装饰器；全部 12 个 controller、79 条路由完成显式标注；公开路由白名单仅 4 条：`POST auth/login`、`POST auth/refresh`、`GET health`、`POST search/retrieve`（后者由 `ServiceAuthGuard` 强制服务令牌）。**注意**：单纯把 Guard 从各 controller 搬到全局 `APP_GUARD`、但不反转「无声明=放行」的默认值，等于没堵住权限声明遗漏的洞——本工单的关键收益是默认值反转，不是「搬家」本身。CI 闸门见新增的 **KB-09**。
 - **依赖**：KB-03, AUTHZ-04
 - **步骤**：`app.module` 注册 `APP_GUARD`（来自 `@xiaoli-byte/authz`）；移除各 controller 分散的 `@UseGuards(AuthGuard('jwt'))`；保留/迁移 `@RequirePermissions`；`@Public` 标注登录等公开路由。
 - **验收**：全部受保护路由行为不变；现有 e2e/单测通过。
 
 ### KB-05 · 修 `permissions.controller` 半成品
+- **状态**：✅ 已完成（2026-07-16）——`getMyPermissions`（接真实 CLS claims，弃 `"current"` 死值）、角色列表（接真实数据）、`updateUserRole`（真落库 + 角色层级校验）三处桩已全部接线。**重大发现**：`PermissionsModule` 此前从未在 `@Module` 声明 `controllers`，`RolesManagementService` 也从未被 `provide`——`/api/permissions/*` 这一组路由**历史上从未真正挂载过**（请求直接 404，比「半成品」更严重）。本次一并补上模块注册并接线，已实测返回 200。
 - **依赖**：KB-04
 - **步骤**：`getMyPermissions` 用真实 CLS claims（弃 `"current"` 死值）；`updateUserRole` 真正落库（改 Membership）；`getUsersWithRoles` 读真实 role。
 - **验收**：三接口返回真实数据 + 单测覆盖。
@@ -180,6 +186,21 @@
 - **依赖**：KB-04, AUTHZ-05
 - **步骤**：`retrieve` 接口接收调用方 `tenantId`(+`userId`)，用 `visibleDocumentWhereSql()` 过滤后返回；加 service-token guard（供 ai-call 服务间调用，复用 `@xiaoli-byte/authz` service-guard）。
 - **验收**：构造租户 A/B 文档，A 身份检索**不返回** B 文档；service token 缺失/错误→拒绝；单测覆盖。
+
+### KB-09 · 路由权限覆盖 CI 闸门 **（新增工单）**
+- **状态**：✅ 已完成（2026-07-16）——`apps/api/src/common/authz-route-coverage.spec.ts`：枚举全部路由，非 `@Public` 路由必须带权限元数据（`@RequirePermissions`/`@MinRole`/`@AnyAuthenticated` 等），`@Public` 路由必须落在白名单内（棘轮式，新增白名单项需显式改测试），服务间端点必须挂 `ServiceAuthGuard`。已验证：故意给一条路由不加任何权限标注会使该测试失败。
+- **背景**：KB-04 把「默认拒绝」焊进了 `PermissionsGuard`，但焊死之后如果没有持续校验，未来新增路由忘记标注仍可能悄悄退化回「无声明=放行」或反过来误伤（漏加 `@Public` 导致本该公开的接口 403）。本工单把这个约束做成 CI 能拦的硬闸门，而不是靠人工 review 记住。
+- **依赖**：KB-04
+- **验收**：`npx vitest run apps/api/src/common/authz-route-coverage.spec.ts` 通过；有意添加一条未标注权限的路由会使测试失败（已实测）。
+
+### KB-10 · 跨系统非对称签名 RS256/EdDSA 替代共享 HS256 **（新增工单，原 CALL-13(b) 提级）[高风险]**
+- **状态**：🔴 未开始，高优先（2026-07-16 新增，从 P3 · CALL-13(b) 提级为独立工单跟踪）。原文见下方 CALL-13「剩余范围未排期」的 (b) 小节，因其属于安全信任模型收紧（当前任一侧持共享密钥即可伪造对方 token），优先级不应继续埋没在「P3 可选」列表里，故拆出单独编号便于跟踪与排期。
+- **仓库**：both（包源码在 ai-knowledge `packages/authz`，切换算法需 ai-call 协调升级 + 发布窗口）
+- **依赖**：CALL-13(a)（JIT 开通基线已落地）
+- **背景**：`packages/authz` 当前硬编码 HS256 共享 secret——ai-knowledge 持有同一把钥匙也能**签发**合法的 ai-call token，任一侧泄露即两侧全失守；应升级为非对称签名，使「签发方」与「校验方」权限单向化。
+- **步骤**：① `packages/authz` 的 `signAccessToken`/`verifyAccessToken` 增加算法与公私钥参数（向后兼容，缺省仍 HS256）；② 发新版并让 ai-call 升级依赖；③ ai-call 换 RS256/EdDSA 私钥签发、ai-knowledge `jwt.strategy` 改公钥验签；④ 切换窗口内旧 token 全体失效，需选低峰期并同步分发密钥。属协调式迁移（改包 + 发版 + 双端同步 + token 作废），不适合单仓顺手做，须单独排期。
+- **验收**：ai-call 用私钥签发的 token 能被 ai-knowledge 用公钥正确验签；ai-knowledge 无法伪造合法的 ai-call token；切换窗口内旧 HS256 token 按计划失效，无跨仓联调回归。
+
 ### CALL-06 · 接 ai-knowledge 检索带租户身份 **[高风险·联调]**
 - **状态**：✅ 代码完成（ai-call commit `8c74101`，2026-07-09）——`voice-agent -> ai-call -> ai-knowledge` 链路已打通：任务上下文透传 `tenantId/ownerId`，RAG 请求补齐 `X-Service-Token` + `X-Tenant-Id`/`X-User-Id`，`knowledge-base.service` 代理切到 `/search/retrieve`，并在缺失租户上下文时 fail-closed。同轮 review 加固：外部模式启动自检（缺 `SERVICE_API_TOKEN` 拒启动）、去死代码、去重复解析。
   - ⚠️ **单测绿但未在真环境验证跨租户隔离** → 拆出 **CALL-10** 作为上线前必做的联调实测。
@@ -247,8 +268,8 @@
   - **token 提取顺序**：Bearer 优先、cookie 回落（显式凭证 > 环境凭证，防同域下本地 Bearer 用户被残留 ai-call cookie 顶替身份）。
   - **zone 会话生命周期**：ai-knowledge「退出」在 cookie 会话下先调 ai-call `POST /api/auth/logout` 作废 cookie；cookie 过期 401 时清态并整页跳 ai-call `/login?redirect=…`（原为死路/跳错到本地登录页）；ai-call 登录页 `redirect` 参数防开放重定向 + `/knowledge` 前缀整页导航（跨 zone 软导航本就不通）。
   **剩余范围未排期**：
-  - **(b) 非对称签名（信任单向化）**：`packages/authz`（源码在 ai-knowledge 仓 `packages/authz`，经 GitHub Packages 发布）当前硬编码 HS256 共享 secret——ai-knowledge 持同一把钥匙也能**签发**合法 ai-call token，任一侧泄露即两侧全失守。升级步骤：① `packages/authz` 的 `signAccessToken/verifyAccessToken` 增加算法与公私钥参数（向后兼容，缺省仍 HS256）；② 发新版并让 ai-call 升级依赖；③ ai-call 换 RS256/EdDSA 私钥签发、ai-knowledge `jwt.strategy` 改公钥验签；④ 切换窗口内旧 token 全体失效，需选低峰期并同步分发密钥。属协调式迁移（改包+发版+双端同步+token 作废），不适合单仓顺手做，须单独排期。
-  - **角色词表映射**（实测缺口）：ai-call 角色 `admin/operator/viewer` 与 ai-knowledge `super_admin/admin/editor/viewer` 只有 `admin`、`viewer` 名字对齐；**ai-call `operator` 映射不到 ai-knowledge `editor`（写权限门槛）→ ai-call operator/viewer 在知识库实为只读，仅 admin 可写**。需一层角色映射（ai-call 角色 → ai-knowledge 角色）。
+  - **(b) 非对称签名（信任单向化）**：`packages/authz`（源码在 ai-knowledge 仓 `packages/authz`，经 GitHub Packages 发布）当前硬编码 HS256 共享 secret——ai-knowledge 持同一把钥匙也能**签发**合法 ai-call token，任一侧泄露即两侧全失守。升级步骤：① `packages/authz` 的 `signAccessToken/verifyAccessToken` 增加算法与公私钥参数（向后兼容，缺省仍 HS256）；② 发新版并让 ai-call 升级依赖；③ ai-call 换 RS256/EdDSA 私钥签发、ai-knowledge `jwt.strategy` 改公钥验签；④ 切换窗口内旧 token 全体失效，需选低峰期并同步分发密钥。属协调式迁移（改包+发版+双端同步+token 作废），不适合单仓顺手做，须单独排期。**2026-07-16 更新**：已提级为独立工单 **KB-10** 跟踪排期，本条保留作背景说明。
+  - **角色词表映射** ✅ **已完成（2026-07-16）**：~~（实测缺口）~~ ai-call 角色 `admin/operator/viewer` 与 ai-knowledge `super_admin/admin/editor/viewer` 此前只有 `admin`、`viewer` 名字对齐，`operator` 映射不到 `editor` 导致 ai-call operator/viewer 在知识库实为只读的问题已解决——方案为 `@xiaoli-byte/authz` 包内统一词表（`core/roles.ts`）+ 消费侧 `resolveKbRole()`。**未知联合角色策略**（用户拍板）：token 角色不在词表内 → 401 拒绝 + 日志告警（fail closed），不再静默降级为 viewer；DB 内历史遗留脏角色（如 `operator`）首次撞见时自愈为映射后的合法值。
   - **用户生命周期同步**：JIT 只在首次建行（`update:{}`），之后 ai-call 改角色/停用/删除不联动 ai-knowledge 的开通行（实测：改 ai-call 角色后 ai-knowledge 行 role 仍为旧值；此处不影响鉴权因 RBAC 读 token 角色，但库内数据陈旧）。
   - **email 冲突处理**；以及是否升级到独立 IdP（§9）。
 - **背景**：知识库微前端（Multi-Zones）+ 无状态联合登录已落地（见 ai-call 仓 `docs/knowledge-base-microfrontend.md`）：ai-call 的 httpOnly cookie 经统一 JWT 密钥被 ai-knowledge 验签放行，一次登录即用。但两系统**用户表独立**，ai-call 用户的 `sub` 在 ai-knowledge 无对应记录——身份仅是 token claim 层面的「外来信任」：
@@ -262,6 +283,16 @@
 - **依赖**：CALL-12（微前端+联合登录基线）；与 §9 IdP 演进方向需对齐后再动工。
 - **风险**：用户生命周期同步（改角色/停用/删除的跨系统一致性）、email 唯一性冲突、审计主体追溯口径变化——属账号体系改造，须单独评审。
 - **验收**：非 admin 的 ai-call 用户经 `/knowledge` 上传文档后成为其 owner；PRIVATE 文档对其可见性与 ai-knowledge 本地账号一致；ResourceGrant 可按该用户授权。
+
+---
+
+## 待 ai-call 侧同步的事项
+
+本次（2026-07-16）改造集中在 ai-knowledge 侧，以下几项涉及跨仓协作，尚未在 ai-call 落地，需后续同步：
+
+1. **publish `@xiaoli-byte/authz@0.2.0` 到 GitHub Packages**——ai-knowledge 侧包内代码（新增 `core/roles.ts`）与版本号已就绪，但发布本身是 AUTHZ-07 遗留的手工步骤，需要用户本人的 GitHub PAT，AI 助手无法代为完成。
+2. **ai-call 升级依赖并改用 `roles.ts` 统一词表**——待①发布后，ai-call 需升级 `@xiaoli-byte/authz` 依赖版本，把本地的角色映射逻辑切换为消费包内 `CANONICAL_ROLES`/`TO_KB_ROLE`/`resolveKbRole`，不得再自行复制一份角色词表。
+3. **本文件与 `authz-architecture.md` 的本次修订需镜像到 ai-call 仓库**——按文件头「两仓库各存一份，内容一致，改动需同步」的约定执行。
 
 ---
 

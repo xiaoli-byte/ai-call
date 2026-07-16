@@ -3,6 +3,8 @@
 > **共同规范**：本文件是 `ai-call`（外呼系统）与 `ai-knowledge`（知识库系统，GitHub: yixiu-ai-kb）两个仓库的**共享权限设计规范**。两仓库各存一份，**内容必须保持一致，修改一处需同步另一处**。
 >
 > 状态：Draft · 起草日期 2026-07-08 · 适用于两系统「未上线、高速迭代」阶段的重做。
+>
+> **2026-07-16 修订**：§8 ai-knowledge 清单勾选全局 `APP_GUARD`（默认拒绝反转）、`permissions.controller` 半成品修复、检索接口 tenantId 过滤（补勾）；§4 补充角色词表代码真相源说明。**待同步 ai-call 仓库**（本文件与 ai-call 仓一份需保持一致，见下方共同规范）。
 
 ---
 
@@ -121,6 +123,7 @@ call:task:dispatch    call:campaign:update  call:compliance:read
 - 每个模块**注册自己的权限码**。解决 ai-call 现状的「贴标签复用」（campaigns 借 `task:*`、compliance/quality 借 `call:read`、tenants 借 `system:role:*`）——敏感面（合规审计、计费、租户管理）必须有独立权限码。
 - 代码常量为真相源（ai-call 的 `PERMISSIONS`、kb 的 `permissions.types.ts` 保留），`seed` 落库到 `Permission`/`Role`/`RolePermission`。
 - 内置角色跨系统对齐：`super_admin / tenant_admin / operator(editor) / viewer`。角色可系统专属，也可跨系统共用。
+- **角色词表/层级/别名映射的代码真相源**：`packages/authz/src/core/roles.ts`（`@xiaoli-byte/authz@0.2.0` 起，2026-07-16）——`CANONICAL_ROLES`/`KB_ROLES`/`ROLE_RANK`/`TO_KB_ROLE`/`resolveKbRole`。两侧系统一律 `import` 消费，禁止各自复制一份映射表。**未知联合角色策略**：token 角色不在词表内 → 401 拒绝 + 日志告警（fail closed），不做静默降级。
 
 判定顺序（`@xiaoli-byte/authz` 统一实现）：
 
@@ -196,10 +199,10 @@ call:task:dispatch    call:campaign:update  call:compliance:read
 - [ ] RBAC 从 `permissions.types.ts` 硬编码 → `Role`/`Permission`/`RolePermission` 落库 + seed。
 - [ ] 建 `Tenant` 实体（当前靠 `BOOTSTRAP_TENANT_ID` 环境变量引导，无表）。
 - [ ] `User.role` 单字段 → `Membership.roles[]`。
-- [ ] 上全局 `APP_GUARD`（当前各 controller 分散 `@UseGuards`）。
-- [ ] 修 `permissions.controller` 半成品（`getMyPermissions` 死值、`updateUserRole` 未落库、`getUsersWithRoles` 占位）。
+- [x] 上全局 `APP_GUARD`（当前各 controller 分散 `@UseGuards`）。（2026-07-16：`app.module` 全局注册 `JwtAuthGuard`+`PermissionsGuard`，且 `PermissionsGuard` 反转为**默认拒绝**——非 `@Public` 路由无权限声明即 403，而非原来的「无声明即放行」；见 backlog KB-04。）
+- [x] 修 `permissions.controller` 半成品（`getMyPermissions` 死值、`updateUserRole` 未落库、`getUsersWithRoles` 占位）。（2026-07-16：三处桩已全部接线；并发现 `PermissionsModule` 此前从未注册 `controllers`，`/api/permissions/*` 历史上从未真正挂载，本次一并修复，见 backlog KB-05。）
 - [ ] refresh token 全量哈希存储（当前仅存尾部 32 字符）。
-- [ ] 检索接口显式接收并强制 `tenantId` 过滤（`visibleDocumentWhereSql` 已有，补服务入口）。
+- [x] 检索接口显式接收并强制 `tenantId` 过滤（`visibleDocumentWhereSql` 已有，补服务入口）。（backlog KB-08 已标 2026-07-09 完成；此前本文件与 backlog 未同步勾选，本次补勾。）
 - [ ] 前端 token：localStorage → httpOnly cookie（使 `middleware.ts` 能做服务端拦截）；access TTL 从 7d 收短。
 - [ ] 用 `@xiaoli-byte/authz` 替换本地实现。
 
