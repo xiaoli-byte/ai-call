@@ -41,6 +41,7 @@ _WIRE_KEYS = {
     "side_question_bridge": "sideQuestionBridge",
     "side_question_bridge_template": "sideQuestionBridgeTemplate",
     "side_question_resume_prompt": "sideQuestionResumePrompt",
+    "side_question_ack": "sideQuestionAck",
     "silence_prompt": "silencePrompt",
     "silence_action": "silenceAction",
     "silence_transfer_prompt": "silenceTransferPrompt",
@@ -51,6 +52,10 @@ _INT_WIRE_KEYS = {
     "silence_timeout_ms": ("silenceTimeoutMs", 1000, 600000),
     "max_silence_rounds": ("maxSilenceRounds", 1, 10),
 }
+
+# 「键存在且为空串 = 显式禁用」的特例字段集合（其余字符串字段空白一律回退默认）。
+# 目前仅插话应答过渡语：清空即代表「插话时不播过渡语」，而非回退内置文案。
+_EMPTY_MEANS_DISABLED = {"side_question_ack"}
 
 # 模板含 {question} 但问题话术为空时的无问句变体（不可配置的退化兜底）。
 _BARE_FALLBACKS = {
@@ -84,6 +89,10 @@ class RepairPhrases:
         "衔接要顺滑，保持该问题的原意，但不要逐字照抄，"
         "也不要使用『回到刚才的问题』这类生硬转折。"
     )
+    # 插话应答过渡语：识别为插话后立即先播的短句，与答案生成（RAG+LLM）并行，
+    # 用一句话的播放时间掩盖生成时延，避免全程静默。
+    # 配置为空串（wire 上键存在且为 ""）= 显式禁用：插话时不播过渡语，直接播答案。
+    side_question_ack: str = "好的，稍等哈，我帮您看一下。"
     # ---- 静默配置组 ----
     # 静默追问提示词：静默超时后 AI 按此提示生成追问（LLM 生成，非固定文案）
     silence_prompt: str = "- 复述上一轮对话的内容\n- 保证上下文自然衔接"
@@ -106,6 +115,13 @@ class RepairPhrases:
             if raw is None:
                 continue
             if not isinstance(raw, str) or not raw.strip():
+                # 特例：sideQuestionAck 支持「显式禁用」语义 ——
+                # wire 上「键不存在」= 用默认过渡语；「键存在且为空串（strip 后空）」
+                # = 显式关闭过渡语（插话时不播过渡语，直接播答案）。
+                # 其余字符串字段维持通用规则：空白视为非法、回退默认。
+                if field_name in _EMPTY_MEANS_DISABLED and isinstance(raw, str):
+                    overrides[field_name] = ""
+                    continue
                 logger.warning(
                     "[RepairPhrases] 忽略非法配置 %s=%r（需非空字符串）", wire_key, raw
                 )

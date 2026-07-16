@@ -7,6 +7,7 @@ flow graph and delegates side effects through callbacks so control-plane actions
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import re
@@ -479,10 +480,41 @@ class FlowExecutor:
             ChatMessage(role="system", content=instruction),
             ChatMessage(role="user", content=question),
         ]
+        # Side questions have an isolated capability boundary. Business
+        # tools must never execute before a flow transition is committed.
+        #
+        # 体感优化：先并行启动答案生成（RAG 检索 + LLM 整段生成），随即播报
+        # 可配置的过渡语（sideQuestionAck）；过渡语播完时答案大概率已就绪，
+        # 把原本数秒的全程静默压缩为一句短话的播放时间。
+        generation = asyncio.create_task(
+            self._cb.generate_reply(call_id, messages, [])
+        )
+        # 过渡语为空串 = 场景显式禁用（sideQuestionAck 配置为 ""）：跳过播报，
+        # 生成任务照常已并行启动，直接 await 答案；取消/失败语义不变。
+        ack_text = self._repair.render("side_question_ack")
         try:
-            # Side questions have an isolated capability boundary. Business
-            # tools must never execute before a flow transition is committed.
-            reply = await self._cb.generate_reply(call_id, messages, [])
+            if ack_text:
+                await self._speak_and_record(call_id, ack_text)
+        except BaseException:
+            # 过渡语播报被打断/挂断取消（CancelledError）或异常：先取消生成
+            # 任务并等待其收尾（任何路径都不留孤儿任务），再原样上抛，保持
+            # 上层「打断 vs 挂断」的判别语义不被污染。
+            generation.cancel()
+            try:
+                await generation
+            except BaseException:
+                pass
+            raise
+        try:
+            reply = await generation
+        except asyncio.CancelledError:
+            # 等待答案期间外层被取消：同样先收尾生成任务再上抛。
+            generation.cancel()
+            try:
+                await generation
+            except BaseException:
+                pass
+            raise
         except Exception as err:
             logger.warning(
                 "[TurnRouter] side-question failed: call=%s node=%s err=%s",

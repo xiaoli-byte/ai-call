@@ -309,14 +309,16 @@ async def test_side_question_is_rag_reply_with_no_business_tools_then_resumes() 
     assert cb.entered_nodes[-1] == "end_yes"
     assert cb.generate_reply_calls == 1
     assert cb.reply_tools == [[]]
+    # 插话应答：先播过渡语（与答案生成并行），再播答案。
     # 默认 natural 承接：不再硬拼「回到刚才的问题 + 原话术复读」，由 LLM 在
     # 同一次生成中融合承接；给 LLM 的指令必须携带未答的问题原文。
-    assert cb.spoken[1] == "安装服务不收费。"
+    assert cb.spoken[1] == "好的，稍等哈，我帮您看一下。"
+    assert cb.spoken[2] == "安装服务不收费。"
     instruction = next(
         m.content for m in cb.reply_messages[0] if m.role == "system"
     )
     assert "请问您现在方便沟通吗？" in instruction
-    assert "回到刚才的问题" not in cb.spoken[1]
+    assert "回到刚才的问题" not in cb.spoken[2]
 
 
 async def test_side_question_template_bridge_uses_configured_wording() -> None:
@@ -338,7 +340,9 @@ async def test_side_question_template_bridge_uses_configured_wording() -> None:
         "call-side-template"
     )
     assert cb.entered_nodes[-1] == "end_yes"
-    assert cb.spoken[1] == "安装服务不收费。 咱们接着刚才的：请问您现在方便沟通吗？"
+    # template 模式同样先播过渡语，再播「答案 + 模板承接」
+    assert cb.spoken[1] == "好的，稍等哈，我帮您看一下。"
+    assert cb.spoken[2] == "安装服务不收费。 咱们接着刚才的：请问您现在方便沟通吗？"
     # template 模式不得在 LLM 指令里要求承接（避免双重承接）
     instruction = next(
         m.content for m in cb.reply_messages[0] if m.role == "system"
@@ -355,7 +359,9 @@ async def test_side_question_llm_failure_falls_back_to_template_bridge() -> None
     )
     await FlowExecutor(_build_availability_flow(), cb).run("call-side-fallback")
     assert cb.entered_nodes[-1] == "end_yes"
-    assert cb.spoken[1] == (
+    # 生成失败不影响过渡语照播，随后走兜底 + 模板承接
+    assert cb.spoken[1] == "好的，稍等哈，我帮您看一下。"
+    assert cb.spoken[2] == (
         "这部分我需要帮您确认后回复。 回到刚才的问题，请问您现在方便沟通吗？"
     )
 
@@ -374,8 +380,9 @@ async def test_compound_business_answer_and_side_question_preserves_both() -> No
     assert cb.entered_nodes[-1] == "end_no"
     assert cb.generate_reply_calls == 1
     assert cb.reply_tools == [[]]
-    assert cb.spoken[1] == "安装服务不收费。"
-    assert "回到刚才的问题" not in cb.spoken[1]
+    assert cb.spoken[1] == "好的，稍等哈，我帮您看一下。"
+    assert cb.spoken[2] == "安装服务不收费。"
+    assert "回到刚才的问题" not in cb.spoken[2]
 
 
 async def test_business_plus_question_request_keeps_pending_answer_through_side_question() -> None:
@@ -394,7 +401,11 @@ async def test_business_plus_question_request_keeps_pending_answer_through_side_
     await FlowExecutor(_build_availability_flow(), cb).run("call-pending")
     assert cb.entered_nodes[-1] == "end_no"
     assert cb.router_calls == 2
-    assert cb.spoken[1:] == ["好的，您请说。", "安装服务不收费。"]
+    assert cb.spoken[1:] == [
+        "好的，您请说。",
+        "好的，稍等哈，我帮您看一下。",
+        "安装服务不收费。",
+    ]
 
 
 async def test_question_request_phase_disables_business_exact_fast_path() -> None:

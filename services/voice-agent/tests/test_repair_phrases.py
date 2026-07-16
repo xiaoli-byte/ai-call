@@ -96,6 +96,28 @@ def test_side_question_resume_prompt_configurable() -> None:
     )
 
 
+def test_side_question_ack_three_states() -> None:
+    """插话应答过渡语三态：键不存在=默认 / 有值=生效 / 键存在且空串=显式禁用。"""
+    # 键不存在：使用内置默认过渡语
+    assert RepairPhrases.from_config({}).render("side_question_ack") == (
+        "好的，稍等哈，我帮您看一下。"
+    )
+    # 有值：按场景配置生效
+    custom = RepairPhrases.from_config({"sideQuestionAck": "稍等，我马上帮您查。"})
+    assert custom.render("side_question_ack") == "稍等，我马上帮您查。"
+    # 键存在且为空串（strip 后空）：显式禁用，保留 ""（插话时不播过渡语）
+    disabled = RepairPhrases.from_config({"sideQuestionAck": ""})
+    assert disabled.render("side_question_ack") == ""
+    blank = RepairPhrases.from_config({"sideQuestionAck": "   "})
+    assert blank.render("side_question_ack") == ""
+    # 非字符串仍属非法值：回退默认而非禁用
+    invalid = RepairPhrases.from_config({"sideQuestionAck": 123})
+    assert invalid.render("side_question_ack") == "好的，稍等哈，我帮您看一下。"
+    # 禁用语义只对 sideQuestionAck 开特例，其他字段空白仍回退默认
+    others = RepairPhrases.from_config({"holdAckPrompt": "   "})
+    assert others.render("hold_ack_prompt") == "好的，您请说。"
+
+
 def test_silence_config_rejects_invalid_values() -> None:
     """越界数字、非整数、非法枚举一律回退默认。"""
     phrases = RepairPhrases.from_config(

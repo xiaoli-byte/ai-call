@@ -442,6 +442,12 @@ describe('静默处理与插话处理配置组', () => {
     expect(screen.getByLabelText('插话后回到流程')).toBeTruthy();
     expect(screen.getByLabelText('回到流程提示词')).toBeTruthy();
     expect(screen.queryByLabelText('插话承接模板')).toBeNull();
+    // 插话应答语：查询答案前先播的短过渡语，占位符展示运行时默认文案
+    expect(screen.getByLabelText('插话应答语')).toBeTruthy();
+    expect(screen.getByLabelText('插话应答语').getAttribute('placeholder')).toBe(
+      '好的，稍等哈，我帮您看一下。',
+    );
+    expect(screen.getByText('查询答案前先说的一句短话，留空用默认。')).toBeTruthy();
   });
 
   it('全部留空时提交 payload 省略 dialogRepair（沿用运行时默认）', async () => {
@@ -523,6 +529,115 @@ describe('静默处理与插话处理配置组', () => {
     expect(mocks.create.mock.calls[0][0].dialogRepair).toMatchObject({
       sideQuestionResumePrompt: '先回答客户的插话，再自然带回：{question}',
     });
+  });
+
+  it('填写插话应答语后随 payload 提交 sideQuestionAck', async () => {
+    openCreate();
+    fireEvent.change(screen.getByPlaceholderText('请输入场景名称'), {
+      target: { value: '插话应答场景' },
+    });
+    fireEvent.change(screen.getByLabelText('插话应答语'), {
+      target: { value: '稍等哈，我马上帮您查。' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+
+    await waitFor(() => expect(mocks.create).toHaveBeenCalledTimes(1));
+    expect(mocks.create.mock.calls[0][0].dialogRepair).toMatchObject({
+      sideQuestionAck: '稍等哈，我马上帮您查。',
+    });
+  });
+
+  it('编辑场景时清空插话应答语等 dialogRepair 字段后提交，payload 显式携带 dialogRepair: {}', async () => {
+    // 已保存自定义 dialogRepair 的场景：清空全部字段保存后必须显式送 {}，
+    // 否则 PATCH 序列化丢 key，后端跳过写入导致旧配置残留、无法恢复默认。
+    mocks.scenarios = [
+      scenarioItem({ dialogRepair: { sideQuestionAck: '稍等哈，我马上帮您查。' } }),
+    ];
+    mocks.update.mockResolvedValue(mocks.scenarios[0]);
+    render(<ScenariosPage />);
+    fireEvent.click(screen.getByRole('button', { name: '进入' }));
+
+    // 回显后清空插话应答语（其余字段本就为空）
+    expect((screen.getByLabelText('插话应答语') as HTMLInputElement).value).toBe(
+      '稍等哈，我马上帮您查。',
+    );
+    fireEvent.change(screen.getByLabelText('插话应答语'), { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+
+    await waitFor(() => expect(mocks.update).toHaveBeenCalledTimes(1));
+    const [, dto] = mocks.update.mock.calls[0] as [string, Record<string, any>];
+    expect(dto).toHaveProperty('dialogRepair');
+    expect(dto.dialogRepair).toEqual({});
+  });
+
+  it('取消勾选「插话时先播应答语」：文本框禁用，提交 sideQuestionAck 为空串（显式禁用）', async () => {
+    openCreate();
+    fireEvent.change(screen.getByPlaceholderText('请输入场景名称'), {
+      target: { value: '禁用过渡语场景' },
+    });
+
+    // 默认勾选，文本框可编辑
+    const checkbox = screen.getByLabelText('插话时先播应答语') as HTMLInputElement;
+    expect(checkbox.checked).toBe(true);
+    expect((screen.getByLabelText('插话应答语') as HTMLInputElement).disabled).toBe(false);
+
+    fireEvent.click(checkbox);
+    expect(checkbox.checked).toBe(false);
+    expect((screen.getByLabelText('插话应答语') as HTMLInputElement).disabled).toBe(true);
+
+    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+    await waitFor(() => expect(mocks.create).toHaveBeenCalledTimes(1));
+    // wire 语义：键存在且为空串 = 显式禁用（运行时不播过渡语）
+    expect(mocks.create.mock.calls[0][0].dialogRepair.sideQuestionAck).toBe('');
+  });
+
+  it('勾选且文本留空时提交省略 sideQuestionAck 键（= 运行时默认）', async () => {
+    openCreate();
+    fireEvent.change(screen.getByPlaceholderText('请输入场景名称'), {
+      target: { value: '默认过渡语场景' },
+    });
+    // 填一个其他 dialogRepair 字段，保证 payload 携带 dialogRepair 对象本身
+    fireEvent.change(screen.getByLabelText('静默追问提示词'), {
+      target: { value: '提醒客户还在线' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+
+    await waitFor(() => expect(mocks.create).toHaveBeenCalledTimes(1));
+    const dialogRepair = mocks.create.mock.calls[0][0].dialogRepair;
+    expect(dialogRepair.silencePrompt).toBe('提醒客户还在线');
+    // 值为 undefined = JSON 序列化时该键被丢弃 → wire 上「键不存在」= 用运行时默认过渡语
+    // （区别于 "" 的显式禁用；其余留空字段同理依赖序列化丢 undefined 键）
+    expect(dialogRepair.sideQuestionAck).toBeUndefined();
+    expect(JSON.parse(JSON.stringify(dialogRepair))).not.toHaveProperty('sideQuestionAck');
+  });
+
+  it('保存值为 "" 的场景回显：复选框不勾选、文本框禁用；非空值回显勾选并回填', () => {
+    mocks.scenarios = [
+      scenarioItem({
+        id: 's-disabled',
+        scenario: 'scene-disabled',
+        name: '禁用过渡语',
+        dialogRepair: { sideQuestionAck: '' },
+      }),
+      scenarioItem({
+        id: 's-custom',
+        scenario: 'scene-custom',
+        name: '自定义过渡语',
+        dialogRepair: { sideQuestionAck: '稍等哈，我马上帮您查。' },
+      }),
+    ];
+    render(<ScenariosPage />);
+
+    // 保存值为 ""（显式禁用）→ 复选框不勾、文本框禁用
+    fireEvent.click(within(screen.getByText('禁用过渡语').closest('tr')!).getByRole('button', { name: '进入' }));
+    expect((screen.getByLabelText('插话时先播应答语') as HTMLInputElement).checked).toBe(false);
+    expect((screen.getByLabelText('插话应答语') as HTMLInputElement).disabled).toBe(true);
+
+    // 返回列表，进入非空值场景 → 勾选 + 回填文本
+    fireEvent.click(screen.getByRole('button', { name: '返回列表' }));
+    fireEvent.click(within(screen.getByText('自定义过渡语').closest('tr')!).getByRole('button', { name: '进入' }));
+    expect((screen.getByLabelText('插话时先播应答语') as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText('插话应答语') as HTMLInputElement).value).toBe('稍等哈，我马上帮您查。');
   });
 
   it('切换到固定话术模式后才显示模板输入框（回到流程提示词隐藏），并随 payload 一并提交', async () => {

@@ -72,6 +72,11 @@ export interface DialogRepairConfig {
    * 把对话自然带回主流程未答的问题。支持 {question} 占位符。留空使用内置默认。
    */
   sideQuestionResumePrompt?: string;
+  /**
+   * 插话应答过渡语：识别为插话后、查询答案前先播的一句短话（答案生成与
+   * 过渡语播放并行，压缩体感等待）。留空使用内置默认。
+   */
+  sideQuestionAck?: string;
   /** 静默追问提示词：静默超时后 AI 按此提示生成追问话术（非固定文案）。留空默认：复述上一轮对话内容并保证上下文自然衔接 */
   silencePrompt?: string;
   /** 静默超时时间（毫秒）：用户静默超过该时长即触发静默追问。留空跟随系统默认（6000） */
@@ -105,6 +110,7 @@ export const DIALOG_REPAIR_DEFAULTS: Required<DialogRepairConfig> = {
   sideQuestionResumePrompt:
     '回答后，用口语自然地把对话带回主流程中客户尚未回答的问题：「{question}」。'
     + '衔接要顺滑，保持该问题的原意，但不要逐字照抄，也不要使用『回到刚才的问题』这类生硬转折。',
+  sideQuestionAck: '好的，稍等哈，我帮您看一下。',
   silencePrompt: '- 复述上一轮对话的内容\n- 保证上下文自然衔接',
   silenceTimeoutMs: 6000,
   maxSilenceRounds: 2,

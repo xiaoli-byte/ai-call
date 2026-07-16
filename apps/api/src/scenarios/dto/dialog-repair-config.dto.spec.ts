@@ -67,6 +67,31 @@ describe('CreateScenarioDto dialogRepair 校验', () => {
     assert.ok(promptError, 'noInputPrompt 应报出类型错误');
   });
 
+  it('接受合法的插话应答过渡语 sideQuestionAck', async () => {
+    const errors = await validate(plainToInstance(CreateScenarioDto, {
+      scenario: 'test_scene',
+      name: '测试场景',
+      dialogRepair: {
+        sideQuestionAck: '好的，稍等哈，我帮您看一下。',
+      },
+    }));
+    assert.equal(errors.length, 0);
+  });
+
+  it('拒绝非字符串类型的 sideQuestionAck', async () => {
+    const errors = await validate(plainToInstance(CreateScenarioDto, {
+      scenario: 'test_scene',
+      name: '测试场景',
+      dialogRepair: {
+        sideQuestionAck: 123,
+      },
+    }));
+    const nested = errors.find((error) => error.property === 'dialogRepair');
+    assert.ok(nested, 'dialogRepair 字段应报出嵌套校验错误');
+    const ackError = nested?.children?.find((child) => child.property === 'sideQuestionAck');
+    assert.ok(ackError, 'sideQuestionAck 应报出类型错误');
+  });
+
   it('接受合法的静默配置（transfer 模式，携带转人工提示语）', async () => {
     const errors = await validate(plainToInstance(CreateScenarioDto, {
       scenario: 'test_scene',

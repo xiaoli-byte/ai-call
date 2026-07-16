@@ -95,6 +95,14 @@ interface DialogRepairDraft {
   sideQuestionBridgeTemplate: string;
   /** natural 模式下「插话后回到流程」的承接提示词，留空使用运行时内置默认 */
   sideQuestionResumePrompt: string;
+  /**
+   * 是否在插话时先播应答语（默认开启）。
+   * 取消勾选 = 显式禁用：提交 sideQuestionAck: ""（wire 上「键存在且为空串」= 不播过渡语）；
+   * 勾选 = 正常语义：文本留空提交时省略该键（= 运行时默认），有文本则提交文本。
+   */
+  sideQuestionAckEnabled: boolean;
+  /** 插话应答过渡语：查询答案前先播的一句短话，留空使用运行时内置默认 */
+  sideQuestionAck: string;
   /** 以下静默相关字段：数字项在草稿中以 string 表示，便于绑定 input，提交时再 parseInt 校验 */
   silencePrompt: string;
   silenceTimeoutMs: string;
@@ -133,6 +141,8 @@ const dialogRepairDraftSchema = z.object({
   sideQuestionBridge: z.enum(['natural', 'template']),
   sideQuestionBridgeTemplate: z.string(),
   sideQuestionResumePrompt: z.string(),
+  sideQuestionAckEnabled: z.boolean(),
+  sideQuestionAck: z.string(),
   silencePrompt: z.string(),
   silenceTimeoutMs: z.string(),
   maxSilenceRounds: z.string(),
@@ -187,6 +197,8 @@ const EMPTY_DIALOG_REPAIR: DialogRepairDraft = {
   sideQuestionBridge: 'natural',
   sideQuestionBridgeTemplate: '',
   sideQuestionResumePrompt: '',
+  sideQuestionAckEnabled: true,
+  sideQuestionAck: '',
   silencePrompt: '',
   silenceTimeoutMs: '',
   maxSilenceRounds: '',
@@ -289,6 +301,10 @@ function toDialogRepairDraft(config?: DialogRepairConfig): DialogRepairDraft {
     sideQuestionBridge: config?.sideQuestionBridge ?? 'natural',
     sideQuestionBridgeTemplate: config?.sideQuestionBridgeTemplate ?? '',
     sideQuestionResumePrompt: config?.sideQuestionResumePrompt ?? '',
+    // 插话应答语三态回显：保存值为 ""（显式禁用）→ 复选框不勾；
+    // 非空 → 勾选并回填文本；未配置 → 勾选 + 空文本（= 运行时默认）。
+    sideQuestionAckEnabled: config?.sideQuestionAck !== '',
+    sideQuestionAck: config?.sideQuestionAck ?? '',
     silencePrompt: config?.silencePrompt ?? '',
     silenceTimeoutMs: config?.silenceTimeoutMs !== undefined ? String(config.silenceTimeoutMs) : '',
     maxSilenceRounds: config?.maxSilenceRounds !== undefined ? String(config.maxSilenceRounds) : '',
@@ -359,6 +375,8 @@ function createScenarioKey(name: string) {
  * 将对话修复话术草稿转换为提交 payload。
  * 若所有字段均留空（沿用默认承接方式 natural、默认静默动作 hangup 且未填任何文案/数字），
  * 则省略该字段，交由 voice-agent 运行时使用内置默认文案。
+ * 例外：取消勾选「插话时先播应答语」时 sideQuestionAck 提交 ""（显式禁用），
+ * 此时视为存在自定义配置，不会整体省略。
  * 静默超时/轮数为数字字段，草稿中以 string 存储，此处转换为 number，非法值（空/非数字）一律省略。
  */
 function buildDialogRepairDto(draft: DialogRepairDraft): DialogRepairConfig | undefined {
@@ -376,6 +394,11 @@ function buildDialogRepairDto(draft: DialogRepairDraft): DialogRepairConfig | un
     sideQuestionDeferPrompt: draft.sideQuestionDeferPrompt.trim() || undefined,
     sideQuestionBridgeTemplate: draft.sideQuestionBridgeTemplate.trim() || undefined,
     sideQuestionResumePrompt: draft.sideQuestionResumePrompt.trim() || undefined,
+    // 插话应答语三态：取消勾选 → 提交 ""（显式禁用，运行时不播过渡语）；
+    // 勾选且有文本 → 提交文本；勾选且留空 → 省略该键（沿用运行时默认文案）。
+    sideQuestionAck: draft.sideQuestionAckEnabled
+      ? draft.sideQuestionAck.trim() || undefined
+      : '',
     silencePrompt: draft.silencePrompt.trim() || undefined,
     silenceTimeoutMs: numberValue(draft.silenceTimeoutMs),
     maxSilenceRounds: numberValue(draft.maxSilenceRounds),
@@ -1125,6 +1148,30 @@ function SideQuestionSection() {
   return (
     <section className="scenario-section">
       <h2>插话处理</h2>
+      <FieldRow label="插话应答语">
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+          <input
+            type="checkbox"
+            aria-label="插话时先播应答语"
+            checked={repair.sideQuestionAckEnabled}
+            onChange={(event) => update({ sideQuestionAckEnabled: event.target.checked })}
+          />
+          <span>插话时先播应答语</span>
+        </label>
+        <input
+          className="form-input"
+          aria-label="插话应答语"
+          value={repair.sideQuestionAck}
+          disabled={!repair.sideQuestionAckEnabled}
+          placeholder={DIALOG_REPAIR_DEFAULTS.sideQuestionAck}
+          onChange={(event) => update({ sideQuestionAck: event.target.value })}
+        />
+        <span className="scenario-field-hint">
+          {repair.sideQuestionAckEnabled
+            ? '查询答案前先说的一句短话，留空用默认。'
+            : '已关闭：插话时不播应答语，等答案生成后直接播报。'}
+        </span>
+      </FieldRow>
       <FieldRow label="插话后回到流程">
         <select
           className="form-select"
@@ -1516,6 +1563,10 @@ export default function ScenariosPage() {
       } else {
         const saved = await update(values.id ?? (selectedKey || values.scenario), {
           ...dto,
+          // 编辑保存必须显式携带 dialogRepair：全空时送 {}（后端把空对象归一化为「未配置」）。
+          // 若沿用 undefined，JSON 序列化会丢 key，PATCH 会跳过该字段的写入，
+          // 导致清空后旧配置残留、无法从 UI 恢复运行时默认（新建路径保持省略不变）。
+          dialogRepair: dto.dialogRepair ?? {},
           defaultFlowId: values.defaultFlowId || null,
         });
         setSelectedKey(saved.id ?? saved.scenario);

@@ -88,6 +88,11 @@ export class DialogRepairConfigDto {
   @IsString()
   sideQuestionResumePrompt?: string;
 
+  /** 插话应答过渡语：识别为插话后、查询答案前先播的短句，留空用运行时默认 */
+  @IsOptional()
+  @IsString()
+  sideQuestionAck?: string;
+
   @IsOptional()
   @IsString()
   @IsNotEmpty()
