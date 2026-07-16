@@ -259,7 +259,17 @@ class VoiceAgentServer:
             call_id = f"test-{uuid4().hex[:12]}"
             await self._send_json(ws, {"type": "connected", "sessionId": call_id})
 
-            scenario_config = get_scenario("ecommerce")
+            # 流程绑定了场景时使用其真实配置（dialogRepair / voicePersona /
+            # 系统提示词等），保证调试面板与真实通话行为一致；未绑定场景的
+            # 流程回退内置 ecommerce 场景（保持旧行为兜底）。
+            # 注：get_task_flow 返回 /task-flows/:id/runtime 的原始 JSON
+            # （未经 pydantic 契约过滤），scenarioConfig 不会被 extra="ignore" 丢弃。
+            scenario_contract = flow.get("scenarioConfig")
+            scenario_config = (
+                scenario_from_contract(scenario_contract)
+                if scenario_contract
+                else get_scenario("ecommerce")
+            )
             variables: dict[str, str] = dict(DEFAULT_VARIABLES)
             variables.update(start_data.get("variables") or {})
 

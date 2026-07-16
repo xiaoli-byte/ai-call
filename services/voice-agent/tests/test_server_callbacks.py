@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 
 import pytest
 
 from voice_agent.agent import VoiceAgent
+from voice_agent.scenarios import get_scenario
 from voice_agent.server import VoiceAgentServer, WebSocketCallbacks
 from voice_agent.text_test_callbacks import TextTestCallbacks
 
@@ -28,10 +30,16 @@ class FakeTasks:
         self.hangups: list[str] = []
         self.outcomes: list[tuple[str, str]] = []
         self.task: dict | None = None
+        self.flow: dict | None = None
 
     async def get_task(self, task_id: str):
         if self.task and self.task.get("id") == task_id:
             return self.task
+        return None
+
+    async def get_task_flow(self, flow_id: str):
+        if self.flow and self.flow.get("id") == flow_id:
+            return self.flow
         return None
 
     async def update_status(self, task_id: str, status: str) -> None:
@@ -73,6 +81,143 @@ async def test_text_test_events_include_current_node() -> None:
     assert speech["nodeName"] == "对话(ai)"
     assert action["nodeId"] == "node-1"
     assert action["nodeName"] == "对话(ai)"
+
+
+class TextTestWebSocket(FakeWebSocket):
+    """/text-test 假连接：recv() 弹出第一帧（start），随后 async-for 依次给出后续帧。"""
+
+    def __init__(self, frames: list[str]) -> None:
+        super().__init__()
+        self._frames = list(frames)
+
+    async def recv(self) -> str:
+        return self._frames.pop(0)
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        # 每帧之间让出事件循环，保证 create_task 启动的会话任务有机会执行
+        await asyncio.sleep(0)
+        if not self._frames:
+            raise StopAsyncIteration
+        return self._frames.pop(0)
+
+
+class CapturingAgent:
+    """记录 start_session 入参的假 Agent（用于断言 /text-test 传入的场景配置）。"""
+
+    def __init__(self) -> None:
+        self.sessions: list[dict] = []
+        self.ended: list[str] = []
+
+    async def start_session(
+        self,
+        call_id: str,
+        scenario,
+        variables,
+        callbacks,
+        *,
+        flow_version=None,
+        dry_run: bool = False,
+        **_kwargs,
+    ) -> None:
+        self.sessions.append(
+            {
+                "call_id": call_id,
+                "scenario": scenario,
+                "variables": variables,
+                "flow_version": flow_version,
+                "dry_run": dry_run,
+            }
+        )
+
+    async def inject_user_text(self, call_id: str, text: str) -> None:
+        pass
+
+    async def end_session(self, call_id: str) -> None:
+        self.ended.append(call_id)
+
+
+def _text_test_flow(scenario_config: dict | None) -> dict:
+    """构造 /text-test 用的最小流程 dict（可选携带绑定场景的 scenarioConfig）。"""
+    flow: dict = {
+        "id": "flow-1",
+        "flowId": "flow-1",
+        "version": 1,
+        "name": "调试流程",
+        "nodes": [],
+        "edges": [],
+        "createdAt": "2026-07-16T00:00:00.000Z",
+    }
+    if scenario_config is not None:
+        flow["scenarioConfig"] = scenario_config
+    return flow
+
+
+@pytest.mark.asyncio
+async def test_text_test_uses_flow_bound_scenario_config() -> None:
+    """/text-test 使用流程绑定场景的真实配置（含自定义 dialogRepair.sideQuestionAck）。"""
+    tasks = FakeTasks()
+    tasks.flow = _text_test_flow(
+        {
+            "scenario": "custom_scene",
+            "name": "自定义场景",
+            "description": "",
+            "systemPrompt": "你是自定义场景的客服",
+            "greeting": "您好，这里是自定义场景",
+            "knowledgeBaseId": "",
+            "allowedTools": [],
+            "escalationRules": [],
+            "dialogRepair": {"sideQuestionAck": "稍等哈，我马上帮您查。"},
+        }
+    )
+    agent = CapturingAgent()
+    server = VoiceAgentServer(
+        host="127.0.0.1", port=0, path="/text-test", agent=agent, tasks=tasks
+    )
+    ws = TextTestWebSocket(
+        [
+            json.dumps({"type": "start", "flowId": "flow-1"}),
+            json.dumps({"type": "hangup"}),
+        ]
+    )
+
+    await server._handle_text_test(ws)
+
+    assert len(agent.sessions) == 1
+    session = agent.sessions[0]
+    assert session["dry_run"] is True
+    assert session["flow_version"] is tasks.flow
+    scenario = session["scenario"]
+    # 场景来自流程绑定的 scenarioConfig，而非硬编码内置 ecommerce
+    assert scenario.scenario == "custom_scene"
+    assert scenario.name == "自定义场景"
+    assert scenario.system_prompt == "你是自定义场景的客服"
+    # 自定义插话应答过渡语随场景配置透传到运行时
+    assert scenario.dialog_repair == {"sideQuestionAck": "稍等哈，我马上帮您查。"}
+
+
+@pytest.mark.asyncio
+async def test_text_test_falls_back_to_builtin_scenario_without_config() -> None:
+    """流程未绑定场景（无 scenarioConfig）时，/text-test 回退内置 ecommerce 场景。"""
+    tasks = FakeTasks()
+    tasks.flow = _text_test_flow(None)
+    agent = CapturingAgent()
+    server = VoiceAgentServer(
+        host="127.0.0.1", port=0, path="/text-test", agent=agent, tasks=tasks
+    )
+    ws = TextTestWebSocket(
+        [
+            json.dumps({"type": "start", "flowId": "flow-1"}),
+            json.dumps({"type": "hangup"}),
+        ]
+    )
+
+    await server._handle_text_test(ws)
+
+    assert len(agent.sessions) == 1
+    assert agent.sessions[0]["scenario"] is get_scenario("ecommerce")
 
 
 @pytest.mark.asyncio

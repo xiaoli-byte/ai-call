@@ -36,7 +36,8 @@
         "knowledgeBaseId": { "type": "string" },
         "allowedTools": { "type": "array", "items": { "type": "string" } },
         "escalationRules": { "type": "array", "items": { "type": "object" } },
-        "defaultFlowId": { "type": "string" }
+        "defaultFlowId": { "type": "string" },
+        "dialogRepair": { "type": "object" }
       },
       "additionalProperties": true
     },

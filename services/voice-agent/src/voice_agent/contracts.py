@@ -70,6 +70,10 @@ class ScenarioConfigContract(ContractModel):
     allowed_tools: list[str] = Field(alias="allowedTools")
     escalation_rules: list[EscalationRuleContract] = Field(alias="escalationRules")
     default_flow_id: Optional[str] = Field(default=None, alias="defaultFlowId")
+    # 对话修复配置（无应答重问/未理解澄清/静默超时等，见 shared 的 DialogRepairConfig）。
+    # ContractModel 的 extra="ignore" 会丢弃未声明字段，缺这行会导致 API 返回的
+    # dialogRepair 在边界被静默吞掉 → 场景自定义修复话术永远不生效（同 intentExamples 的坑）。
+    dialog_repair: dict[str, Any] = Field(default_factory=dict, alias="dialogRepair")
 
 
 class TaskContextContract(ContractModel):
