@@ -22,6 +22,7 @@ function scenarioRecord(overrides: Record<string, unknown> = {}) {
     knowledgeBaseId: '',
     allowedTools: [],
     escalationRules: [],
+    dialogRepair: {},
     defaultFlowId: null,
     createdAt: new Date('2026-07-12T00:00:00.000Z'),
     updatedAt: new Date('2026-07-12T00:00:00.000Z'),
@@ -82,5 +83,60 @@ describe('ScenariosService published flow binding', () => {
 
     assert.equal(createData?.defaultFlowId, 'published-snapshot-flow');
     assert.equal(created.defaultFlowId, 'published-snapshot-flow');
+  });
+});
+
+describe('ScenariosService dialogRepair 持久化现状', () => {
+  // OutboundScenario 表已新增 dialog_repair（Json，默认 '{}'）列，对应 Prisma migration
+  // 20260715140556_add_scenario_dialog_repair；toCreateData/toUpdateData/toDomain 会把
+  // dialogRepair 当作普通 Json 列读写（空对象在 toDomain 归一化为 undefined，表示未配置）。
+  // 以下用例验证创建/更新/读回的完整往返。
+  it('create() 持久化 dialogRepair 并在读回时还原', async () => {
+    let createData: Record<string, unknown> | undefined;
+    const repair = { noInputPrompt: '抱歉，我没有听到您的回答。{question}' };
+    const prisma = {
+      outboundScenario: {
+        findUnique: async () => null,
+        create: async ({ data }: { data: Record<string, unknown> }) => {
+          createData = data;
+          return scenarioRecord({ dialogRepair: data.dialogRepair });
+        },
+      },
+      taskFlow: { findUnique: async () => null },
+    };
+    const service = new ScenariosService(prisma as any);
+
+    const created = await service.create({
+      scenario: 'test_scene',
+      name: '测试场景',
+      dialogRepair: repair,
+    });
+
+    assert.deepEqual(createData?.dialogRepair, repair);
+    assert.deepEqual(created.dialogRepair, repair);
+  });
+
+  it('update() 持久化 dialogRepair；未配置（空对象）读回为 undefined', async () => {
+    let updateData: Record<string, unknown> | undefined;
+    const repair = { noMatchPrompt: '抱歉，我还没理解您的回答。{question}' };
+    const prisma = {
+      outboundScenario: {
+        findFirst: async () => scenarioRecord(),
+        update: async ({ data }: { data: Record<string, unknown> }) => {
+          updateData = data;
+          return scenarioRecord({ dialogRepair: data.dialogRepair });
+        },
+      },
+      taskFlow: { findUnique: async () => null },
+    };
+    const service = new ScenariosService(prisma as any);
+
+    const updated = await service.update('test_scene', { dialogRepair: repair });
+    assert.deepEqual(updateData?.dialogRepair, repair);
+    assert.deepEqual(updated.dialogRepair, repair);
+
+    // 空对象 = 全部沿用默认，toDomain 归一化为 undefined
+    const cleared = await service.update('test_scene', { dialogRepair: {} });
+    assert.equal(cleared.dialogRepair, undefined);
   });
 });

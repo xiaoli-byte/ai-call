@@ -24,6 +24,7 @@ model OutboundScenario {
   knowledgeBaseId          String            @default("") @map("knowledge_base_id")
   allowedTools             Json              @default("[]") @map("allowed_tools")
   escalationRules          Json              @default("[]") @map("escalation_rules")
+  dialogRepair             Json              @default("{}") @map("dialog_repair")
   defaultFlowId            String?           @map("default_flow_id") @db.Uuid
   defaultFlow              TaskFlow?         @relation("ScenarioDefaultFlow", fields: [defaultFlowId], references: [id], onDelete: SetNull)
   taskFlows                TaskFlow[]        @relation("TaskFlowScenario")

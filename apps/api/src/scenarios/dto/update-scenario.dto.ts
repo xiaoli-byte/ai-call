@@ -1,3 +1,4 @@
+import { Type } from 'class-transformer';
 import {
   IsArray,
   IsIn,
@@ -5,12 +6,14 @@ import {
   IsOptional,
   IsString,
   Matches,
+  ValidateNested,
 } from 'class-validator';
 import { ScenarioStatus } from '@ai-call/shared';
 import type {
   EscalationRule,
   TtsVoiceConfig,
 } from '@ai-call/shared';
+import { DialogRepairConfigDto } from './create-scenario.dto.js';
 
 const SCENARIO_KEY_PATTERN = /^[a-z][a-z0-9_-]{1,63}$/;
 
@@ -81,4 +84,10 @@ export class UpdateScenarioDto {
   @IsOptional()
   @IsString()
   defaultFlowId?: string | null;
+
+  @IsOptional()
+  @IsObject()
+  @ValidateNested()
+  @Type(() => DialogRepairConfigDto)
+  dialogRepair?: DialogRepairConfigDto;
 }

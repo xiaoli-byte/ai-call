@@ -27,6 +27,7 @@ type ScenarioRecord = {
   knowledgeBaseId: string;
   allowedTools: unknown;
   escalationRules: unknown;
+  dialogRepair: unknown;
   defaultFlowId: string | null;
   createdAt: Date;
   updatedAt: Date;
@@ -131,6 +132,7 @@ export class ScenariosService {
       escalationRules: Array.isArray(record.escalationRules)
         ? record.escalationRules as ScenarioConfig['escalationRules']
         : [],
+      dialogRepair: asDialogRepair(record.dialogRepair),
       defaultFlowId: record.defaultFlowId ?? undefined,
       createdAt: record.createdAt.toISOString(),
       updatedAt: record.updatedAt.toISOString(),
@@ -189,6 +191,7 @@ export class ScenariosService {
       knowledgeBaseId: dto.knowledgeBaseId ?? '',
       allowedTools: toPrismaJson(dto.allowedTools ?? []),
       escalationRules: toPrismaJson(dto.escalationRules ?? []),
+      dialogRepair: toPrismaJson(dto.dialogRepair ?? {}),
       defaultFlowId: dto.defaultFlowId || null,
     };
   }
@@ -212,6 +215,7 @@ export class ScenariosService {
     if (dto.knowledgeBaseId !== undefined) data.knowledgeBaseId = dto.knowledgeBaseId;
     if (dto.allowedTools !== undefined) data.allowedTools = toPrismaJson(dto.allowedTools);
     if (dto.escalationRules !== undefined) data.escalationRules = toPrismaJson(dto.escalationRules);
+    if (dto.dialogRepair !== undefined) data.dialogRepair = toPrismaJson(dto.dialogRepair);
     if (dto.defaultFlowId !== undefined) data.defaultFlowId = dto.defaultFlowId || null;
     return data;
   }
@@ -265,4 +269,12 @@ function asStringArray(value: unknown): string[] {
   return Array.isArray(value)
     ? value.filter((item): item is string => typeof item === 'string')
     : [];
+}
+
+/** 数据库 Json 列 → dialogRepair 配置；空对象视为未配置（返回 undefined）。 */
+function asDialogRepair(value: unknown): ScenarioConfig['dialogRepair'] {
+  const source = asObject(value);
+  return Object.keys(source).length > 0
+    ? (source as ScenarioConfig['dialogRepair'])
+    : undefined;
 }

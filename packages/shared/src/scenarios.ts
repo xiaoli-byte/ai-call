@@ -40,6 +40,78 @@ export interface TtsVoiceConfig {
   voicePersona?: string;
 }
 
+export interface DialogRepairConfig {
+  /** 无应答重问话术，支持 {question} 占位符；运行时会把 {question} 替换为当前节点未答的问题话术。 */
+  noInputPrompt?: string;
+  /** 无应答次数用尽的收尾话术 */
+  noInputGiveUpPrompt?: string;
+  /** 未理解回答时的澄清话术，支持 {question}；运行时会把 {question} 替换为当前节点未答的问题话术。 */
+  noMatchPrompt?: string;
+  /** 澄清次数用尽的收尾话术 */
+  noMatchGiveUpPrompt?: string;
+  /** 用户要求重复时的应答话术，支持 {question}；运行时会把 {question} 替换为当前节点未答的问题话术。 */
+  repeatAckPrompt?: string;
+  /** 用户要求稍等时的应答话术 */
+  holdAckPrompt?: string;
+  /** 用户表示"我有问题想问"时的应答话术 */
+  questionRequestAckPrompt?: string;
+  /** 语义识别服务异常时请用户重说的话术 */
+  sttRetryPrompt?: string;
+  /** 语义识别持续异常的收尾话术 */
+  sttGiveUpPrompt?: string;
+  /** 插问答不上来时的兜底话术 */
+  sideQuestionFallbackPrompt?: string;
+  /** 插问额度用尽、先回主流程的话术 */
+  sideQuestionDeferPrompt?: string;
+  /** 插话承接方式：natural=LLM 一次生成融合（默认）；template=固定模板拼接 */
+  sideQuestionBridge?: 'natural' | 'template';
+  /** template 模式的承接话术，支持 {question}；运行时会把 {question} 替换为当前节点未答的问题话术。 */
+  sideQuestionBridgeTemplate?: string;
+  /**
+   * natural 模式下「插话后回到流程」的提示词：AI 回答完客户插话后，按此提示
+   * 把对话自然带回主流程未答的问题。支持 {question} 占位符。留空使用内置默认。
+   */
+  sideQuestionResumePrompt?: string;
+  /** 静默追问提示词：静默超时后 AI 按此提示生成追问话术（非固定文案）。留空默认：复述上一轮对话内容并保证上下文自然衔接 */
+  silencePrompt?: string;
+  /** 静默超时时间（毫秒）：用户静默超过该时长即触发静默追问。留空跟随系统默认（6000） */
+  silenceTimeoutMs?: number;
+  /** 连续静默轮数上限：连续静默超过该轮数后执行 silenceAction。留空跟随系统默认（2） */
+  maxSilenceRounds?: number;
+  /** 静默超限动作：hangup=礼貌挂机（默认）；transfer=转人工 */
+  silenceAction?: 'hangup' | 'transfer';
+  /** 转人工前的提示话术（silenceAction=transfer 时播报） */
+  silenceTransferPrompt?: string;
+}
+
+/**
+ * 对话修复话术的展示用默认值，供前端表单做输入框 placeholder。
+ * 注意：运行时真正生效的默认值在 Python 侧（voice-agent），此处仅用于前端展示。
+ */
+export const DIALOG_REPAIR_DEFAULTS: Required<DialogRepairConfig> = {
+  noInputPrompt: '抱歉，我没有听到您的回答。{question}',
+  noInputGiveUpPrompt: '暂时没有听到您的回答，我们稍后再联系您。',
+  noMatchPrompt: '抱歉，我还没理解您的回答。{question}',
+  noMatchGiveUpPrompt: '抱歉，我暂时无法确认您的回答，我们稍后再联系您。',
+  repeatAckPrompt: '好的，我再说一遍。{question}',
+  holdAckPrompt: '好的，您请说。',
+  questionRequestAckPrompt: '好的，您请说。',
+  sttRetryPrompt: '语音服务刚才有些延迟，请您再说一次。',
+  sttGiveUpPrompt: '语音服务暂时无法完成识别，我们稍后再联系您。',
+  sideQuestionFallbackPrompt: '这部分我需要帮您确认后回复。',
+  sideQuestionDeferPrompt: '这个问题我暂时无法确认，我们先继续刚才的流程。',
+  sideQuestionBridge: 'natural',
+  sideQuestionBridgeTemplate: '回到刚才的问题，{question}',
+  sideQuestionResumePrompt:
+    '回答后，用口语自然地把对话带回主流程中客户尚未回答的问题：「{question}」。'
+    + '衔接要顺滑，保持该问题的原意，但不要逐字照抄，也不要使用『回到刚才的问题』这类生硬转折。',
+  silencePrompt: '- 复述上一轮对话的内容\n- 保证上下文自然衔接',
+  silenceTimeoutMs: 6000,
+  maxSilenceRounds: 2,
+  silenceAction: 'hangup',
+  silenceTransferPrompt: '请稍等，正在为您转接人工客服。',
+};
+
 export interface ScenarioConfig {
   /** 持久化配置 ID；内置 fallback 场景可能没有。 */
   id?: string;
@@ -75,6 +147,8 @@ export interface ScenarioConfig {
   escalationRules: EscalationRule[];
   /** 场景默认绑定的外呼流程。 */
   defaultFlowId?: string;
+  /** 对话修复话术（无应答重问/未理解澄清/STT 异常重试/插问兜底等） */
+  dialogRepair?: DialogRepairConfig;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -107,6 +181,7 @@ export interface CreateScenarioDto {
   allowedTools?: string[];
   escalationRules?: EscalationRule[];
   defaultFlowId?: string;
+  dialogRepair?: DialogRepairConfig;
 }
 
 export type UpdateScenarioDto = Partial<Omit<CreateScenarioDto, 'defaultFlowId'>> & {
