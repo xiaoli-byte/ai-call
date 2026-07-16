@@ -312,13 +312,13 @@ nginx 在现有站点 server 块（第 9 节）内按路径分流：`/knowledge/
 在 ai-knowledge 仓库目录内操作（构建命令以该仓库自己的 README/脚本为准，通常 `pnpm install && pnpm build`）：
 
 1. **API 侧 env**（运行时读取，改后重启即可）：
-   - `SERVICE_API_TOKEN=<强随机值>` —— 必须与 ai-call 的 `KNOWLEDGE_SERVICE_API_TOKEN` **完全一致**（检索链路第二跳鉴权）。生产缺失会拒绝服务调用。
-   - `JWT_ACCESS_SECRET=<与 ai-call 生产 JWT_SECRET 相同的值>` —— 联合登录验签前提。**必须是强随机值**；HS256 共享密钥意味着任一侧泄露即两侧全失守，泄露时两侧同步轮换。
+   - `SERVICE_API_TOKEN=<强随机值>` —— 必须与 ai-call 的 `KNOWLEDGE_SERVICE_API_TOKEN` **完全一致**（检索链路第二跳鉴权，以及 CALL-13 身份同步）。生产缺失会拒绝服务调用。
+   - **KB-10 联邦 JWT（生产必须 RS256）**：`JWT_ACCESS_ALGORITHM=RS256`，为 ai-knowledge 自身配置 `JWT_ACCESS_PRIVATE_KEY`、`JWT_ACCESS_PUBLIC_KEY`、`JWT_ACCESS_KEY_ID=ai-knowledge-v1`；再将 ai-call 的**公钥**配置为 `FEDERATED_JWT_ACCESS_PUBLIC_KEY`，并设 `FEDERATED_JWT_ACCESS_KEY_ID=ai-call-v1`。不得配置或保存 ai-call 私钥。`JWT_ACCESS_SECRET` 仍应为强随机值，用于本系统既有 access-token 配置兼容；它不再作为联邦 token 验签密钥。
    - `FEDERATED_TENANT_ALLOWLIST=<逗号分隔的租户 id>` —— 生产建议设置，限制哪些 ai-call 租户可 JIT 开通联合身份；未设时仅要求租户已存在于 ai-knowledge `tenants` 表且 active（租户开通永远是显式运维动作，JIT 只到用户级）。
 2. **web 侧 env**（⚠️ 含**构建期**变量，改了必须重新 `next build`）：
    - `WEB_BASE_PATH=/knowledge` —— 页面与 `_next` 资源全部挂到 `/knowledge` 前缀（zone 模式）。
    - `NEXT_PUBLIC_API_URL=/knowledge/api` —— **构建期内联**！忘改的现象：内嵌页面的 API 请求打到裸 `/api/*`，被 ai-call 的 API 接住报 404/401。
-3. **数据库**：ai-knowledge 用自己的 Postgres 库，按其仓库文档执行生产迁移（等价于 `prisma migrate deploy`，同样绝不用 `migrate dev`）。目标租户需**预先存在**于其 `tenants` 表且 active（JIT 不建租户）。
+3. **数据库**：ai-knowledge 用自己的 Postgres 库，按其仓库文档执行生产迁移（等价于 `prisma migrate deploy`，同样绝不用 `migrate dev`）。本次必须包含 `0012_federated_user_lifecycle`：为 `users` 增加 `status`，停用/删除的联合账号仍保留以维持文档 owner 与审计归属。目标租户需**预先存在**于其 `tenants` 表且 active（JIT 不建租户）。
 4. **构建并用 PM2 拉起**两个进程（web 构建必须在 env 设置**之后**；进程停止期间构建，同第 0 节铁律）：
 
 ```bash
@@ -340,6 +340,10 @@ pm2 save
 - 复核第 5 节已有项：ai-call 入站 `SERVICE_API_TOKEN`（voice-agent 打 ai-call 用）与本节的 `KNOWLEDGE_SERVICE_API_TOKEN` 是**两个不同 token**，别配成同一个变量漏配另一个。
 
 改完重启 api 进程（`pm2 restart api`）。启动日志确认：无 `KNOWLEDGE_SERVICE_BASE_URL is set but ... token is empty` 类自检拒绝，且已进入外部知识库模式。
+
+> **CALL-13 身份同步**：不需要新增 token；创建、改角色、停用、删除用户复用上述出站 token，调用 ai-knowledge 的内部 `/api/federation/users/*`。两服务部署并健康后，使用具备 `system:user:update` 的 ai-call 管理员凭证执行一次 `POST /api/system/users/sync-knowledge`，幂等回填本次发布前已存在的账号。若返回 409，表示知识库内有同租户同邮箱但不同 id 的本地账号；必须人工迁移/清理，绝不能自动合并。
+
+> **KB-10 切换顺序**：ai-call 同时设 `JWT_ACCESS_ALGORITHM=RS256`、自身 `JWT_ACCESS_PRIVATE_KEY` / `JWT_ACCESS_PUBLIC_KEY` 与 `JWT_ACCESS_KEY_ID=ai-call-v1`，再将它的公钥提供给上面的 ai-knowledge 联邦配置。选低峰期重启两侧，等待旧 HS256 access token 自然过期；切换后验证 ai-knowledge 仅接受带 `kid=ai-call-v1` 的 RS256 联邦 token。
 
 dashboard 侧 `KNOWLEDGE_ZONE_URL` 在**有 nginx 分流的生产形态下可不设**（`/knowledge/*` 根本到不了 dashboard）；设了也无害（nginx 优先）。
 
@@ -381,7 +385,8 @@ location ^~ /knowledge/ {
 2. **链路 B（界面 + 联合登录）**：浏览器登录 ai-call → 访问 `https://<域名>/knowledge` → 应看到 **ai-knowledge 原厂知识库界面**（不是 ai-call 的 mock 页），且**不用二次登录**即可拉出列表、上传文档（上传成功 = JIT 开通 + owner 归属正常；若报 `Foreign key constraint violated` 说明 JIT 未生效，查 JWT 密钥是否两侧一致）。
 3. **登出闭环**：在 `/knowledge` 内点退出 → 应作废 cookie 并回到登录页；重进 `/knowledge` 不应被自动拉起会话。
 4. **回归**：`/knowledge` 之外的 dashboard 页面、通话检索、「检索测试」按钮均不受影响；语音 WS 三路径仍正常。
-5. **CALL-12 按库过滤（配置对齐，零代码）**：把 ai-call 场景配置的 `knowledgeBaseId` 填成 ai-knowledge 中目标 **folder 的真实 id**；用 CALL-10 脚本场景 4（`KB_ID`/`KB_ID_OTHER` 设为两个文档不同的真实 folder id）验证断言 4.1 由 WARN 转为通过。id 不对齐时优雅兜底为租户级全库（不报错、不返回空），所以**不验证就等于没开**。
+5. **CALL-12 按库过滤（场景多库配置）**：在 ai-call“场景管理 → 关联知识库”中勾选一个或多个 ai-knowledge 的目标 **folder**。保存后 `knowledgeBaseIds` 会持久化，运行时逐库检索并按全局相关度取 TopK；兼容字段 `knowledgeBaseId` 保存首项。用 CALL-10 脚本场景 4（`KB_ID`/`KB_ID_OTHER` 设为两个文档不同的真实 folder id）验证单库隔离，再用场景测试确认多库可命中任一已选库。id 不对齐仍会优雅兜底为租户级全库，所以**不验证就等于没开**。
+6. **CALL-13 生命周期**：回填后任选一个非默认管理员账号，依次验证角色修改、停用、删除：ai-knowledge 的同 id 用户应同步角色/状态；停用或删除后，即使持有此前签发但未过期的 ai-call access token，访问知识库 API 也应立即 401。删除后确认其 `users` 行仍存在且状态为 `deleted`，已有文档的 owner 不变。
 
 ### 10.6 回滚
 

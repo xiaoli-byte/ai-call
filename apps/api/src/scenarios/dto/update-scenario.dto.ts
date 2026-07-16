@@ -1,6 +1,7 @@
 import { Type } from 'class-transformer';
 import {
   IsArray,
+  ArrayMaxSize,
   IsIn,
   IsObject,
   IsOptional,
@@ -68,6 +69,12 @@ export class UpdateScenarioDto {
   @IsOptional()
   @IsString()
   greeting?: string;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(20)
+  @IsString({ each: true })
+  knowledgeBaseIds?: string[];
 
   @IsOptional()
   @IsString()

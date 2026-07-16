@@ -25,6 +25,7 @@ type ScenarioRecord = {
   systemPrompt: string;
   greeting: string;
   knowledgeBaseId: string;
+  knowledgeBaseIds: string[];
   allowedTools: unknown;
   escalationRules: unknown;
   dialogRepair: unknown;
@@ -127,7 +128,8 @@ export class ScenariosService {
       llmConstraints: asStringArray(record.llmConstraints),
       systemPrompt: record.systemPrompt,
       greeting: record.greeting,
-      knowledgeBaseId: record.knowledgeBaseId,
+      knowledgeBaseId: normalizeKnowledgeBaseIds(record.knowledgeBaseIds, record.knowledgeBaseId)[0] ?? '',
+      knowledgeBaseIds: normalizeKnowledgeBaseIds(record.knowledgeBaseIds, record.knowledgeBaseId),
       allowedTools: asStringArray(record.allowedTools),
       escalationRules: Array.isArray(record.escalationRules)
         ? record.escalationRules as ScenarioConfig['escalationRules']
@@ -175,6 +177,7 @@ export class ScenariosService {
   }
 
   private toCreateData(dto: SharedCreateScenarioDto): Record<string, unknown> {
+    const knowledgeBaseIds = normalizeKnowledgeBaseIds(dto.knowledgeBaseIds, dto.knowledgeBaseId);
     return {
       scenario: dto.scenario,
       name: dto.name,
@@ -188,7 +191,8 @@ export class ScenariosService {
       llmConstraints: toPrismaJson(dto.llmConstraints ?? []),
       systemPrompt: dto.systemPrompt ?? '',
       greeting: dto.greeting ?? '',
-      knowledgeBaseId: dto.knowledgeBaseId ?? '',
+      knowledgeBaseId: knowledgeBaseIds[0] ?? '',
+      knowledgeBaseIds,
       allowedTools: toPrismaJson(dto.allowedTools ?? []),
       escalationRules: toPrismaJson(dto.escalationRules ?? []),
       dialogRepair: toPrismaJson(dto.dialogRepair ?? {}),
@@ -212,7 +216,11 @@ export class ScenariosService {
     if (dto.llmConstraints !== undefined) data.llmConstraints = toPrismaJson(dto.llmConstraints);
     if (dto.systemPrompt !== undefined) data.systemPrompt = dto.systemPrompt;
     if (dto.greeting !== undefined) data.greeting = dto.greeting;
-    if (dto.knowledgeBaseId !== undefined) data.knowledgeBaseId = dto.knowledgeBaseId;
+    if (dto.knowledgeBaseIds !== undefined || dto.knowledgeBaseId !== undefined) {
+      const knowledgeBaseIds = normalizeKnowledgeBaseIds(dto.knowledgeBaseIds, dto.knowledgeBaseId);
+      data.knowledgeBaseIds = knowledgeBaseIds;
+      data.knowledgeBaseId = knowledgeBaseIds[0] ?? '';
+    }
     if (dto.allowedTools !== undefined) data.allowedTools = toPrismaJson(dto.allowedTools);
     if (dto.escalationRules !== undefined) data.escalationRules = toPrismaJson(dto.escalationRules);
     if (dto.dialogRepair !== undefined) data.dialogRepair = toPrismaJson(dto.dialogRepair);
@@ -269,6 +277,16 @@ function asStringArray(value: unknown): string[] {
   return Array.isArray(value)
     ? value.filter((item): item is string => typeof item === 'string')
     : [];
+}
+
+function normalizeKnowledgeBaseIds(
+  knowledgeBaseIds?: readonly string[] | null,
+  legacyKnowledgeBaseId?: string | null,
+): string[] {
+  const candidates = knowledgeBaseIds && knowledgeBaseIds.length > 0
+    ? knowledgeBaseIds
+    : legacyKnowledgeBaseId ? [legacyKnowledgeBaseId] : [];
+  return [...new Set(candidates.map((id) => id.trim()).filter(Boolean))];
 }
 
 /** 数据库 Json 列 → dialogRepair 配置；空对象视为未配置（返回 undefined）。 */

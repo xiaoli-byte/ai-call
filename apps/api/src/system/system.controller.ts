@@ -44,6 +44,13 @@ export class SystemController {
     return this.systemService.createUser(dto);
   }
 
+  /** One-off, idempotent CALL-13 projection for identities created before rollout. */
+  @Post('users/sync-knowledge')
+  @Permissions(PERMISSIONS.SYSTEM_USER_UPDATE)
+  async syncKnowledgeUsers() {
+    return this.systemService.syncAllKnowledgeUsers();
+  }
+
   @Patch('users/:id')
   @Permissions(PERMISSIONS.SYSTEM_USER_UPDATE)
   async updateUser(

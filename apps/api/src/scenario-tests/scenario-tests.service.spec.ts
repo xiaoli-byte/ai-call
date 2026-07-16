@@ -24,6 +24,7 @@ describe('ScenarioTestsService', () => {
         scenario: 'collection',
         name: '贷后催收',
         knowledgeBaseId: 'kb-collection',
+        knowledgeBaseIds: ['kb-collection'],
         escalationRules: [{ description: '客户提出延期', keywords: ['延期'] }],
       }),
     };
@@ -40,7 +41,7 @@ describe('ScenarioTestsService', () => {
       }),
     };
     const knowledge = {
-      retrieve: async () => [
+      retrieveMany: async () => [
         { id: 'doc-1', source: '延期政策.pdf', content: '最长延期 90 天', score: 0.92 },
       ],
     };
@@ -83,12 +84,13 @@ describe('ScenarioTestsService', () => {
         name: '催收提醒',
         greeting: '您好，请描述您的问题。',
         knowledgeBaseId: 'kb-collection',
+        knowledgeBaseIds: ['kb-collection'],
         escalationRules: [],
       }),
     };
     const flows = {};
     const knowledge = {
-      retrieve: async () => [
+      retrieveMany: async () => [
         { id: 'doc-1', source: '还款政策.pdf', content: '可申请延期还款。', score: 0.2 },
       ],
     };
@@ -126,12 +128,13 @@ describe('ScenarioTestsService', () => {
         name: '通知提醒',
         greeting: '您好，这里是预约提醒。',
         knowledgeBaseId: undefined,
+        knowledgeBaseIds: [],
         escalationRules: [],
       }),
     };
     const flows = {};
     const knowledge = {
-      retrieve: async () => {
+      retrieveMany: async () => {
         retrieveCalls += 1;
         return [];
       },
@@ -170,12 +173,13 @@ describe('ScenarioTestsService', () => {
         name: '通知提醒',
         greeting: '您好，请描述您的问题。',
         knowledgeBaseId: undefined,
+        knowledgeBaseIds: [],
         escalationRules: [],
       }),
     };
     const flows = {};
     const knowledge = {
-      retrieve: async () => [],
+      retrieveMany: async () => [],
     };
     const service = new ScenarioTestsService(
       prisma as any,
@@ -192,5 +196,39 @@ describe('ScenarioTestsService', () => {
 
     assert.equal(run.result, 'fail');
     assert.deepEqual(run.riskItems, ['未命中预期转人工结果']);
+  });
+
+  it('combines hits from every associated knowledge base', async () => {
+    let receivedIds: string[] = [];
+    const prisma = {
+      scenarioTestRun: {
+        create: async ({ data }: any) => ({
+          id: 'run-multi-kb',
+          ...data,
+          createdAt: new Date('2026-07-07T08:00:00.000Z'),
+        }),
+      },
+    };
+    const scenarios = {
+      get: async () => ({
+        scenario: 'support',
+        name: '售后支持',
+        greeting: '您好，请说明您的问题。',
+        knowledgeBaseId: 'kb-orders',
+        knowledgeBaseIds: ['kb-orders', 'kb-products'],
+        escalationRules: [],
+      }),
+    };
+    const knowledge = {
+      retrieveMany: async (ids: string[]) => {
+        receivedIds = ids;
+        return [{ id: 'doc-1', source: 'products.md', content: '产品说明', score: 0.9 }];
+      },
+    };
+    const service = new ScenarioTestsService(prisma as any, scenarios as any, {} as any, knowledge as any);
+
+    await service.run('support', { input: '产品如何使用' });
+
+    assert.deepEqual(receivedIds, ['kb-orders', 'kb-products']);
   });
 });

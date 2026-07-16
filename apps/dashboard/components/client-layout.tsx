@@ -381,15 +381,30 @@ export function ClientLayout({
             <div className={styles.navGroup}>
               <div className={styles.navGroupLabel}>配置</div>
               {NAV_ITEMS_SECONDARY.map((item) => (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className={cn(styles.navItem, pathname.startsWith(item.href) && styles.navItemActive)}
-                  title={item.label}
-                >
-                  <NavIcon name={item.icon} />
-                  <span>{item.label}</span>
-                </Link>
+                item.href === '/knowledge' ? (
+                  // ai-knowledge is a separate Next application. Its RSC stream
+                  // must not be consumed by this dashboard's App Router, so this
+                  // cross-zone entry deliberately uses a browser navigation.
+                  <a
+                    key={item.href}
+                    href={item.href}
+                    className={cn(styles.navItem, pathname.startsWith(item.href) && styles.navItemActive)}
+                    title={item.label}
+                  >
+                    <NavIcon name={item.icon} />
+                    <span>{item.label}</span>
+                  </a>
+                ) : (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    className={cn(styles.navItem, pathname.startsWith(item.href) && styles.navItemActive)}
+                    title={item.label}
+                  >
+                    <NavIcon name={item.icon} />
+                    <span>{item.label}</span>
+                  </Link>
+                )
               ))}
             </div>
 

@@ -31,6 +31,7 @@ import {
   type TaskFlow,
 } from '@ai-call/shared';
 import { useScenarioMutations, useScenarios } from '@/hooks/use-scenarios';
+import { useKnowledgeBases } from '@/hooks/use-knowledge';
 import { useTaskFlows } from '@/hooks/use-task-flows';
 import { useVoiceCloneMutations, useVoiceClones } from '@/hooks/use-voice-clones';
 import { useTTS } from '@/hooks/useTTS';
@@ -70,7 +71,7 @@ interface ScenarioDraft {
   llmConstraintsText: string;
   systemPrompt: string;
   greeting: string;
-  knowledgeBaseId: string;
+  knowledgeBaseIds: string[];
   allowedToolsText: string;
   escalationRules: EscalationRule[];
   defaultFlowId: string;
@@ -174,7 +175,7 @@ const scenarioDraftSchema = z.object({
   llmConstraintsText: z.string(),
   systemPrompt: z.string(),
   greeting: z.string(),
-  knowledgeBaseId: z.string(),
+  knowledgeBaseIds: z.array(z.string()),
   allowedToolsText: z.string(),
   escalationRules: z.array(escalationRuleSchema),
   defaultFlowId: z.string(),
@@ -228,7 +229,7 @@ const EMPTY_DRAFT: ScenarioDraft = {
   llmConstraintsText: '',
   systemPrompt: '',
   greeting: '',
-  knowledgeBaseId: '',
+  knowledgeBaseIds: [],
   allowedToolsText: '',
   escalationRules: [],
   defaultFlowId: '',
@@ -340,7 +341,9 @@ function toDraft(scenario?: ScenarioConfig): ScenarioDraft {
     llmConstraintsText: (scenario.llmConstraints ?? []).join('\n'),
     systemPrompt: scenario.systemPrompt ?? '',
     greeting: scenario.greeting ?? '',
-    knowledgeBaseId: scenario.knowledgeBaseId ?? '',
+    knowledgeBaseIds: scenario.knowledgeBaseIds?.length
+      ? scenario.knowledgeBaseIds
+      : scenario.knowledgeBaseId ? [scenario.knowledgeBaseId] : [],
     allowedToolsText: (scenario.allowedTools ?? []).join('\n'),
     escalationRules: (scenario.escalationRules ?? []).map((item) => ({ ...item })),
     defaultFlowId: scenario.defaultFlowId ?? '',
@@ -437,6 +440,7 @@ function draftToDto(draft: ScenarioDraft): CreateScenarioDto {
     businessGoal: draft.businessGoal,
     llmConstraints: splitLines(draft.llmConstraintsText),
     greeting: draft.greeting,
+    knowledgeBaseIds: draft.knowledgeBaseIds,
     escalationRules: draft.escalationRules,
     defaultFlowId: draft.defaultFlowId || undefined,
     dialogRepair: buildDialogRepairDto(draft.dialogRepair),
@@ -727,6 +731,54 @@ function StyleChips() {
   );
 }
 
+function KnowledgeBasePicker() {
+  const { control, setValue } = useFormContext<ScenarioDraft>();
+  const knowledgeBaseIds = useWatch({ control, name: 'knowledgeBaseIds' });
+  const { data: knowledgeBases, error, isLoading } = useKnowledgeBases();
+  const selected = new Set(knowledgeBaseIds);
+  const visibleIds = new Set((knowledgeBases ?? []).map((item) => item.id));
+  const unavailableIds = knowledgeBaseIds.filter((id) => !visibleIds.has(id));
+
+  function toggle(id: string) {
+    const next = selected.has(id)
+      ? knowledgeBaseIds.filter((value) => value !== id)
+      : [...knowledgeBaseIds, id];
+    setValue('knowledgeBaseIds', next, { shouldDirty: true });
+  }
+
+  return (
+    <div className="scenario-knowledge-picker" role="group" aria-label="关联知识库（可多选）">
+      <div className="scenario-knowledge-picker-head">
+        <span>已关联 {knowledgeBaseIds.length} 个</span>
+        {isLoading && <span>正在加载知识库…</span>}
+      </div>
+      {error && <div className="scenario-inline-warning" role="alert">知识库列表加载失败，请稍后重试。</div>}
+      {!isLoading && !error && (knowledgeBases?.length ?? 0) === 0 && (
+        <span className="scenario-field-hint">暂无可关联的知识库。</span>
+      )}
+      {(knowledgeBases ?? []).map((knowledgeBase) => (
+        <label key={knowledgeBase.id} className="scenario-knowledge-option">
+          <input
+            type="checkbox"
+            aria-label={`选择知识库 ${knowledgeBase.name}`}
+            checked={selected.has(knowledgeBase.id)}
+            onChange={() => toggle(knowledgeBase.id)}
+          />
+          <span className="scenario-knowledge-option-copy">
+            <span>{knowledgeBase.name}</span>
+            <span>{knowledgeBase.docCount} 篇文档</span>
+          </span>
+        </label>
+      ))}
+      {unavailableIds.length > 0 && (
+        <div className="scenario-inline-warning">
+          已关联但当前不可见的知识库：{unavailableIds.join('、')}。保存会保留这些关联；如需移除，请恢复相应访问权限后操作。
+        </div>
+      )}
+    </div>
+  );
+}
+
 /**
  * 「行业模板」选择：点击某个行业模板标签，把模板预设内容整体回显进当前草稿
  * （身份/沟通风格/业务目标/系统提示词/回复边界/开场白），仅覆盖草稿，不自动保存。
@@ -992,6 +1044,12 @@ function RobotConfigTab({ flows }: { flows: TaskFlow[] }) {
             onChange={(value) => setValue('businessGoal', value, { shouldDirty: true })}
             minHeight={150}
           />
+        </FieldRow>
+        <FieldRow label="关联知识库">
+          <KnowledgeBasePicker />
+          <span className="scenario-field-hint">
+            可关联多个知识库。运行时会联合检索并按相关度选取结果；不关联时不会执行知识检索。
+          </span>
         </FieldRow>
         <FieldRow label="外呼任务流程">
           <div className="scenario-flow-row">

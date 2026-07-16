@@ -89,17 +89,20 @@ ai-knowledge web 用 `NEXT_PUBLIC_API_URL`（构建期公开变量，prod 默认
 - **cookie 过期后的 401**：本地无 refresh token 可刷（refresh cookie 归 ai-call），web client 检测到 cookie 会话 401 时清内存态并整页跳 ai-call 登录页 `/login?redirect=<回跳路径>`（ai-call 登录页支持 `redirect` 参数；跨 zone 回跳走整页导航）。**不能**跳本地 `/knowledge/login`——联合身份是占位密码，本地登录不进。守卫引导失败同理：zone 模式（`NEXT_PUBLIC_WEB_BASE_PATH` 非空）跳 ai-call 登录，独立部署跳本地登录。
 - ai-call middleware 本身会把未登录的 `/knowledge/*` 在边缘重定向到 `/login?redirect=…`（第一道防线）；上述 client 侧处理是第二道（会话中途过期时生效）。
 
-**身份模型：惰性联合开通（JIT provisioning，2026-07-10 已落地）**。ai-call 与 ai-knowledge 是独立用户表，ai-call 用户的 `sub` 原本在 ai-knowledge 无记录——纯无状态联合下**写操作会因 `documents.owner_id → users.id` 外键失败**（上传报 `Foreign key constraint violated`）。解法：`jwt.strategy.validate` 首次见到合法但陌生的 `userId` 时，按 token claim **幂等补建一个 user 行**（id=sub、email/name/role 从 claim、`passwordHash` 占位不可本地登录），内存缓存已知 id 避免每请求打库；已存在则不覆盖本地资料。对独立部署无影响。
+**身份模型：惰性联合开通（JIT provisioning）+ 生命周期投影（2026-07-17）**。ai-call 与 ai-knowledge 是独立用户表，ai-call 用户首次经联合登录进入时，`jwt.strategy.validate` 会按 token claim 幂等补建不可本地登录的 user 行，避免 `documents.owner_id → users.id` 外键失败。之后 ai-call 管理端会通过受 `ServiceAuthGuard` 保护的内部端点同步姓名、映射角色和状态；停用/删除账号在知识库侧立即拒绝认证，删除只软删除用户行以保留文档 owner 与审计归属。
 
 JIT 准入与防护（2026-07-10 架构 review 后加固）：
 - **租户准入（fail closed）**：JIT 创建前校验 token 的 `tenantId` **已存在于本库 `tenants` 表且 `active`**，可再叠加 `FEDERATED_TENANT_ALLOWLIST` 白名单；不满足则拒绝开通**并拒绝鉴权（401）**。租户开通永远是显式运维动作，JIT 只到用户级——否则任意 ai-call 租户会被隐式「入驻」并产生悬空 `tenant_id` 数据（该列暂无外键）。本地已有用户不受影响（走不到创建路径）。
 - **失败负缓存**：开通失败（如 email 唯一冲突）后 60s 内同一 id 不再打库、不再刷日志；并发首请求的主键竞态按成功处理。
 - ✅ 租户隔离、按角色访问、**owner 归属**（上传文档归该用户、可见自己的 PRIVATE）、按 USER 的 ResourceGrant 授权——**全部生效**。
-- ⚠️ **仍存的边界**（升级为 CALL-13 剩余范围）：跨系统**用户生命周期同步**（ai-call 改角色/停用/删除不自动反映到 ai-knowledge 的开通行——首次建行后 `update:{}` 不再更新）；**email 冲突**（token email 撞已有本地用户但 id 不同时，JIT 只告警不阻断，该身份的 owner 写仍会失败，需人工对齐）。完全打通（生命周期联动 / 独立 IdP）见 `authz-architecture.md` §9 与 backlog **CALL-13**。
+- **生命周期与 email 冲突** ✅：ai-call 创建、改角色、停用、删除均会同步到 ai-knowledge；发布后用 `POST /api/system/users/sync-knowledge` 幂等回填历史用户。相同租户内同邮箱但不同 id 会返回 409，绝不自动合并或接管账户；JIT 同样 fail closed，需人工处理。
+- ⚠️ **仍存边界**：独立 IdP/OIDC SSO 是长期演进项；当前同步为 ai-call → ai-knowledge 单向投影，生产必须配置相同的 `KNOWLEDGE_SERVICE_API_TOKEN` / `SERVICE_API_TOKEN` 与可访问的 `KNOWLEDGE_SERVICE_BASE_URL`。
 
 **前提硬约束**：**必须同域**（cookie 才同源共享）+ **两侧 JWT 密钥统一**（否则 cookie 验签不过）。
 
-> ⚠️ **共享对称密钥的信任边界**：`@xiaoli-byte/authz` 当前硬编码 HS256——共享 secret 意味着 ai-knowledge 也**能签发**合法的 ai-call token，任一侧泄露即两侧全失守。生产化应升级为非对称签名（ai-call 持私钥签发、ai-knowledge 只持公钥验签，信任单向化），已登记为 backlog **CALL-13(b)**（需改 `packages/authz` 发新版 + 双端同步切换，属协调式迁移）。过渡期要求：生产 secret 必须是强随机值且两侧同步轮换（见 `authz-go-live-checklist.md`）。
+> ⚠️ **签名切换（KB-10）**：`@xiaoli-byte/authz@0.3.0` 已支持 RS256、`kid` 与联邦公钥验签，ai-call 已升级依赖；生产仍在 HS256 过渡态，必须生成并部署 RS256 密钥、低峰重启，并等待旧 HS256 access token 过期后才可关单。切换后 ai-call 仅持私钥签发，ai-knowledge 只持其联邦公钥验签。
+
+> **跨 zone 导航**：ai-call dashboard 与 ai-knowledge web 是独立 Next 应用，可能使用不同 Next 版本；进入 `/knowledge` 必须使用浏览器整页导航，不能用 dashboard App Router 的 RSC 软导航。侧边栏“知识库”和登录后的 `/knowledge` 回跳均已采用整页导航。
 
 ## 本地联调步骤
 

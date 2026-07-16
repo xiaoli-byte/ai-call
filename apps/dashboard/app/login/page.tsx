@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useSWRConfig } from 'swr';
@@ -21,7 +20,6 @@ const loginSchema = z.object({
 type LoginForm = z.infer<typeof loginSchema>;
 
 export default function LoginPage() {
-  const router = useRouter();
   const { mutate } = useSWRConfig();
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -49,14 +47,11 @@ export default function LoginPage() {
           : '/tasks';
       // 刷新 SWR auth 缓存，让 AuthProvider 拿到新 user
       await mutate(AUTH_KEY, user, { revalidate: false });
-      if (redirectTo.startsWith('/knowledge')) {
-        // 知识库是独立的 Next 应用（Multi-Zones zone）：跨 zone 必须整页导航，
-        // router.push 软导航拿不到对方 zone 的 RSC payload。
-        window.location.assign(redirectTo);
-        return;
-      }
-      router.push(redirectTo);
-      router.refresh();
+      // A full navigation lets middleware, RSC and ClientLayout all re-read the
+      // newly issued httpOnly cookie. It also avoids an App Router race where
+      // the page content changes but the URL/layout remains on /login.
+      window.location.replace(redirectTo);
+      return;
     } catch (err) {
       appToast.error(err instanceof Error ? err : '邮箱或密码错误');
     } finally {

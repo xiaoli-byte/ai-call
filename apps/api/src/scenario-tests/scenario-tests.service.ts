@@ -33,8 +33,11 @@ export class ScenarioTestsService {
           input: dto.input,
           reply: scenario.greeting,
         };
-    const knowledgeHits = scenario.knowledgeBaseId
-      ? await this.knowledge.retrieve(scenario.knowledgeBaseId, dto.input, 3)
+    const knowledgeBaseIds = scenario.knowledgeBaseIds?.length
+      ? scenario.knowledgeBaseIds
+      : scenario.knowledgeBaseId ? [scenario.knowledgeBaseId] : [];
+    const knowledgeHits = knowledgeBaseIds.length > 0
+      ? await this.knowledge.retrieveMany(knowledgeBaseIds, dto.input, 3)
       : [];
     const nodePath = [
       flowResult.entryNode,
@@ -45,7 +48,7 @@ export class ScenarioTestsService {
       reply: flowResult.reply,
       expectedOutcome: dto.expectedOutcome,
       knowledgeHits,
-      requiresKnowledge: Boolean(scenario.knowledgeBaseId),
+      requiresKnowledge: knowledgeBaseIds.length > 0,
       scenario,
     });
     const score = Math.max(0, Math.min(100, 100 - riskItems.length * 25));

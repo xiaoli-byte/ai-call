@@ -20,6 +20,7 @@ function scenarioRecord(overrides: Record<string, unknown> = {}) {
     systemPrompt: '',
     greeting: '',
     knowledgeBaseId: '',
+    knowledgeBaseIds: [],
     allowedTools: [],
     escalationRules: [],
     dialogRepair: {},
@@ -138,5 +139,41 @@ describe('ScenariosService dialogRepair 持久化现状', () => {
     // 空对象 = 全部沿用默认，toDomain 归一化为 undefined
     const cleared = await service.update('test_scene', { dialogRepair: {} });
     assert.equal(cleared.dialogRepair, undefined);
+  });
+});
+
+describe('ScenariosService knowledge base associations', () => {
+  it('writes multiple knowledge bases and keeps the first one in the legacy field', async () => {
+    let createData: Record<string, unknown> | undefined;
+    const prisma = {
+      outboundScenario: {
+        findUnique: async () => null,
+        create: async ({ data }: { data: Record<string, unknown> }) => {
+          createData = data;
+          return scenarioRecord(data);
+        },
+      },
+      taskFlow: { findUnique: async () => null },
+    };
+    const service = new ScenariosService(prisma as any);
+
+    const scenario = await service.create({
+      scenario: 'multi_kb_scene',
+      name: '多知识库场景',
+      knowledgeBaseIds: ['kb-orders', 'kb-products', 'kb-orders', ' '],
+    });
+
+    assert.deepEqual(createData?.knowledgeBaseIds, ['kb-orders', 'kb-products']);
+    assert.equal(createData?.knowledgeBaseId, 'kb-orders');
+    assert.deepEqual(scenario.knowledgeBaseIds, ['kb-orders', 'kb-products']);
+    assert.equal(scenario.knowledgeBaseId, 'kb-orders');
+  });
+
+  it('reads legacy single knowledge base records as a one-item association', () => {
+    const service = new ScenariosService({} as any);
+    const scenario = service.toDomain(scenarioRecord({ knowledgeBaseId: 'kb-legacy', knowledgeBaseIds: [] }));
+
+    assert.deepEqual(scenario.knowledgeBaseIds, ['kb-legacy']);
+    assert.equal(scenario.knowledgeBaseId, 'kb-legacy');
   });
 });

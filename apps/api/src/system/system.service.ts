@@ -9,12 +9,14 @@ import { ALL_PERMISSIONS } from '@ai-call/shared';
 import type { PermissionCode } from '@ai-call/shared';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { RolePermissionMapRefresher } from '../auth/role-permission-map.refresher.js';
+import { KnowledgeIdentitySyncService, type KnowledgeIdentity } from './knowledge-identity-sync.service.js';
 
 @Injectable()
 export class SystemService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly rolePermissionMapRefresher: RolePermissionMapRefresher,
+    private readonly knowledgeIdentitySync: KnowledgeIdentitySyncService,
   ) {}
 
   // ===== 用户管理 =====
@@ -66,6 +68,7 @@ export class SystemService {
     if (existing) throw new ConflictException('Email already exists');
 
     const passwordHash = await hash(dto.password, 10);
+    const roles = await this.resolveRoleNames(dto.roleIds);
     const user = await this.prisma.user.create({
       data: {
         email: dto.email,
@@ -76,6 +79,19 @@ export class SystemService {
           : undefined,
       },
     });
+    try {
+      await this.knowledgeIdentitySync.sync({
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        status: user.status,
+        roles,
+      });
+    } catch (error) {
+      // Creation is the only local mutation that can be cleanly compensated.
+      await this.prisma.user.delete({ where: { id: user.id } }).catch(() => undefined);
+      throw error;
+    }
     return { id: user.id };
   }
 
@@ -83,8 +99,28 @@ export class SystemService {
     id: string,
     dto: { name?: string; status?: string; roleIds?: string[] },
   ) {
-    const user = await this.prisma.user.findUnique({ where: { id } });
+    const user = await this.prisma.user.findUnique({
+      where: { id },
+      include: { roles: { include: { role: { select: { name: true } } } } },
+    });
     if (!user) throw new NotFoundException('User not found');
+    if (dto.status !== undefined && dto.status !== 'active' && dto.status !== 'inactive') {
+      throw new BadRequestException('User status must be active or inactive');
+    }
+
+    const roles = dto.roleIds === undefined
+      ? user.roles.map((entry) => entry.role.name)
+      : await this.resolveRoleNames(dto.roleIds);
+    const nextIdentity: KnowledgeIdentity = {
+      id: user.id,
+      email: user.email,
+      name: dto.name ?? user.name,
+      status: dto.status ?? user.status,
+      roles,
+    };
+    // Remote first keeps access fail-closed: if the downstream projection cannot
+    // be applied, ai-call does not report a role/status update as successful.
+    await this.knowledgeIdentitySync.sync(nextIdentity);
 
     const data: {
       name?: string;
@@ -104,8 +140,29 @@ export class SystemService {
     await this.prisma.user.update({ where: { id }, data });
   }
 
+  /** Explicit rollout/backfill action for users that existed before CALL-13. */
+  async syncAllKnowledgeUsers(): Promise<{ synced: number }> {
+    const users = await this.prisma.user.findMany({
+      include: { roles: { include: { role: { select: { name: true } } } } },
+      orderBy: { createdAt: 'asc' },
+    });
+    for (const user of users) {
+      await this.knowledgeIdentitySync.sync({
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        status: user.status,
+        roles: user.roles.map((entry) => entry.role.name),
+      });
+    }
+    return { synced: users.length };
+  }
+
   async resetPassword(id: string, password: string) {
-    const user = await this.prisma.user.findUnique({ where: { id } });
+    const user = await this.prisma.user.findUnique({
+      where: { id },
+      include: { roles: { include: { role: { select: { name: true } } } } },
+    });
     if (!user) throw new NotFoundException('User not found');
     const passwordHash = await hash(password, 10);
     await this.prisma.user.update({
@@ -116,11 +173,15 @@ export class SystemService {
   }
 
   async deleteUser(id: string) {
-    const user = await this.prisma.user.findUnique({ where: { id } });
+    const user = await this.prisma.user.findUnique({
+      where: { id },
+      include: { roles: { include: { role: { select: { name: true } } } } },
+    });
     if (!user) throw new NotFoundException('User not found');
     if (user.email === 'admin@ai-call.local') {
       throw new BadRequestException('Cannot delete the default admin account');
     }
+    await this.knowledgeIdentitySync.remove(id, user.roles.map((entry) => entry.role.name));
     await this.prisma.user.delete({ where: { id } });
   }
 
@@ -247,5 +308,18 @@ export class SystemService {
 
   async listAllPermissionCodes(): Promise<PermissionCode[]> {
     return ALL_PERMISSIONS;
+  }
+
+  private async resolveRoleNames(roleIds: string[] | undefined): Promise<string[]> {
+    if (!roleIds?.length) return [];
+    const uniqueIds = [...new Set(roleIds)];
+    const roles = await this.prisma.role.findMany({
+      where: { id: { in: uniqueIds } },
+      select: { id: true, name: true },
+    });
+    if (roles.length !== uniqueIds.length) {
+      throw new BadRequestException('One or more roles do not exist');
+    }
+    return roles.map((role) => role.name);
   }
 }

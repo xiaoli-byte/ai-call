@@ -17,7 +17,7 @@ import { AnalyticsModule } from './analytics/analytics.module.js';
 import { QualityModule } from './quality/quality.module.js';
 import { ComplianceModule } from './compliance/compliance.module.js';
 import { TenantsModule } from './tenants/tenants.module.js';
-import { JWT_SECRET } from './auth/auth.config.js';
+import { JWT_SECRET, accessTokenVerifyKeys } from './auth/auth.config.js';
 import { getRolePermissionMap } from './auth/role-permission-map.store.js';
 import { MetricsModule } from './metrics/metrics.module.js';
 import { HealthModule } from './health/health.module.js';
@@ -26,20 +26,23 @@ import { HandoffsModule } from './handoffs/handoffs.module.js';
 import { ScenarioTestsModule } from './scenario-tests/scenario-tests.module.js';
 import { PlatformModule } from './platform/platform.module.js';
 
+const authzOptions = {
+  accessSecret: JWT_SECRET,
+  accessTokenVerifyKeys: accessTokenVerifyKeys(),
+  cookies: {
+    refreshCookiePath: '/api/auth/refresh',
+    secureOverride:
+      process.env.COOKIE_SECURE != null
+        ? process.env.COOKIE_SECURE === 'true'
+        : undefined,
+  },
+  rolePermissionMap: getRolePermissionMap,
+};
+
 @Module({
   imports: [
     ClsModule.forRoot({ global: true, middleware: { mount: true } }),
-    AuthzModule.forRoot({
-      accessSecret: JWT_SECRET,
-      cookies: {
-        refreshCookiePath: '/api/auth/refresh',
-        secureOverride:
-          process.env.COOKIE_SECURE != null
-            ? process.env.COOKIE_SECURE === 'true'
-            : undefined,
-      },
-      rolePermissionMap: getRolePermissionMap,
-    }),
+    AuthzModule.forRoot(authzOptions),
     PrismaModule,
     AuthModule,
     LlmModule,

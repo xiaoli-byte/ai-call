@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   flows: [] as any[],
   clones: [] as any[],
   scenarios: [] as any[],
+  knowledgeBases: [] as any[],
   create: vi.fn(),
   update: vi.fn(),
   deactivate: vi.fn(),
@@ -35,6 +36,10 @@ vi.mock('@/hooks/use-scenarios', () => ({
 
 vi.mock('@/hooks/use-task-flows', () => ({
   useTaskFlows: () => ({ data: mocks.flows }),
+}));
+
+vi.mock('@/hooks/use-knowledge', () => ({
+  useKnowledgeBases: () => ({ data: mocks.knowledgeBases, error: undefined, isLoading: false }),
 }));
 
 vi.mock('@/hooks/use-voice-clones', () => ({
@@ -105,6 +110,7 @@ function scenarioItem(overrides: Record<string, unknown> = {}) {
     systemPrompt: '',
     greeting: '',
     knowledgeBaseId: '',
+    knowledgeBaseIds: [],
     allowedTools: [],
     escalationRules: [],
     createdAt: '2026-07-12T00:00:00.000Z',
@@ -123,6 +129,7 @@ beforeEach(() => {
   mocks.flows = [];
   mocks.clones = [];
   mocks.scenarios = [];
+  mocks.knowledgeBases = [];
   // “新建场景”“保存”等写操作按钮受 scenario:update 权限门控，测试用户需具备该权限码
   useAuthStore.getState().setUser({
     id: 'user-1',
@@ -141,6 +148,7 @@ beforeEach(() => {
     systemPrompt: '',
     greeting: '',
     knowledgeBaseId: '',
+    knowledgeBaseIds: [],
     allowedTools: [],
     escalationRules: [],
   });
@@ -180,6 +188,23 @@ describe('/scenarios 创建页', () => {
     fireEvent.click(friendly);
     expect(friendly.getAttribute('aria-pressed')).toBe('false');
     expect(professional.getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('可多选知识库，并在保存时提交所有关联', async () => {
+    mocks.knowledgeBases = [
+      { id: 'kb-orders', name: '订单知识库', docCount: 3 },
+      { id: 'kb-products', name: '产品知识库', docCount: 8 },
+    ];
+    openCreate();
+    fireEvent.change(screen.getByPlaceholderText('请输入场景名称'), {
+      target: { value: '多库场景' },
+    });
+    fireEvent.click(screen.getByLabelText('选择知识库 订单知识库'));
+    fireEvent.click(screen.getByLabelText('选择知识库 产品知识库'));
+    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+
+    await waitFor(() => expect(mocks.create).toHaveBeenCalledTimes(1));
+    expect(mocks.create.mock.calls[0][0].knowledgeBaseIds).toEqual(['kb-orders', 'kb-products']);
   });
 
   it('统一音色下拉只包含内置音色与已入库克隆音色', () => {

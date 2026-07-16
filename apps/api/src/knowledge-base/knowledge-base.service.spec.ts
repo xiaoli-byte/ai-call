@@ -74,6 +74,37 @@ describe('KnowledgeBaseService', () => {
     assert.equal(results[0].source, '延期政策.pdf');
   });
 
+  it('combines and globally ranks results from multiple knowledge bases', async () => {
+    delete process.env.KNOWLEDGE_SERVICE_BASE_URL;
+    const service = new KnowledgeBaseService();
+
+    const results = await service.retrieveMany(['kb-collection', 'kb-ecommerce'], '延期 商品', 2);
+
+    assert.equal(results.length, 2);
+    assert.equal((results[0]?.score ?? 0) >= (results[1]?.score ?? 0), true);
+  });
+
+  it('uses ai-knowledge folders as selectable knowledge bases in external mode', async () => {
+    process.env.KNOWLEDGE_SERVICE_BASE_URL = 'http://127.0.0.1:3010/api';
+    const calls: string[] = [];
+    globalThis.fetch = async (url) => {
+      calls.push(String(url));
+      return Response.json([
+        { id: 'folder-1', name: '订单资料' },
+        { id: 'folder-2', name: '商品资料' },
+      ]);
+    };
+    const service = new KnowledgeBaseService(undefined, fakeCls({ tenantId: 'tenant-a' }) as any);
+
+    const knowledgeBases = await service.list();
+
+    assert.deepEqual(calls, ['http://127.0.0.1:3010/api/folders/selectable']);
+    assert.deepEqual(knowledgeBases, [
+      { id: 'folder-1', name: '订单资料', docCount: 0 },
+      { id: 'folder-2', name: '商品资料', docCount: 0 },
+    ]);
+  });
+
   it('proxies retrieve requests to the external knowledge service', async () => {
     process.env.KNOWLEDGE_SERVICE_BASE_URL = 'http://127.0.0.1:3010/api/';
     process.env.KNOWLEDGE_SERVICE_API_TOKEN = 'service-token';
@@ -112,8 +143,8 @@ describe('KnowledgeBaseService', () => {
     assert.equal(headers.get('x-service-token'), 'service-token');
     assert.equal(headers.get('x-tenant-id'), 'tenant-a');
     assert.equal(headers.get('x-user-id'), 'user-a');
-    assert.equal(headers.get('x-user-roles'), 'operator,viewer');
-    assert.equal(headers.get('x-user-role'), 'operator');
+    assert.equal(headers.get('x-user-roles'), 'editor');
+    assert.equal(headers.get('x-user-role'), 'editor');
   });
 
   it('accepts array responses from external retrieve endpoints', async () => {
@@ -170,7 +201,7 @@ describe('KnowledgeBaseService', () => {
     const headers = new Headers(calls[0].init?.headers);
     assert.equal(headers.get('x-tenant-id'), 'tenant-from-header');
     assert.equal(headers.get('x-user-id'), 'user-from-header');
-    assert.equal(headers.get('x-user-roles'), 'operator');
+    assert.equal(headers.get('x-user-roles'), 'editor');
   });
 
   it('falls back to a service-account userId when the task has no owner (CALL-10 #2)', async () => {

@@ -145,8 +145,10 @@ export interface ScenarioConfig {
   systemPrompt: string;
   /** Agent 问候语（通话接通后第一句话） */
   greeting: string;
-  /** 知识库 ID（关联向量库 collection） */
+  /** 主知识库 ID（兼容旧调用；始终等于 knowledgeBaseIds 的第一项） */
   knowledgeBaseId: string;
+  /** 场景关联的知识库 ID 列表；运行时会在这些库中联合检索。 */
+  knowledgeBaseIds: string[];
   /** 该场景下可调用的 Function 工具白名单 */
   allowedTools: string[];
   /** 转人工阈值（达到这些条件时转人工） */
@@ -183,6 +185,9 @@ export interface CreateScenarioDto {
   llmConstraints?: string[];
   systemPrompt?: string;
   greeting?: string;
+  /** 场景关联的知识库；未传时兼容使用 knowledgeBaseId。 */
+  knowledgeBaseIds?: string[];
+  /** @deprecated 请改用 knowledgeBaseIds。 */
   knowledgeBaseId?: string;
   allowedTools?: string[];
   escalationRules?: EscalationRule[];
@@ -228,6 +233,7 @@ export const SCENARIO_CONFIGS: Record<Scenario, ScenarioConfig> = {
 - 全程不评论客户信用状况`,
     greeting: '您好，我是{company}的还款提醒助理，关于您{product}的还款事项想跟您确认一下，现在方便吗？',
     knowledgeBaseId: 'kb-collection',
+    knowledgeBaseIds: ['kb-collection'],
     allowedTools: [
       'query_repayment_info',
       'calculate_penalty',
@@ -274,6 +280,7 @@ export const SCENARIO_CONFIGS: Record<Scenario, ScenarioConfig> = {
 - 不评价竞品`,
     greeting: '您好，我是{company}的售后助理，关于您订单{orderNo}的售后事项想跟您确认，现在方便吗？',
     knowledgeBaseId: 'kb-ecommerce',
+    knowledgeBaseIds: ['kb-ecommerce'],
     allowedTools: [
       'query_order',
       'query_refund_status',
@@ -321,6 +328,7 @@ export const SCENARIO_CONFIGS: Record<Scenario, ScenarioConfig> = {
 - 不承诺试驾一定有现车`,
     greeting: '您好，我是{company}的邀约助理，最近我们有{activity}活动，想邀请您到店体验，现在方便聊两句吗？',
     knowledgeBaseId: 'kb-presale',
+    knowledgeBaseIds: ['kb-presale'],
     allowedTools: [
       'query_car_model',
       'query_activity',

@@ -188,4 +188,4 @@ voice-agent 单进程多路通话未压测;做一次 5-10 路并发 smoke,确认
 - **全局配置临时放宽**(为首页外呼验收改的,须还原,已列入 D1):外呼时间窗改回 `09:00-18:00 仅工作日`(现全天)、单被叫日呼上限改回 `3`(现 99)。
 - **dev 拨号串权宜**(已列入 D3):`.env` 的 `FREESWITCH_DIAL_STRING` 硬编码主机 LAN IP 直投 MicroSIP,生产必须换 SIP trunk。
 - 意图 embedding 层现已在 dev 启用(`INTENT_EMBED_PROVIDER=funasr`,阈值 0.72/0.05 实测合适);电商回访模板 v8 两个判断节点已配例句。
-- 另有 ai-call↔ai-knowledge 统一权限 backlog(CALL-08 暂缓、CALL-12 配置对齐),见 `docs/authz-implementation-backlog.md`。
+- 另有 ai-call↔ai-knowledge 统一权限 backlog：CALL-12 多库能力已完成、待逐场景真服务验证；CALL-13 生命周期同步已完成、待生产回填；KB-10 待 RS256 密钥切换；KB-03 与 CALL-08 暂缓，见 `docs/authz-implementation-backlog.md`。

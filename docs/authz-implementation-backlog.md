@@ -26,15 +26,15 @@
 | AUTHZ-06 | P0 | kb | prisma：统一模型片段 + seed 工具 | 02 | 低 |
 | AUTHZ-07 | P0→P2 | both | 跨仓分发（GitHub Packages / subtree）**需先确认方式** | 01–06 | 中 |
 | KB-01 | P1 | kb | 引入 `Tenant` 实体 ✅已完成/关单（schema 已有 Tenant + JIT 租户准入校验，2026-07-16 复核） | AUTHZ-06 | [高风险] |
-| KB-02 | P1 | kb | `User.role` → `Membership.roles[]` | KB-01 | [高风险] |
-| KB-03 | P1 | kb | RBAC 硬编码 → 落库 🟡部分完成（词表/映射/层级已收敛进 `@xiaoli-byte/authz@0.2.0`，权限矩阵落库推迟） | KB-02,AUTHZ-06 | 中 |
+| KB-02 | P1 | kb | `User.role` → `Membership.roles[]` ✅已完成（2026-07-17，Membership 优先读写 + User.role 过渡双读双写） | KB-01 | [高风险] |
+| KB-03 | P1 | kb | RBAC 硬编码 → 落库 🟡部分完成（词表/映射/层级已收敛进 `@xiaoli-byte/authz@0.3.0`，权限矩阵落库推迟） | KB-02,AUTHZ-06 | 中 |
 | KB-04 | P1 | kb | 接入全局 Guard ✅已完成（2026-07-16，默认拒绝反转） | KB-03,AUTHZ-04 | 中 |
 | KB-05 | P1 | kb | 修 `permissions.controller` 半成品 ✅已完成（2026-07-16） | KB-04 | 低 |
-| KB-06 | P1 | kb | refresh token 全量哈希 | AUTHZ-03 | 低 |
-| KB-07 | P1 | kb | 前端 token localStorage → cookie | KB-06 | 中 |
+| KB-06 | P1 | kb | refresh token 全量哈希 ✅已完成（2026-07-17，不透明 token + bcrypt 全量哈希 + 单次轮换） | AUTHZ-03 | 低 |
+| KB-07 | P1 | kb | 前端 token localStorage → cookie ✅已完成（2026-07-17，httpOnly cookie + middleware） | KB-06 | 中 |
 | KB-08 | P1 | kb | 检索接口强制 tenantId 过滤 + service guard | KB-04,AUTHZ-05 | [高风险] |
 | KB-09 | P1 | kb | 路由权限覆盖 CI 闸门（新增工单）✅已完成（2026-07-16） | KB-04 | 低 |
-| KB-10 | P1→P2 | both | 跨系统非对称签名 RS256/EdDSA 替代共享 HS256（新增工单，原 CALL-13(b) 提级）🔴未开始，高优先 | CALL-13(b) | [高风险] |
+| KB-10 | P1→P2 | both | 跨系统 RS256 替代共享 HS256 🟡源码、0.3.0 依赖与测试已完成；待生产密钥部署及旧 token 过期后切换 | CALL-13(b) | [高风险] |
 | CALL-01 | P2 | call | 引入 `@xiaoli-byte/authz`，替换本地 auth ✅已完成 | AUTHZ-07 | 中 |
 | CALL-02 | P2 | call | 核心业务表补 `tenantId` ✅已完成 | CALL-01,KB-01 | [高风险] |
 | CALL-03 | P2 | call | CLS 租户注入 + 查询强制过滤 ✅已完成 | CALL-02 | [高风险] |
@@ -46,8 +46,8 @@
 | CALL-09 | P2 | call | Campaign 复用 ResourceGrant ACL ✅已完成 | CALL-05 | 中 |
 | CALL-10 | P2 | call | CALL-06 跨仓真隔离联调实测 ✅真环境通过（14/14，修 retrieve 401 bug） | CALL-06,KB-08 | [高风险] |
 | CALL-11 | P2 | call | CALL-05 迁移真库演练(migrate deploy) ✅演练通过（17迁移+结构/回填+seed幂等） | CALL-05 | [高风险] |
-| CALL-12 | P2 | both | 激活按库过滤：kb id ↔ folder id 对齐/映射 🟢方案定：配置对齐（无需代码，运营激活） | CALL-10 | 中 |
-| CALL-13 | P3 | both | 身份联合：ai-call 用户在 ai-knowledge 开通/映射真实账号 🟡JIT 开通(a)已落地并加固(租户准入/负缓存/会话生命周期,2026-07-10)；剩(b)非对称签名/角色映射/生命周期同步/email 冲突/独立 IdP | CALL-12,§9 | [高风险] |
+| CALL-12 | P2 | both | 激活按库过滤：场景可多选真实 folder id，联合检索 🟡功能已落地，待运营逐场景配置与真服务验证 | CALL-10 | 中 |
+| CALL-13 | P3 | both | 身份联合：ai-call 用户在 ai-knowledge 开通/映射真实账号 🟡JIT、角色映射、生命周期同步与 email 冲突保护已落地（2026-07-17）；剩 KB-10 生产切换与独立 IdP | CALL-12,§9 | [高风险] |
 
 **关键路径**：AUTHZ-01→02→(03/04/05/06) → KB-01→02→03→04 →(05/08) → CALL-01→02→03→06 →（上线前）CALL-10/11。
 **可并行**：AUTHZ-03/04/05/06 在 02 后可并行；KB-06/07 与 KB-03/04 可并行；CALL-04/07 与 CALL-02/03 可并行；CALL-08/09（范围决策项）与 CALL-10/11（上线阻塞项）互不依赖，可并行。
@@ -149,12 +149,13 @@
 - **验收**：`prisma migrate` 通过；库中存在 tenant_demo；现有登录/查询不受影响。
 
 ### KB-02 · `User.role` → `Membership.roles[]` **[高风险·迁移]**
+- **状态**：✅ 已完成（2026-07-17）——已有 `0009_membership_entity` migration 完成幂等回填；应用层现以 Membership 为优先真相源，`User.role` 保留为过渡期回退读与双写字段。用户创建、用户管理和角色管理均原子创建/更新 Membership；现有单角色管理界面将值写为 `roles:[role]`，为后续多角色界面保留模型能力。
 - **依赖**：KB-01
 - **步骤**：加 `Membership` model；迁移回填（每个 User 按现 `role` 生成一条 `Membership{userId,tenantId,roles:[role]}`）；`User.role` 暂保留并标注 deprecated。
 - **验收**：迁移后每 user 有对应 membership；旧接口仍可读到角色（过渡期双读）。
 
 ### KB-03 · RBAC 硬编码 → 落库
-- **状态**：🟡 部分完成（2026-07-16）——**词表/映射/层级部分**已收敛进 `@xiaoli-byte/authz@0.2.0` 的 `core/roles.ts`（`CANONICAL_ROLES`/`KB_ROLES`/`ROLE_RANK`/`TO_KB_ROLE`/`resolveKbRole`，带单测），ai-knowledge 侧已删除本地副本（`jwt.strategy` 的映射表、`permissions.types` 的层级数值改从包内取）。**权限矩阵落库部分**（下方步骤描述的 `Role`/`Permission`/`RolePermission` + seed）经用户决策**推迟**，触发条件：出现「租户自定义角色」需求时再启动。
+- **状态**：🟡 部分完成（2026-07-17）——**词表/映射/层级部分**已收敛进 `@xiaoli-byte/authz@0.3.0` 的 `core/roles.ts`（`CANONICAL_ROLES`/`KB_ROLES`/`ROLE_RANK`/`TO_KB_ROLE`/`resolveKbRole`，带单测），ai-knowledge 侧已删除本地副本（`jwt.strategy` 的映射表、`permissions.types` 的层级数值改从包内取）。**权限矩阵落库部分**（下方步骤描述的 `Role`/`Permission`/`RolePermission` + seed）经用户决策**推迟**，触发条件：出现「租户自定义角色」需求时再启动。
 - **依赖**：KB-02, AUTHZ-06
 - **步骤**：把 `common/permissions/permissions.types.ts` 的 `ROLE_PERMISSIONS` 作为常量真相源，用 AUTHZ-06 的 seed 工具落库到 `Role`/`Permission`/`RolePermission`；权限码统一为 `kb:{module}:{action}`。
 - **验收**：seed 后库含全部 `kb:*` 权限码与 4 角色映射；`can()` 从库读映射判定与旧硬编码一致（对拍测试）。
@@ -166,17 +167,19 @@
 - **验收**：全部受保护路由行为不变；现有 e2e/单测通过。
 
 ### KB-05 · 修 `permissions.controller` 半成品
-- **状态**：✅ 已完成（2026-07-16）——`getMyPermissions`（接真实 CLS claims，弃 `"current"` 死值）、角色列表（接真实数据）、`updateUserRole`（真落库 + 角色层级校验）三处桩已全部接线。**重大发现**：`PermissionsModule` 此前从未在 `@Module` 声明 `controllers`，`RolesManagementService` 也从未被 `provide`——`/api/permissions/*` 这一组路由**历史上从未真正挂载过**（请求直接 404，比「半成品」更严重）。本次一并补上模块注册并接线，已实测返回 200。
+- **状态**：✅ 已完成（2026-07-16；2026-07-17 与 KB-02 对齐）——`getMyPermissions`（接真实 CLS claims，弃 `"current"` 死值）、角色列表（接真实数据）、`updateUserRole`（真落库 + 角色层级校验）三处桩已全部接线。角色持久化已切至 Membership 优先，`User.role` 同步保留为过渡字段。**重大发现**：`PermissionsModule` 此前从未在 `@Module` 声明 `controllers`，`RolesManagementService` 也从未被 `provide`——`/api/permissions/*` 这一组路由**历史上从未真正挂载过**（请求直接 404，比「半成品」更严重）。本次一并补上模块注册并接线，已实测返回 200。
 - **依赖**：KB-04
-- **步骤**：`getMyPermissions` 用真实 CLS claims（弃 `"current"` 死值）；`updateUserRole` 真正落库（改 Membership）；`getUsersWithRoles` 读真实 role。
+- **步骤**：`getMyPermissions` 用真实 CLS claims（弃 `"current"` 死值）；`updateUserRole` 真正落库（Membership 优先 + `User.role` 过渡双写）；`getUsersWithRoles` 读真实 role。
 - **验收**：三接口返回真实数据 + 单测覆盖。
 
 ### KB-06 · refresh token 全量哈希
+- **状态**：✅ 已完成（2026-07-17）——刷新凭证改为不透明的「`RefreshToken.id` + 随机秘密」；完整值以 bcrypt 哈希存储。刷新会先校验记录状态、过期时间和完整哈希，再通过条件更新原子撤销旧记录并签发新 access/refresh 会话，避免并发重放。
 - **依赖**：AUTHZ-03
 - **步骤**：用 `@xiaoli-byte/authz` jwt 的 refresh 实现替换「仅存尾部 32 字符」；`RefreshToken` 表存全量哈希。
 - **验收**：刷新往返 + 旋转测试；旧 refresh 失效。
 
 ### KB-07 · 前端 token localStorage → cookie
+- **状态**：✅ 已完成（2026-07-17）——登录/刷新由 API 写入 `access_token` 与路径受限的 `refresh_token` httpOnly Cookie（`SameSite=Lax`）；前端不再保存 token，401 时仅调用 cookie refresh 并重试；Next middleware 读取 access cookie 拦截受保护页。示例 `JWT_ACCESS_TTL` 已收紧为 15m，部署环境需同步设置。
 - **依赖**：KB-06
 - **步骤**：`apps/web` `lib/api/client.ts` 改用 httpOnly cookie（`credentials:'include'`）；`middleware.ts` 改为读 cookie 做服务端拦截重定向；access TTL 从 7d 收短（如 15m–1h）。
 - **验收**：登录后 cookie 下发；未登录访问受保护页被 middleware 重定向。
@@ -193,12 +196,11 @@
 - **依赖**：KB-04
 - **验收**：`npx vitest run apps/api/src/common/authz-route-coverage.spec.ts` 通过；有意添加一条未标注权限的路由会使测试失败（已实测）。
 
-### KB-10 · 跨系统非对称签名 RS256/EdDSA 替代共享 HS256 **（新增工单，原 CALL-13(b) 提级）[高风险]**
-- **状态**：🔴 未开始，高优先（2026-07-16 新增，从 P3 · CALL-13(b) 提级为独立工单跟踪）。原文见下方 CALL-13「剩余范围未排期」的 (b) 小节，因其属于安全信任模型收紧（当前任一侧持共享密钥即可伪造对方 token），优先级不应继续埋没在「P3 可选」列表里，故拆出单独编号便于跟踪与排期。
+### KB-10 · 跨系统 RS256 替代共享 HS256 **（新增工单，原 CALL-13(b) 提级）[高风险]**
+- **状态**：🟡 源码、配置与单测已完成（2026-07-17）；`@xiaoli-byte/authz@0.3.0` 已发布，ai-call 已升级依赖与 lockfile。共享包为 access token 增加 `HS256 | RS256` 显式算法、私钥签发/公钥验签和 `kid`；ai-call 只读取自己的私钥，ai-knowledge 通过 `kid` 区分本地公钥与 ai-call 联邦公钥。剩余为生产密钥部署、低峰切换与旧 HS256 access token 过期窗口。
 - **仓库**：both（包源码在 ai-knowledge `packages/authz`，切换算法需 ai-call 协调升级 + 发布窗口）
 - **依赖**：CALL-13(a)（JIT 开通基线已落地）
-- **背景**：`packages/authz` 当前硬编码 HS256 共享 secret——ai-knowledge 持有同一把钥匙也能**签发**合法的 ai-call token，任一侧泄露即两侧全失守；应升级为非对称签名，使「签发方」与「校验方」权限单向化。
-- **步骤**：① `packages/authz` 的 `signAccessToken`/`verifyAccessToken` 增加算法与公私钥参数（向后兼容，缺省仍 HS256）；② 发新版并让 ai-call 升级依赖；③ ai-call 换 RS256/EdDSA 私钥签发、ai-knowledge `jwt.strategy` 改公钥验签；④ 切换窗口内旧 token 全体失效，需选低峰期并同步分发密钥。属协调式迁移（改包 + 发版 + 双端同步 + token 作废），不适合单仓顺手做，须单独排期。
+- **剩余步骤**：① 生成并部署两侧各自的 RS256 密钥；② ai-call 配 `JWT_ACCESS_ALGORITHM=RS256`、自身私钥/公钥和 `JWT_ACCESS_KEY_ID=ai-call-v1`；③ ai-knowledge 配自身密钥，并仅配置 ai-call 公钥为 `FEDERATED_JWT_ACCESS_PUBLIC_KEY`、`FEDERATED_JWT_ACCESS_KEY_ID=ai-call-v1`；④ 低峰重启双方，等待旧 HS256 access token 自然过期并完成验收。不得把 ai-call 私钥部署到 ai-knowledge。
 - **验收**：ai-call 用私钥签发的 token 能被 ai-knowledge 用公钥正确验签；ai-knowledge 无法伪造合法的 ai-call token；切换窗口内旧 HS256 token 按计划失效，无跨仓联调回归。
 
 ### CALL-06 · 接 ai-knowledge 检索带租户身份 **[高风险·联调]**
@@ -237,7 +239,7 @@
 ### CALL-10 · CALL-06 跨仓真隔离联调实测 **[高风险·联调·上线阻塞]**
 - **状态**：✅ **已完成·真环境验证通过**（2026-07-10，本地 ai-call:3001 + ai-knowledge:9999）。`scripts/call-10-cross-tenant-retrieval.mjs` **14/14 必过断言通过**：直连 ai-knowledge 与经 ai-call 代理两条路径下，租户 A 检索共享词只得 A 文档、B 只得 B 文档、命中文档 id 不相交；缺 X-Tenant-Id / X-User-Id → 401；ai-call 缺 X-Service-Token → 401。
   - 🔴 **联调中抓到并修复真 bug**：ai-knowledge `/search/retrieve` 原在 `SearchController`（类级 `AuthGuard('jwt')`），无 JWT 的服务调用被挡成 401 → CALL-06 运行时**实际一直不通**（单测 mock 未覆盖）。已拆到独立 `SearchRetrieveController`（ai-knowledge commit `832daae`）。
-  - 说明：本地 ai-knowledge 未配 `SERVICE_API_TOKEN`（dev fail-open），故「缺/错 service token → 401」两条断言在本轮 **skip**；生产两边配 `SERVICE_API_TOKEN` 后应转为通过。`knowledgeBaseId` 作用域探针需两个真实 folder id（CALL-12 配置对齐后验），本轮 skip。
+  - 说明：本地 ai-knowledge 未配 `SERVICE_API_TOKEN`（dev fail-open），故「缺/错 service token → 401」两条断言在本轮 **skip**；生产两边配 `SERVICE_API_TOKEN` 后应转为通过。按库作用域探针仍需两个真实 folder id；CALL-12 的多知识库关联能力已完成，剩余是在每个生产场景填入真实 folder id 并完成实测。
 - **依赖**：CALL-06, KB-08（需 ai-knowledge 实例可连）
 - **步骤**：1) 起 ai-knowledge，配 ai-call 的 `KNOWLEDGE_SERVICE_BASE_URL` + `KNOWLEDGE_SERVICE_API_TOKEN` + `SERVICE_API_TOKEN`；2) 造租户 A/B 各自文档；3) 用 A 的任务上下文发起通话检索。
 - **验收**：租户 A 通话检索**不返回** B 文档；错误/缺失 service token → 被拒。（`knowledgeBaseId` 按库过滤见 CALL-12。）
@@ -248,11 +250,12 @@
 - **步骤**：在一次性可弃的库上 `prisma migrate deploy` 演练全部 P2 迁移（tenantId 三步、`ownerId`、`ResourceGrant`），核对回填结果与索引；产出可复现的演练记录（参照 `docs/testing/operations-loop-regression.md`）。
 - **验收**：迁移在干净库上顺序执行无误；现有数据回填正确（tenantId=`tenant_demo`、历史任务 `ownerId=null` 按公开语义）；seed 幂等。脚本断言覆盖结构/默认/索引/无 NULL 残留/迁移状态/seed 幂等；真实旧数据回填见手册「分批 deploy」可选演练。
 
-### CALL-12 · 激活按库过滤：kb id ↔ folder id 对齐/映射 **[中]**
-- **状态**：🟢 **方案已定：配置对齐（无需代码，运营激活）**（决策 2026-07-10）。CALL-10 一轮里已在 ai-knowledge 实现 `knowledgeBaseId → folder` 按库过滤（优雅兜底：id 不对应真实 folder 则退回租户级）。**决策取方案 (a) 配置对齐**：把 ai-call scenario 的 `knowledgeBaseId`（voice-agent 的 `scenario.knowledge_base_id` / ai-call OutboundScenario 配置）直接填成 ai-knowledge 中目标 folder 的真实 id。零代码，纯配置即激活。
+### CALL-12 · 激活按库过滤：场景关联真实 folder id **[中]**
+- **状态**：🟡 **多库配置能力已落地（2026-07-17）**。ai-call 场景编辑页可从知识库列表勾选多个库；`OutboundScenario.knowledge_base_ids` 持久化关联，迁移会将历史 `knowledge_base_id` 回填为单元素数组。运行时分别以每个真实 folder id 调 ai-knowledge 检索，合并后按分数取全局 TopK。旧 `knowledgeBaseId` 保留为数组首项，兼容旧调用与已配置场景。
+- **2026-07-17 配置实况**：`tenant_demo` 的“电商售后”场景已由旧值 `kb-ecommerce` 对齐为“大家电知识库”真实 folder id `1836690c-73d0-4371-bbf5-1d804e724dd5`，并核验该目录含 1 份联调文档。`collection` 与 `presale` 仍是没有对应 folder 的旧值，不能猜测映射；在创建并填充各自业务目录前不得将其视作已激活，否则会触发租户级兜底。
 - **依赖**：CALL-10（隔离实测先通过，确认基线安全）
-- **激活步骤**：1) 在 ai-knowledge 确认/建立目标知识库对应的 folder，取其 id；2) 把该 folder id 配到 ai-call 对应 scenario 的 `knowledgeBaseId`；3) 用 `scripts/call-10-cross-tenant-retrieval.mjs` 设两个真实 folder id 验证。（若将来出现「一个 KB 跨多 folder / 一个 folder 属多 KB」的需求，再升级到方案 (c) 独立 `KnowledgeBase` 实体。）
-- **验收**：`scripts/call-10-cross-tenant-retrieval.mjs` 的场景 4（`KB_ID`/`KB_ID_OTHER` 设为两个真实且文档不同的 folder id）断言 `4.1` 由 WARN 变为通过——不同 kb id 返回不同结果集，按库过滤真正生效。
+- **激活步骤**：1) 在 ai-knowledge 确认/建立目标知识库对应的 folder；2) 在 ai-call 的“场景管理 → 关联知识库”勾选一个或多个目标库并保存；3) 用 `scripts/call-10-cross-tenant-retrieval.mjs` 设两个真实 folder id 验证单库隔离，再用场景测试确认多库命中被合并。（页面列表受当前用户权限限制；不可见的既有关联会保留，避免误保存丢失。）
+- **验收**：`scripts/call-10-cross-tenant-retrieval.mjs` 的场景 4（`KB_ID`/`KB_ID_OTHER` 设为两个真实且文档不同的 folder id）断言 `4.1` 由 WARN 变为通过；关联多个库的场景测试可命中任一已选库，最终结果按全局相关度截断。
 
 ---
 
@@ -261,17 +264,19 @@
 - 签发收敛为独立 identity 服务 / 真 OIDC SSO（Logto/Keycloak/SuperTokens）；两系统改 OIDC client；`@xiaoli-byte/authz` 校验接口不变。详见 `authz-architecture.md` §9。
 
 ### CALL-13 · 身份联合：ai-call 用户在 ai-knowledge 开通/映射真实账号 **[P3·高风险]**
-- **状态**：🟡 **方案 (a) JIT 开通轻量版已落地**（2026-07-10，ai-knowledge commit `0e38ab7`）——`jwt.strategy.validate` 首次见到合法陌生 `userId` 时按 token claim 幂等补建 user 行，修复了上传等写操作的 `owner_id` 外键报错。已实测：ai-call **admin** 与 **非 admin（editor）** 上传文档均正确归其所有（`owner_id` = 上传者、PRIVATE 可见）。
+- **状态**：🟡 **方案 (a) JIT + 生命周期同步已落地**（2026-07-17）——除首次 JIT 开通外，ai-call 管理端创建、改角色、停用与删除用户都会通过受 `ServiceAuthGuard` 保护的 ai-knowledge 内部端点投影账号状态；删除为软删除，保留文档 owner 与审计归属。
 - **2026-07-10 架构 review 加固**（同日落地，ai-knowledge + ai-call）：
   - **JIT 租户准入（fail closed）**：创建前校验 token `tenantId` 已存在于 `tenants` 表且 active + 可选 `FEDERATED_TENANT_ALLOWLIST` 白名单，不满足则拒绝开通并 401——堵住「任意 ai-call 租户被隐式入驻 + 悬空 tenant_id 数据」。
   - **JIT 失败负缓存**：失败（如 email 冲突）后 60s 内同 id 不重试不刷日志；并发首请求主键竞态按成功处理；畸形 cookie 值不再可能把提取器炸成 500。
   - **token 提取顺序**：Bearer 优先、cookie 回落（显式凭证 > 环境凭证，防同域下本地 Bearer 用户被残留 ai-call cookie 顶替身份）。
   - **zone 会话生命周期**：ai-knowledge「退出」在 cookie 会话下先调 ai-call `POST /api/auth/logout` 作废 cookie；cookie 过期 401 时清态并整页跳 ai-call `/login?redirect=…`（原为死路/跳错到本地登录页）；ai-call 登录页 `redirect` 参数防开放重定向 + `/knowledge` 前缀整页导航（跨 zone 软导航本就不通）。
   **剩余范围未排期**：
-  - **(b) 非对称签名（信任单向化）**：`packages/authz`（源码在 ai-knowledge 仓 `packages/authz`，经 GitHub Packages 发布）当前硬编码 HS256 共享 secret——ai-knowledge 持同一把钥匙也能**签发**合法 ai-call token，任一侧泄露即两侧全失守。升级步骤：① `packages/authz` 的 `signAccessToken/verifyAccessToken` 增加算法与公私钥参数（向后兼容，缺省仍 HS256）；② 发新版并让 ai-call 升级依赖；③ ai-call 换 RS256/EdDSA 私钥签发、ai-knowledge `jwt.strategy` 改公钥验签；④ 切换窗口内旧 token 全体失效，需选低峰期并同步分发密钥。属协调式迁移（改包+发版+双端同步+token 作废），不适合单仓顺手做，须单独排期。**2026-07-16 更新**：已提级为独立工单 **KB-10** 跟踪排期，本条保留作背景说明。
+  - **(b) 非对称签名（信任单向化）**：已由独立工单 **KB-10** 跟踪。`@xiaoli-byte/authz@0.3.0` 已发布并由 ai-call 安装；部署密钥后，ai-call 仅持私钥签发，ai-knowledge 只持其联邦公钥验签。切换窗口内旧 token 全体失效，需选低峰期并同步分发密钥。
   - **角色词表映射** ✅ **已完成（2026-07-16）**：~~（实测缺口）~~ ai-call 角色 `admin/operator/viewer` 与 ai-knowledge `super_admin/admin/editor/viewer` 此前只有 `admin`、`viewer` 名字对齐，`operator` 映射不到 `editor` 导致 ai-call operator/viewer 在知识库实为只读的问题已解决——方案为 `@xiaoli-byte/authz` 包内统一词表（`core/roles.ts`）+ 消费侧 `resolveKbRole()`。**未知联合角色策略**（用户拍板）：token 角色不在词表内 → 401 拒绝 + 日志告警（fail closed），不再静默降级为 viewer；DB 内历史遗留脏角色（如 `operator`）首次撞见时自愈为映射后的合法值。
-  - **用户生命周期同步**：JIT 只在首次建行（`update:{}`），之后 ai-call 改角色/停用/删除不联动 ai-knowledge 的开通行（实测：改 ai-call 角色后 ai-knowledge 行 role 仍为旧值；此处不影响鉴权因 RBAC 读 token 角色，但库内数据陈旧）。
-  - **email 冲突处理**；以及是否升级到独立 IdP（§9）。
+  - **用户生命周期同步** ✅ **已完成（2026-07-17）**：ai-call 调用 `PUT /api/federation/users/sync` 投影姓名、映射后的角色及 `active/inactive` 状态；删除调用 `DELETE /api/federation/users/:id` 软删除。两端均使用既有 service token、tenant headers 和 `ServiceAuthGuard`；ai-knowledge 在每次 JWT 校验读取账号状态，已停用/删除账号即使旧 access token 尚未过期也会被拒绝。
+    - **上线回填**：发布后由具备 `system:user:update` 的管理员执行一次 `POST /api/system/users/sync-knowledge`；接口幂等逐个投影 ai-call 当前全部用户，用于覆盖本次发布前已存在的角色/停用状态。遇到 409 email 冲突时停止并人工处理，不会自动合并账号。
+  - **email 冲突处理** ✅ **已完成（2026-07-17）**：不按 email 自动合并或接管本地账号；同租户同邮箱但不同 id 返回 409，ai-call 不会提交本次用户变更/创建（创建会回滚）。JIT 撞到此类冲突同样 fail closed。
+  - **独立 IdP（§9）**：仍为长期演进项，未纳入本次交付。
 - **背景**：知识库微前端（Multi-Zones）+ 无状态联合登录已落地（见 ai-call 仓 `docs/knowledge-base-microfrontend.md`）：ai-call 的 httpOnly cookie 经统一 JWT 密钥被 ai-knowledge 验签放行，一次登录即用。但两系统**用户表独立**，ai-call 用户的 `sub` 在 ai-knowledge 无对应记录——身份仅是 token claim 层面的「外来信任」：
   - ✅ 租户隔离、按角色访问正常（admin 租户内全见）。
   - ⚠️ **owner 归属功能对 ai-call 身份降级**：非 admin 的 ai-call 用户看不到 ai-knowledge 中按 `owner_id` 私有（`permission_scope=PRIVATE`）的文档，也无法「拥有」自己上传的文档；ResourceGrant 按 USER 主体授权时授不到这个外来 id。
@@ -286,13 +291,13 @@
 
 ---
 
-## 待 ai-call 侧同步的事项
+## 跨仓同步状态
 
-本次（2026-07-16）改造集中在 ai-knowledge 侧，以下几项涉及跨仓协作，尚未在 ai-call 落地，需后续同步：
+截至 2026-07-17：
 
-1. **publish `@xiaoli-byte/authz@0.2.0` 到 GitHub Packages**——ai-knowledge 侧包内代码（新增 `core/roles.ts`）与版本号已就绪，但发布本身是 AUTHZ-07 遗留的手工步骤，需要用户本人的 GitHub PAT，AI 助手无法代为完成。
-2. **ai-call 升级依赖并改用 `roles.ts` 统一词表**——待①发布后，ai-call 需升级 `@xiaoli-byte/authz` 依赖版本，把本地的角色映射逻辑切换为消费包内 `CANONICAL_ROLES`/`TO_KB_ROLE`/`resolveKbRole`，不得再自行复制一份角色词表。
-3. **本文件与 `authz-architecture.md` 的本次修订需镜像到 ai-call 仓库**——按文件头「两仓库各存一份，内容一致，改动需同步」的约定执行。
+1. **`@xiaoli-byte/authz@0.3.0` 已发布到 GitHub Packages，ai-call 已安装**（用户确认）。
+2. **ai-call 已升级依赖并消费 `roles.ts` 统一词表**：调用 ai-knowledge 时以 `resolveKbRole()` 规范化角色声明，`operator → editor`，未知角色 fail-closed。
+3. **本文件与 `authz-architecture.md` 已镜像到两仓库**；后续 KB-10 的非对称签名迁移必须再次同步修改包、依赖、配置和本文档。
 
 ---
 

@@ -1,5 +1,6 @@
 import {
   BadGatewayException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -14,6 +15,7 @@ import type {
 import { PrismaService } from '../prisma/prisma.service.js';
 import { toPrismaJson } from '../common/prisma-json.js';
 import { ClsService } from 'nestjs-cls';
+import { resolveKnowledgeRoleClaims } from '../auth/knowledge-role-claims.js';
 
 /**
  * 知识库 Service - RAG 检索增强生成。
@@ -133,11 +135,15 @@ export class KnowledgeBaseService implements OnModuleInit {
   /** 列出所有知识库 */
   async list() {
     if (this.externalBaseUrl) {
-      const data = await this.requestExternal<KnowledgeBaseSummary[] | { items?: KnowledgeBaseSummary[]; knowledgeBases?: KnowledgeBaseSummary[] }>(
-        '/knowledge-base',
-      );
-      if (Array.isArray(data)) return data;
-      return data.items ?? data.knowledgeBases ?? [];
+      // ai-knowledge 的可检索边界是 folder；不要继续代理 ai-call 自己才有的
+      // /knowledge-base 路由，否则外部模式下场景页无法选择真实知识库。
+      const folders = await this.requestExternal<ExternalFolder[]>('/folders/selectable');
+      return folders.map((folder) => ({
+        id: folder.id,
+        name: folder.name,
+        // folder 列表不携带文档统计，选择器只需稳定地展示可关联范围。
+        docCount: Number(folder.documentCount ?? 0),
+      }));
     }
 
     const builtin = Object.values(this.knowledgeBases).map(({ docs, ...rest }) => ({
@@ -268,6 +274,25 @@ export class KnowledgeBaseService implements OnModuleInit {
 
     // 无匹配返回空数组 - 不返回无关文档（反幻觉）
     return results;
+  }
+
+  /**
+   * 在多个已授权知识库中并行检索，再按全局相关度取前 topK 条。
+   * 单库检索保持不变，避免给下游知识服务引入新契约。
+   */
+  async retrieveMany(
+    knowledgeBaseIds: readonly string[],
+    query: string,
+    topK = 3,
+    identity?: KnowledgeRequestIdentity,
+  ) {
+    const ids = [...new Set(knowledgeBaseIds.map((id) => id.trim()).filter(Boolean))];
+    if (ids.length === 0) return [];
+    const hits = await Promise.all(ids.map((id) => this.retrieve(id, query, topK, identity)));
+    return hits
+      .flat()
+      .sort((a, b) => Number(b.score ?? 0) - Number(a.score ?? 0))
+      .slice(0, topK);
   }
 
   /**
@@ -426,6 +451,7 @@ export class KnowledgeBaseService implements OnModuleInit {
 
     // retrieve() 已把身份解析好并传入；list/get/upload 未传则此处从 CLS 解析（不重复解析）。
     const { tenantId, userId, roles } = identity ?? this.resolveIdentity();
+    const knowledgeRoles = resolveKnowledgeRoleClaims(roles);
 
     if (tenantId && !headers.has('x-tenant-id')) {
       headers.set('x-tenant-id', tenantId);
@@ -433,11 +459,11 @@ export class KnowledgeBaseService implements OnModuleInit {
     if (userId && !headers.has('x-user-id')) {
       headers.set('x-user-id', userId);
     }
-    if (roles.length > 0 && !headers.has('x-user-roles')) {
-      headers.set('x-user-roles', roles.join(','));
+    if (knowledgeRoles.length > 0 && !headers.has('x-user-roles')) {
+      headers.set('x-user-roles', knowledgeRoles.join(','));
     }
-    if (roles.length > 0 && !headers.has('x-user-role')) {
-      headers.set('x-user-role', roles[0]);
+    if (knowledgeRoles.length > 0 && !headers.has('x-user-role')) {
+      headers.set('x-user-role', knowledgeRoles[0]);
     }
 
     try {
@@ -460,7 +486,13 @@ export class KnowledgeBaseService implements OnModuleInit {
       if (response.status === 204) return undefined as T;
       return (await response.json()) as T;
     } catch (err) {
-      if (err instanceof NotFoundException || err instanceof BadGatewayException) throw err;
+      if (
+        err instanceof NotFoundException ||
+        err instanceof BadGatewayException ||
+        err instanceof ForbiddenException
+      ) {
+        throw err;
+      }
       throw new BadGatewayException(
         `Knowledge service request error: ${err instanceof Error ? err.message : String(err)}`,
       );
@@ -564,6 +596,12 @@ interface KnowledgeBaseSummary {
   id: string;
   name: string;
   docCount?: number;
+}
+
+interface ExternalFolder {
+  id: string;
+  name: string;
+  documentCount?: number;
 }
 
 interface KnowledgeBaseDetail {

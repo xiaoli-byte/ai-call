@@ -21,7 +21,7 @@ Let the "fast-worker" agent handle tasks like `git commit` and `read code`.
 
 AI outbound-call agent (外呼机器人). A pnpm + turbo monorepo mixing **TypeScript** (NestJS control plane + Next.js dashboard) and **Python** (real-time voice agent + FunASR STT server), wired to FreeSWITCH for telephony.
 
-> ⚠️ `README.md` is an aspirational PoC design doc and is partly stale. Trust the code and `docs/architecture-v2.md` over it. Notably: the voice agent is **Python at `services/voice-agent/`** (not TypeScript at `apps/voice-agent/`), there is **no `packages/providers`** package (AI provider abstraction now lives inside the Python voice agent and `packages/shared`), and the API is backed by **PostgreSQL + Prisma** with auth/RBAC and background workers — not the in-memory Maps the README describes.
+> `README.md` 已于 2026-07-16 按当前真实实现重写（三平面架构、快速开始、命令、部署要点），可信。历史上曾引用的 `docs/architecture-v2.md` 已不存在，勿引用。
 
 ## Workspace layout
 
@@ -32,7 +32,7 @@ AI outbound-call agent (外呼机器人). A pnpm + turbo monorepo mixing **TypeS
 - `services/funasr-server` — Python FunASR STT service (FastAPI). pytest.
 - `freeswitch/` — Docker + local FreeSWITCH configs (dialplan, mod_audio_fork, ESL).
 - `contracts/` — JSON Schemas shared across the TS/Python boundary (`task-api.schema.json`, `voice-websocket.schema.json`).
-- `docs/architecture-v2.md` — the authoritative current-architecture doc.
+- `docs/deployment.md` — 生产部署手册；架构总览见 `README.md`。
 
 ## Commands
 
@@ -88,7 +88,7 @@ FreeSWITCH: `pnpm freeswitch:up` / `freeswitch:down` (Docker), or `freeswitch:lo
 
 ## Architecture
 
-Three planes (see `docs/architecture-v2.md`):
+Three planes (see `README.md` 架构节):
 
 1. **Control plane — NestJS (`apps/api`)**: source of business truth. Owns Postgres, RBAC, task/flow lifecycle. Does **not** touch audio.
 2. **Execution plane — Python voice agent (`services/voice-agent`)**: real-time per-call loop. Receives PCM from FreeSWITCH over WebSocket, runs VAD → FunASR STT → RAG → LLM (OpenAI-compatible, tool calls) → TTS, and streams audio back. Calls the API over HTTP for flow context, tools, and status reporting.

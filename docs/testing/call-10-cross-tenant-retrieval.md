@@ -109,7 +109,7 @@ node scripts/call-10-cross-tenant-retrieval.mjs
 - `knowledgeBaseId` 在调用方租户下**对应一个真实 folder** → 按 `folder_id` 过滤（真正按库检索）。
 - **不对应任何 folder** → 丢弃该过滤，退回租户级全库检索（**绝不因未对齐 id 返回空**）。
 
-**激活条件（重要）**：ai-call 的 kb id（如 `kb-collection`）与 ai-knowledge 的 folder id 目前**尚未对齐**，故默认仍表现为租户级。**CALL-12 决策（2026-07-10）取「配置对齐」方案**：把 ai-call scenario 的 `knowledgeBaseId`（voice-agent `scenario.knowledge_base_id` / ai-call OutboundScenario 配置）直接填成 ai-knowledge 中目标 folder 的真实 id，即零代码激活按库过滤。验证时把本手册的 `KB_ID` / `KB_ID_OTHER` 设为两个真实且文档不同的 folder id，场景 4 的 `4.1` 应由 WARN 变为通过。
+**激活条件（重要）**：CALL-12 已支持在 ai-call 场景编辑页选择一个或多个 ai-knowledge 真实 folder；后端持久化为 `knowledgeBaseIds`，并将首项兼容写入 `knowledgeBaseId`。运行时会逐库检索、合并后按全局分数取 TopK。仍需对每个业务场景完成运营配置与真服务验证：把本手册的 `KB_ID` / `KB_ID_OTHER` 设为两个真实且文档不同的 folder id，场景 4 的 `4.1` 应由 WARN 变为通过。历史 `kb-collection` 等非 folder 值仍会触发租户级兜底，不能视为按库过滤已激活。
 
 **脚本场景 4 的解读**：
 - 若 `KB_ID` / `KB_ID_OTHER` 都不是真实 folder id → 两者都走兜底、结果集相同 → WARN「未按库过滤（id 未对齐）」。**这是预期**，不代表回归失败。

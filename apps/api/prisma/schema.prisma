@@ -20,9 +20,10 @@ model OutboundScenario {
   businessGoal             String            @default("") @map("business_goal")
   llmConstraints           Json              @default("[]") @map("llm_constraints")
   systemPrompt             String            @default("") @map("system_prompt")
-  greeting                 String            @default("")
-  knowledgeBaseId          String            @default("") @map("knowledge_base_id")
-  allowedTools             Json              @default("[]") @map("allowed_tools")
+    greeting                 String            @default("")
+    knowledgeBaseId          String            @default("") @map("knowledge_base_id")
+    knowledgeBaseIds         String[]          @default([]) @map("knowledge_base_ids")
+    allowedTools             Json              @default("[]") @map("allowed_tools")
   escalationRules          Json              @default("[]") @map("escalation_rules")
   dialogRepair             Json              @default("{}") @map("dialog_repair")
   defaultFlowId            String?           @map("default_flow_id") @db.Uuid

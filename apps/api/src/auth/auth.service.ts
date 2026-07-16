@@ -18,6 +18,7 @@ import {
   ACCESS_TOKEN_EXPIRES_IN,
   REFRESH_TOKEN_EXPIRES_IN,
   DEFAULT_TENANT_ID,
+  accessTokenSignKeys,
 } from './auth.config.js';
 
 @Injectable()
@@ -163,7 +164,7 @@ export class AuthService {
   ): Promise<{ accessToken: string; refreshToken: string }> {
     const accessToken = signAccessToken(
       { sub: userId, tenantId: DEFAULT_TENANT_ID, roles: roleNames, email },
-      { secret: AuthService.getJwtSecret(), ttl: ACCESS_TOKEN_EXPIRES_IN },
+      accessTokenSignKeys(),
     );
 
     const refreshToken = generateRefreshToken();
