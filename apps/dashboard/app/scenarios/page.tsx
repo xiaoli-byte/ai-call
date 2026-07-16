@@ -3,6 +3,9 @@
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
+  AlertTriangle,
+  ChevronDown,
+  ChevronRight,
   Headphones,
   LoaderCircle,
   Plus,
@@ -11,6 +14,7 @@ import {
   Search,
   Square,
   Volume2,
+  X,
 } from 'lucide-react';
 import { FormProvider, useForm, useFormContext, useWatch } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -32,6 +36,7 @@ import {
 } from '@ai-call/shared';
 import { useScenarioMutations, useScenarios } from '@/hooks/use-scenarios';
 import { useKnowledgeBases } from '@/hooks/use-knowledge';
+import type { KnowledgeBaseSummary } from '@/lib/api/endpoints/knowledge';
 import { useTaskFlows } from '@/hooks/use-task-flows';
 import { useVoiceCloneMutations, useVoiceClones } from '@/hooks/use-voice-clones';
 import { useTTS } from '@/hooks/useTTS';
@@ -43,8 +48,6 @@ import { appToast } from '@/lib/toast';
 import { ScenarioPageTitle, ScenarioTab, ScenarioTabs } from '@/components/scenario-workbench/page-chrome';
 
 import styles from './scenarios.module.scss';
-
-type DetailTab = 'robot' | 'voice';
 
 interface ScenarioDraft {
   id?: string;
@@ -469,22 +472,6 @@ function BadgeStatus({ status }: { status?: ScenarioStatus }) {
   );
 }
 
-function TabButton({
-  active,
-  children,
-  onClick,
-}: {
-  active: boolean;
-  children: ReactNode;
-  onClick: () => void;
-}) {
-  return (
-    <ScenarioTab active={active} onClick={onClick}>
-      {children}
-    </ScenarioTab>
-  );
-}
-
 function FieldRow({
   label,
   children,
@@ -731,13 +718,171 @@ function StyleChips() {
   );
 }
 
+function collectKnowledgeBaseIds(nodes: KnowledgeBaseSummary[], set: Set<string>) {
+  for (const node of nodes) {
+    set.add(node.id);
+    if (node.children?.length) collectKnowledgeBaseIds(node.children, set);
+  }
+}
+
+function findKnowledgeBaseNames(nodes: KnowledgeBaseSummary[], ids: string[], result: Record<string, string>) {
+  for (const node of nodes) {
+    if (ids.includes(node.id)) result[node.id] = node.name;
+    if (node.children?.length) findKnowledgeBaseNames(node.children, ids, result);
+  }
+}
+
+function filterKnowledgeBases(nodes: KnowledgeBaseSummary[], query: string): KnowledgeBaseSummary[] {
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  if (!normalizedQuery) return nodes;
+
+  return nodes.reduce<KnowledgeBaseSummary[]>((result, node) => {
+    const children = filterKnowledgeBases(node.children ?? [], query);
+    const matches = node.name.toLocaleLowerCase().includes(normalizedQuery);
+    if (matches || children.length > 0) result.push({ ...node, children });
+    return result;
+  }, []);
+}
+
+function collectExpandedSearchParents(nodes: KnowledgeBaseSummary[], query: string, result: Set<string>): boolean {
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  let hasMatch = false;
+
+  for (const node of nodes) {
+    const childHasMatch = collectExpandedSearchParents(node.children ?? [], query, result);
+    const matches = node.name.toLocaleLowerCase().includes(normalizedQuery);
+    if (childHasMatch) result.add(node.id);
+    hasMatch ||= matches || childHasMatch;
+  }
+
+  return hasMatch;
+}
+
+function KnowledgeBaseTree({
+  nodes,
+  level = 0,
+  selected,
+  expanded,
+  onToggle,
+  onToggleExpand,
+}: {
+  nodes: KnowledgeBaseSummary[];
+  level?: number;
+  selected: Set<string>;
+  expanded: Set<string>;
+  onToggle: (id: string) => void;
+  onToggleExpand: (id: string) => void;
+}) {
+  if (nodes.length === 0) return null;
+
+  return (
+    <div className="scenario-knowledge-tree-list" role="group">
+      {nodes.map((node) => {
+        const hasChildren = (node.children?.length ?? 0) > 0;
+        const isExpanded = expanded.has(node.id);
+        return (
+          <div key={node.id} className="scenario-knowledge-tree-node">
+            <label
+              className="scenario-knowledge-tree-row"
+              style={{ paddingLeft: level * 18 }}
+            >
+              <button
+                type="button"
+                className="scenario-knowledge-tree-toggle"
+                aria-expanded={hasChildren ? isExpanded : undefined}
+                aria-label={hasChildren ? (isExpanded ? '折叠' : '展开') : undefined}
+                disabled={!hasChildren}
+                onClick={(event) => {
+                  event.preventDefault();
+                  onToggleExpand(node.id);
+                }}
+              >
+                {hasChildren ? (isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />) : <span />}
+              </button>
+              <input
+                type="checkbox"
+                checked={selected.has(node.id)}
+                onChange={() => onToggle(node.id)}
+                aria-label={`选择知识库 ${node.name}`}
+              />
+              <span className="scenario-knowledge-tree-name">{node.name}</span>
+              <span className="scenario-knowledge-tree-count">{node.docCount} 篇文档</span>
+            </label>
+            {hasChildren && isExpanded && (
+              <KnowledgeBaseTree
+                nodes={node.children ?? []}
+                level={level + 1}
+                selected={selected}
+                expanded={expanded}
+                onToggle={onToggle}
+                onToggleExpand={onToggleExpand}
+              />
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function KnowledgeBasePicker() {
   const { control, setValue } = useFormContext<ScenarioDraft>();
   const knowledgeBaseIds = useWatch({ control, name: 'knowledgeBaseIds' });
   const { data: knowledgeBases, error, isLoading } = useKnowledgeBases();
-  const selected = new Set(knowledgeBaseIds);
-  const visibleIds = new Set((knowledgeBases ?? []).map((item) => item.id));
-  const unavailableIds = knowledgeBaseIds.filter((id) => !visibleIds.has(id));
+  const [isOpen, setIsOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const pickerRef = useRef<HTMLDivElement | null>(null);
+  const selected = useMemo(() => new Set(knowledgeBaseIds), [knowledgeBaseIds]);
+  const visibleIds = useMemo(() => {
+    const set = new Set<string>();
+    collectKnowledgeBaseIds(knowledgeBases ?? [], set);
+    return set;
+  }, [knowledgeBases]);
+  const unavailableIds = useMemo(
+    () => knowledgeBaseIds.filter((id) => !visibleIds.has(id)),
+    [knowledgeBaseIds, visibleIds],
+  );
+  const selectedNames = useMemo(() => {
+    const map: Record<string, string> = {};
+    findKnowledgeBaseNames(knowledgeBases ?? [], knowledgeBaseIds, map);
+    return map;
+  }, [knowledgeBases, knowledgeBaseIds]);
+  const [expanded, setExpanded] = useState<Set<string>>(() => {
+    const initial = new Set<string>();
+    for (const node of knowledgeBases ?? []) initial.add(node.id);
+    return initial;
+  });
+
+  useEffect(() => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      for (const node of knowledgeBases ?? []) next.add(node.id);
+      return next;
+    });
+  }, [knowledgeBases]);
+
+  useEffect(() => {
+    if (!isOpen) return undefined;
+
+    function handlePointerDown(event: MouseEvent) {
+      if (!pickerRef.current?.contains(event.target as Node)) setIsOpen(false);
+    }
+
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => document.removeEventListener('mousedown', handlePointerDown);
+  }, [isOpen]);
+
+  const filteredKnowledgeBases = useMemo(
+    () => filterKnowledgeBases(knowledgeBases ?? [], query),
+    [knowledgeBases, query],
+  );
+  const effectiveExpanded = useMemo(() => {
+    if (!query.trim()) return expanded;
+    const searchParents = new Set(expanded);
+    collectExpandedSearchParents(knowledgeBases ?? [], query, searchParents);
+    return searchParents;
+  }, [expanded, knowledgeBases, query]);
+  const selectedLabels = knowledgeBaseIds.map((id) => selectedNames[id] ?? id);
 
   function toggle(id: string) {
     const next = selected.has(id)
@@ -746,30 +891,98 @@ function KnowledgeBasePicker() {
     setValue('knowledgeBaseIds', next, { shouldDirty: true });
   }
 
+  function toggleExpand(id: string) {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
   return (
-    <div className="scenario-knowledge-picker" role="group" aria-label="关联知识库（可多选）">
-      <div className="scenario-knowledge-picker-head">
-        <span>已关联 {knowledgeBaseIds.length} 个</span>
-        {isLoading && <span>正在加载知识库…</span>}
-      </div>
-      {error && <div className="scenario-inline-warning" role="alert">知识库列表加载失败，请稍后重试。</div>}
-      {!isLoading && !error && (knowledgeBases?.length ?? 0) === 0 && (
-        <span className="scenario-field-hint">暂无可关联的知识库。</span>
-      )}
-      {(knowledgeBases ?? []).map((knowledgeBase) => (
-        <label key={knowledgeBase.id} className="scenario-knowledge-option">
-          <input
-            type="checkbox"
-            aria-label={`选择知识库 ${knowledgeBase.name}`}
-            checked={selected.has(knowledgeBase.id)}
-            onChange={() => toggle(knowledgeBase.id)}
-          />
-          <span className="scenario-knowledge-option-copy">
-            <span>{knowledgeBase.name}</span>
-            <span>{knowledgeBase.docCount} 篇文档</span>
+    <div
+      ref={pickerRef}
+      className="scenario-knowledge-picker"
+      role="group"
+      aria-label="关联知识库（可多选）"
+      onKeyDown={(event) => {
+        if (event.key === 'Escape') setIsOpen(false);
+      }}
+    >
+      <button
+        type="button"
+        className="scenario-knowledge-trigger"
+        aria-label="选择关联知识库"
+        aria-haspopup="dialog"
+        aria-expanded={isOpen}
+        aria-controls="scenario-knowledge-popover"
+        onClick={() => setIsOpen((prev) => !prev)}
+      >
+        <span className="scenario-knowledge-trigger-copy">
+          <span className="scenario-knowledge-trigger-label">
+            {knowledgeBaseIds.length > 0 ? `已关联 ${knowledgeBaseIds.length} 个知识库` : '选择关联知识库'}
           </span>
-        </label>
-      ))}
+          {selectedLabels.length > 0 && (
+            <span className="scenario-knowledge-trigger-summary">
+              {selectedLabels.slice(0, 2).join('、')}
+              {selectedLabels.length > 2 && ` 等 ${selectedLabels.length} 个`}
+            </span>
+          )}
+        </span>
+        <ChevronDown size={16} className={cn('scenario-knowledge-trigger-chevron', isOpen && 'is-open')} />
+      </button>
+
+      {isOpen && (
+        <div id="scenario-knowledge-popover" className="scenario-knowledge-popover" role="dialog" aria-label="选择关联知识库">
+          <div className="scenario-knowledge-popover-head">
+            <span>关联知识库</span>
+            <button type="button" className="scenario-knowledge-popover-close" onClick={() => setIsOpen(false)}>
+              完成
+            </button>
+          </div>
+          <div className="scenario-knowledge-search">
+            <Search size={15} aria-hidden="true" />
+            <input
+              type="search"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="搜索知识库名称"
+              aria-label="搜索知识库"
+              autoFocus
+            />
+          </div>
+          {knowledgeBaseIds.length > 0 && (
+            <div className="scenario-knowledge-selected-tags" aria-live="polite">
+              {knowledgeBaseIds.map((id) => (
+                <span key={id} className="scenario-knowledge-selected-tag">
+                  {selectedNames[id] ?? id}
+                  <button type="button" aria-label={`取消关联 ${selectedNames[id] ?? id}`} onClick={() => toggle(id)}>
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+          <div className="scenario-knowledge-tree-panel">
+            {isLoading && <span className="scenario-field-hint">正在加载知识库…</span>}
+            {error && <div className="scenario-inline-warning" role="alert">知识库列表加载失败，请稍后重试。</div>}
+            {!isLoading && !error && (knowledgeBases?.length ?? 0) === 0 && (
+              <span className="scenario-field-hint">暂无可关联的知识库。</span>
+            )}
+            {!isLoading && !error && (knowledgeBases?.length ?? 0) > 0 && filteredKnowledgeBases.length === 0 && (
+              <span className="scenario-knowledge-empty">未找到匹配的知识库</span>
+            )}
+            <KnowledgeBaseTree
+              nodes={filteredKnowledgeBases}
+              selected={selected}
+              expanded={effectiveExpanded}
+              onToggle={toggle}
+              onToggleExpand={toggleExpand}
+            />
+          </div>
+        </div>
+      )}
       {unavailableIds.length > 0 && (
         <div className="scenario-inline-warning">
           已关联但当前不可见的知识库：{unavailableIds.join('、')}。保存会保留这些关联；如需移除，请恢复相应访问权限后操作。
@@ -779,36 +992,97 @@ function KnowledgeBasePicker() {
   );
 }
 
+const INDUSTRY_TEMPLATE_FIELDS = [
+  { key: 'agentIdentity', label: '身份' },
+  { key: 'communicationStyle', label: '沟通风格' },
+  { key: 'businessGoal', label: '业务目标' },
+  { key: 'systemPrompt', label: '系统提示词' },
+  { key: 'llmConstraintsText', label: '回复边界' },
+  { key: 'greeting', label: '开场白' },
+] as const;
+
+type IndustryTemplateField = (typeof INDUSTRY_TEMPLATE_FIELDS)[number]['key'];
+type IndustryTemplateApplicationMode = 'fill-empty' | 'replace';
+
+function templateFieldHasValue(
+  draft: { [key in IndustryTemplateField]?: string },
+  field: IndustryTemplateField,
+) {
+  return Boolean(draft[field]?.trim());
+}
+
 /**
- * 「行业模板」选择：点击某个行业模板标签，把模板预设内容整体回显进当前草稿
- * （身份/沟通风格/业务目标/系统提示词/回复边界/开场白），仅覆盖草稿，不自动保存。
- * 迁移说明：改用逐字段 setValue 批量写入，而非 reset() —— reset() 会整体替换表单值，
- * 若只想覆盖模板涉及的几个字段需先 getValues() 合并，反而更绕；逐字段 setValue 更直接、
- * 也不会影响未涉及字段的 dirty 状态。
+ * 行业模板采用「先预览、后应用」：默认只补全空白项，保留客户已有配置。
+ * 需要统一模板口径时，用户可显式切换为覆盖模式，并在同一处看到精确影响范围后确认。
  */
 function IndustryTemplateSection() {
-  const { getValues, setValue } = useFormContext<ScenarioDraft>();
+  const { control, getValues, setValue } = useFormContext<ScenarioDraft>();
+  const draft = useWatch({ control });
+  const [pendingTemplate, setPendingTemplate] = useState<ScenarioIndustryTemplate | null>(null);
+  const [applicationMode, setApplicationMode] = useState<IndustryTemplateApplicationMode>('fill-empty');
 
-  function applyTemplate(template: ScenarioIndustryTemplate) {
-    const prevCustomIdentityTags = getValues('customIdentityTags');
-    const prevCustomStyleTags = getValues('customStyleTags');
-    setValue('agentIdentity', template.agentIdentity, { shouldDirty: true });
-    setValue(
-      'customIdentityTags',
-      mergeCustomTags(prevCustomIdentityTags, IDENTITY_PRESETS, [template.agentIdentity]),
-      { shouldDirty: true },
+  const existingFields = pendingTemplate
+    ? INDUSTRY_TEMPLATE_FIELDS.filter(({ key }) => templateFieldHasValue(draft, key))
+    : [];
+  const emptyFields = pendingTemplate
+    ? INDUSTRY_TEMPLATE_FIELDS.filter(({ key }) => !templateFieldHasValue(draft, key))
+    : [];
+  const affectedCount = applicationMode === 'replace'
+    ? INDUSTRY_TEMPLATE_FIELDS.length
+    : emptyFields.length;
+
+  function openTemplateReview(template: ScenarioIndustryTemplate) {
+    setPendingTemplate(template);
+    setApplicationMode('fill-empty');
+  }
+
+  function applyTemplate() {
+    if (!pendingTemplate) return;
+
+    const currentDraft = getValues();
+    const shouldApply = (field: IndustryTemplateField) => (
+      applicationMode === 'replace' || !templateFieldHasValue(currentDraft, field)
     );
-    setValue('communicationStyle', template.communicationStyle, { shouldDirty: true });
-    setValue(
-      'customStyleTags',
-      mergeCustomTags(prevCustomStyleTags, STYLE_PRESETS, splitCommunicationStyles(template.communicationStyle)),
-      { shouldDirty: true },
+
+    if (shouldApply('agentIdentity')) {
+      setValue('agentIdentity', pendingTemplate.agentIdentity, { shouldDirty: true });
+      setValue(
+        'customIdentityTags',
+        mergeCustomTags(currentDraft.customIdentityTags, IDENTITY_PRESETS, [pendingTemplate.agentIdentity]),
+        { shouldDirty: true },
+      );
+    }
+    if (shouldApply('communicationStyle')) {
+      setValue('communicationStyle', pendingTemplate.communicationStyle, { shouldDirty: true });
+      setValue(
+        'customStyleTags',
+        mergeCustomTags(
+          currentDraft.customStyleTags,
+          STYLE_PRESETS,
+          splitCommunicationStyles(pendingTemplate.communicationStyle),
+        ),
+        { shouldDirty: true },
+      );
+    }
+    if (shouldApply('businessGoal')) {
+      setValue('businessGoal', pendingTemplate.businessGoal, { shouldDirty: true });
+    }
+    if (shouldApply('systemPrompt')) {
+      setValue('systemPrompt', pendingTemplate.systemPrompt, { shouldDirty: true });
+    }
+    if (shouldApply('llmConstraintsText')) {
+      setValue('llmConstraintsText', pendingTemplate.llmConstraints.join('\n'), { shouldDirty: true });
+    }
+    if (shouldApply('greeting')) {
+      setValue('greeting', pendingTemplate.greeting, { shouldDirty: true });
+    }
+
+    appToast.info(
+      applicationMode === 'replace'
+        ? `已用「${pendingTemplate.name}」覆盖 ${INDUSTRY_TEMPLATE_FIELDS.length} 项模板配置，仍需手动保存`
+        : `已用「${pendingTemplate.name}」补全 ${affectedCount} 项空白配置，仍需手动保存`,
     );
-    setValue('businessGoal', template.businessGoal, { shouldDirty: true });
-    setValue('systemPrompt', template.systemPrompt, { shouldDirty: true });
-    setValue('llmConstraintsText', template.llmConstraints.join('\n'), { shouldDirty: true });
-    setValue('greeting', template.greeting, { shouldDirty: true });
-    appToast.info(`已应用「${template.name}」行业模板`);
+    setPendingTemplate(null);
   }
 
   return (
@@ -819,17 +1093,105 @@ function IndustryTemplateSection() {
           <button
             key={template.key}
             type="button"
-            className="scenario-chip"
+            className={cn('scenario-chip', pendingTemplate?.key === template.key && 'selected')}
             title={template.description}
-            onClick={() => applyTemplate(template)}
+            aria-pressed={pendingTemplate?.key === template.key}
+            onClick={() => openTemplateReview(template)}
           >
             {template.name}
           </button>
         ))}
       </div>
       <span className="scenario-field-hint">
-        选择行业模板可快速填充身份、沟通风格、业务目标等内容，仍可在下方继续调整；不会自动保存。
+        模板默认只补全空白项，不会直接替换客户已有配置；确认后仍可调整，且不会自动保存。
       </span>
+      {pendingTemplate && (
+        <div className="scenario-template-review" role="region" aria-labelledby="scenario-template-review-title">
+          <div className="scenario-template-review-head">
+            <div>
+              <span className="scenario-template-review-kicker">待应用模板</span>
+              <h3 id="scenario-template-review-title">应用「{pendingTemplate.name}」</h3>
+              <p>{pendingTemplate.description}</p>
+            </div>
+            <button
+              type="button"
+              className="scenario-template-review-close"
+              aria-label="取消应用行业模板"
+              onClick={() => setPendingTemplate(null)}
+            >
+              <X size={16} aria-hidden="true" />
+            </button>
+          </div>
+
+          <div className="scenario-template-scope">
+            <AlertTriangle size={18} aria-hidden="true" />
+            <div>
+              <strong>本次模板涉及 6 项配置</strong>
+              <p>关联知识库、外呼任务流程、语音和静默处理不会被模板修改。</p>
+              <div className="scenario-template-field-list" aria-label="模板涉及的配置项">
+                {INDUSTRY_TEMPLATE_FIELDS.map(({ key, label }) => (
+                  <span key={key} className={templateFieldHasValue(draft, key) ? 'has-value' : undefined}>
+                    {label}{templateFieldHasValue(draft, key) ? '（已有内容）' : '（空白）'}
+                  </span>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <fieldset className="scenario-template-mode">
+            <legend>应用方式</legend>
+            <label className={applicationMode === 'fill-empty' ? 'selected' : undefined}>
+              <input
+                type="radio"
+                name="industry-template-application-mode"
+                value="fill-empty"
+                checked={applicationMode === 'fill-empty'}
+                onChange={() => setApplicationMode('fill-empty')}
+              />
+              <span>
+                <strong>仅补全空白项（推荐）</strong>
+                <small>填入 {emptyFields.length} 项空白配置，保留已有的 {existingFields.length} 项内容。</small>
+              </span>
+            </label>
+            <label className={applicationMode === 'replace' ? 'selected danger' : undefined}>
+              <input
+                type="radio"
+                name="industry-template-application-mode"
+                value="replace"
+                checked={applicationMode === 'replace'}
+                onChange={() => setApplicationMode('replace')}
+              />
+              <span>
+                <strong>覆盖模板涉及的所有内容</strong>
+                <small>会替换当前已有的 {existingFields.length} 项配置；请确认符合客户业务。</small>
+              </span>
+            </label>
+          </fieldset>
+
+          <div className="scenario-template-review-actions">
+            <span className="scenario-field-hint">
+              {applicationMode === 'replace'
+                ? '覆盖仅写入当前草稿，保存后才会对线上场景生效。'
+                : affectedCount === 0
+                  ? '当前没有可补全的空白项；如需使用模板，请选择覆盖模式。'
+                  : '写入当前草稿后仍可逐项调整，保存后才会对线上场景生效。'}
+            </span>
+            <div>
+              <button type="button" className="btn btn-secondary" onClick={() => setPendingTemplate(null)}>
+                取消
+              </button>
+              <button
+                type="button"
+                className={cn('btn', applicationMode === 'replace' ? 'scenario-template-replace-button' : 'btn-primary')}
+                disabled={affectedCount === 0}
+                onClick={applyTemplate}
+              >
+                {applicationMode === 'replace' ? `确认覆盖 ${affectedCount} 项` : `补全 ${affectedCount} 项`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   );
 }
@@ -1274,7 +1636,7 @@ function SideQuestionSection() {
  * 只把 draft/setDraft 换成 useFormContext 的 watch/setValue；previewText 等纯本地
  * UI 态（试听文案、生成中/播放中状态）不属于提交草稿，继续留在组件本地 useState。
  */
-function VoiceTab() {
+function VoiceSidebar() {
   const { control, setValue } = useFormContext<ScenarioDraft>();
   const ttsVoice = useWatch({ control, name: 'ttsVoice' });
   const ttsVoiceCloneId = useWatch({ control, name: 'ttsVoiceCloneId' });
@@ -1378,8 +1740,11 @@ function VoiceTab() {
   }
 
   return (
-    <section className="scenario-section">
-      <h2>语音与 VUI</h2>
+    <aside className="scenario-sidebar-card" aria-label="语音试听">
+      <div className="scenario-sidebar-header">
+        <Volume2 size={16} />
+        <span>语音与试听</span>
+      </div>
       <FieldRow label="语音音色">
         <div className="scenario-voice-select-row">
           <select
@@ -1484,7 +1849,7 @@ function VoiceTab() {
       </FieldRow>
       {/* 「声音风格」「开场白模板」两个表单字段已按需求移除展示，
           draft.ttsStylePrompt / draft.greeting 仍随草稿透传提交，不影响已保存的值。 */}
-    </section>
+    </aside>
   );
 }
 
@@ -1502,8 +1867,6 @@ function ScenarioDetailView({
   onSave: () => void;
 }) {
   const canWrite = usePermission(PERMISSIONS.SCENARIO_UPDATE);
-  const [tab, setTab] = useState<DetailTab>('robot');
-  // draft/setDraft 已下放为 FormProvider（挂在调用方 ScenariosPage），这里只读展示用的两个字段。
   const { control } = useFormContext<ScenarioDraft>();
   const name = useWatch({ control, name: 'name' });
   const updatedAt = useWatch({ control, name: 'updatedAt' });
@@ -1511,41 +1874,30 @@ function ScenarioDetailView({
   return (
     <div className={cn(styles.workbench, styles.detail)}>
       <ScenarioPageTitle
-        title="大模型场景管理详情"
-        breadcrumb={<>智能外呼 / 场景管理 / {name || '新建场景'} / 大模型场景管理详情</>}
+        title={name || '新建场景'}
+        breadcrumb={<>智能外呼 / 场景管理 / {name || '新建场景'}</>}
         onBack={onBack}
         backLabel="返回列表"
-        extra={(
-          <button
-            type="button"
-            className="scenario-debug-toggle"
-            onClick={() => setTab('voice')}
-            aria-pressed={tab === 'voice'}
-          >
-            <Volume2 size={15} />
-            <span>语音试听</span>
-          </button>
-        )}
       />
 
-      <ScenarioTabs>
-        <TabButton active={tab === 'robot'} onClick={() => setTab('robot')}>机器人配置</TabButton>
-        <TabButton active={tab === 'voice'} onClick={() => setTab('voice')}>语音&VUI</TabButton>
-      </ScenarioTabs>
-
-      <div className="scenario-detail-body">
-        {tab === 'robot' && <RobotConfigTab flows={flows} />}
-        {tab === 'voice' && <VoiceTab />}
+      <div className="scenario-detail-layout">
+        <div className="scenario-detail-main">
+          <RobotConfigTab flows={flows} />
+        </div>
+        <VoiceSidebar />
       </div>
 
       <div className="scenario-save-bar">
+        <button type="button" className="btn btn-secondary" onClick={onBack}>
+          返回列表
+        </button>
         {canWrite && (
           <button type="button" className="btn" onClick={onSave} disabled={submitting}>
             <Save size={15} />
             {submitting ? '保存中...' : '保存'}
           </button>
         )}
-        <span>最近保存：{mode === 'create' ? '-' : formatDate(updatedAt)}</span>
+        <span aria-live="polite">最近保存：{mode === 'create' ? '-' : formatDate(updatedAt)}</span>
       </div>
     </div>
   );

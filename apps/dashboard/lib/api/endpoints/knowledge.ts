@@ -12,6 +12,8 @@ export interface KnowledgeBaseSummary {
   indexedCount?: number;
   failedCount?: number;
   staleCount?: number;
+  parentId?: string | null;
+  children?: KnowledgeBaseSummary[];
 }
 
 export interface KnowledgeBaseDoc {

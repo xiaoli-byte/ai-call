@@ -100,8 +100,8 @@ describe('KnowledgeBaseService', () => {
 
     assert.deepEqual(calls, ['http://127.0.0.1:3010/api/folders/selectable']);
     assert.deepEqual(knowledgeBases, [
-      { id: 'folder-1', name: '订单资料', docCount: 0 },
-      { id: 'folder-2', name: '商品资料', docCount: 0 },
+      { id: 'folder-1', name: '订单资料', docCount: 0, parentId: null, children: [] },
+      { id: 'folder-2', name: '商品资料', docCount: 0, parentId: null, children: [] },
     ]);
   });
 

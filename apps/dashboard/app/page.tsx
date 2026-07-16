@@ -127,11 +127,8 @@ export default function HomePage() {
             </p>
           </div>
 
-          <div className={styles.demoPanel} aria-label="电商售后回访语音演示">
-            <div className={styles.demoStatus}>
-              <span className={styles.liveDot} />
-              电商售后回访场景 · 体验中
-            </div>
+          <div className={styles.demoPanel} aria-label="智能外呼语音演示">
+            {/* 左上角场景徽标由 WebCallPanel 渲染：显示当前选中话术名称 */}
             <div className={styles.voiceSphere}>
               <span className={styles.waveRing} />
               <span className={styles.waveRing} />

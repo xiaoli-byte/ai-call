@@ -15,6 +15,7 @@ import { integrationsEndpoints } from './integrations';
 import { handoffsEndpoints } from './handoffs';
 import { scenarioTestsEndpoints } from './scenario-tests';
 import { platformEndpoints } from './platform';
+import { webDemoEndpoints } from './web-demo';
 
 /**
  * 工厂：根据传入的 HttpAdapter（client 或 server）创建完整 API 对象。
@@ -40,6 +41,7 @@ export function createApi(http: HttpAdapter) {
   const handoffs = handoffsEndpoints(http);
   const scenarioTests = scenarioTestsEndpoints(http);
   const platform = platformEndpoints(http);
+  const webDemo = webDemoEndpoints(http);
 
   return {
     // 模块化嵌套（新代码推荐）
@@ -59,6 +61,7 @@ export function createApi(http: HttpAdapter) {
     handoffs,
     scenarioTests,
     platform,
+    webDemo,
 
     // 顶层扁平别名（兼容旧 apiClient.xxx 调用）
     // auth

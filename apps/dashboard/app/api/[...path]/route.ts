@@ -30,6 +30,9 @@ async function proxy(
   if (contentType) headers.set('content-type', contentType);
   const cookie = req.headers.get('cookie');
   if (cookie) headers.set('cookie', cookie);
+  // 透传来源 IP：后端匿名端点（/web-demo/*）按 IP 限流
+  const clientIp = req.ip ?? req.headers.get('x-forwarded-for')?.split(',')[0]?.trim();
+  if (clientIp) headers.set('x-forwarded-for', clientIp);
 
   // 2. 读取 body（GET/HEAD 无 body）
   const hasBody = !['GET', 'HEAD'].includes(req.method);

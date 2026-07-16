@@ -207,7 +207,7 @@ export const SCENARIO_CONFIGS: Record<Scenario, ScenarioConfig> = {
     status: ScenarioStatus.ACTIVE,
     ttsConfig: {
       voice: 'Cherry',
-      age: 'adult',
+      age: '28',
       gender: 'female',
       stylePrompt: '专业、平稳、克制，语速中等。',
     },
@@ -254,7 +254,7 @@ export const SCENARIO_CONFIGS: Record<Scenario, ScenarioConfig> = {
     status: ScenarioStatus.ACTIVE,
     ttsConfig: {
       voice: 'Cherry',
-      age: 'young-adult',
+      age: '21',
       gender: 'female',
       stylePrompt: '亲切、耐心、自然，像真人客服沟通。',
     },
@@ -302,7 +302,7 @@ export const SCENARIO_CONFIGS: Record<Scenario, ScenarioConfig> = {
     status: ScenarioStatus.ACTIVE,
     ttsConfig: {
       voice: 'Cherry',
-      age: 'young-adult',
+      age: '23',
       gender: 'female',
       stylePrompt: '热情、轻松、不过度推销。',
     },

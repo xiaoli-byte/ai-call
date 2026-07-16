@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TasksController } from './tasks.controller.js';
+import { WebDemoController } from './web-demo.controller.js';
 import { TasksService } from './tasks.service.js';
 import { FreeSwitchModule } from '../freeswitch/freeswitch.module.js';
 import { TaskFlowsModule } from '../task-flows/task-flows.module.js';
@@ -14,7 +15,7 @@ import { GlobalConfigModule } from '../global-config/global-config.module.js';
     ScenariosModule,
     GlobalConfigModule,
   ],
-  controllers: [TasksController],
+  controllers: [TasksController, WebDemoController],
   providers: [TasksService, ServiceAuthGuard],
   exports: [TasksService],
 })

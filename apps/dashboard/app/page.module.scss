@@ -1,5 +1,6 @@
 .landingPage {
   min-height: 100vh;
+  min-height: 100dvh; /* 移动端浏览器地址栏收起/展开时不跳动 */
   background:
     linear-gradient(180deg, #ffffff 0%, #ffffff 62%, #f7f9fd 100%);
   color: #111827;
@@ -291,6 +292,7 @@
   display: inline-flex;
   align-items: center;
   gap: 10px;
+  max-width: calc(100% - 60px);
   padding: 8px 12px;
   border: 1px solid #dbe8ff;
   border-radius: 999px;
@@ -301,7 +303,14 @@
   letter-spacing: 0;
 }
 
+.demoStatusText {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 .liveDot {
+  flex-shrink: 0;
   width: 7px;
   height: 7px;
   border-radius: 50%;
@@ -412,8 +421,8 @@
 .callControl,
 .callControlPrimary {
   display: grid;
-  width: 42px;
-  height: 42px;
+  width: 44px; /* 触控目标 ≥44px（Apple HIG） */
+  height: 44px;
   place-items: center;
   border: 1px solid #dbe8ff;
   border-radius: 50%;
@@ -796,6 +805,12 @@
     height: auto;
     min-height: 60px;
     padding: 12px 18px;
+    padding-right: max(18px, env(safe-area-inset-right));
+    padding-left: max(18px, env(safe-area-inset-left));
+  }
+
+  .section {
+    padding-top: 56px;
   }
 
   .navLinks {
@@ -830,9 +845,10 @@
   }
 
   .demoStatus {
-    top: 18px;
-    left: 18px;
-    max-width: calc(100% - 36px);
+    top: 14px;
+    left: 14px;
+    max-width: calc(100% - 28px);
+    font-size: 12px;
   }
 
   .voiceSphere {

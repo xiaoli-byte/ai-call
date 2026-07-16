@@ -3,30 +3,26 @@
 /**
  * WebCallPanel — 首页 hero 面板的浏览器模拟外呼入口
  *
- * 契约 §4（docs/superpowers/specs/2026-07-10-voice-test-call-design.md）：
- *   - 拨号 <Phone/> 可点：未登录（流程列表 401）→ 跳 /login?redirect=/；
- *   - 已登录展开：已发布流程下拉（默认电商 demo）+ 被叫号输入（默认 1001）；
- *   - 发起：POST /tasks → POST /tasks/:id/dispatch { channel:'web' } → 连 WS；
+ * 契约 §4（docs/superpowers/specs/2026-07-10-voice-test-call-design.md，2026-07-17 更新）：
+ *   - 全程匿名可用（/web-demo/* 公开端点），不做任何登录跳转；
+ *   - 展开面板：已发布流程下拉（默认电商 demo）；被叫号固定 1001（服务端强制），不展示输入框；
+ *   - hero 左上角徽标由本组件渲染，展示当前选中话术名称（挂载时预取流程列表）；
+ *   - 发起：POST /web-demo/calls { flowId } → 连 WS；
  *   - 通话中：实时字幕列表 + 状态徽标 + 挂断；
- *   - 结束态：显示任务 ID 与「在控制台查看任务」链接（/tasks）；
+ *   - 结束态：仅保留字幕回顾与「再拨一次」，不展示任务 ID 等调试信息；
  *   - 400/422/权限错误在面板内展示。
  */
 
-import { useCallback, useMemo, useState } from 'react';
-import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Keyboard, Phone, PhoneCall, PhoneOff, X } from 'lucide-react';
-import type { TaskFlow } from '@ai-call/shared';
 import { apiClient } from '@/lib/api/client';
-import { ApiError } from '@/lib/api/types';
+import type { WebDemoFlow } from '@/lib/api/endpoints/web-demo';
 import { useWebCall, type WebCallState } from '@/hooks/useWebCall';
 import heroStyles from '@/app/page.module.scss';
 import styles from './web-call-panel.module.scss';
 
-/** 被叫号默认值：本机联调 SIP 分机（仅作任务记录） */
-const DEFAULT_CALLEE = '1001';
-/** 流程未携带场景配置时的兜底场景 */
-const FALLBACK_SCENARIO = 'ecommerce';
+/** 默认优先选中的场景（电商 demo） */
+const PREFERRED_SCENARIO = 'ecommerce';
 
 const STATE_LABEL: Record<WebCallState, string> = {
   idle: '待发起',
@@ -45,46 +41,44 @@ function statusClass(state: WebCallState): string {
 }
 
 export default function WebCallPanel() {
-  const router = useRouter();
   const call = useWebCall();
 
   const [expanded, setExpanded] = useState(false);
-  const [flows, setFlows] = useState<TaskFlow[]>([]);
+  const [flows, setFlows] = useState<WebDemoFlow[]>([]);
   const [flowsLoading, setFlowsLoading] = useState(false);
   const [flowsError, setFlowsError] = useState<string | null>(null);
   const [selectedFlowId, setSelectedFlowId] = useState('');
-  const [callee, setCallee] = useState(DEFAULT_CALLEE);
 
   const callActive =
     call.state === 'preparing' || call.state === 'dialing' || call.state === 'in-call';
 
-  /** 拉已发布流程；401 视为未登录 → /login?redirect=/ */
+  /**
+   * 拉可体验流程（匿名公开端点，服务端只返回已发布流程的 id/name/scenario）。
+   * 失败仅在面板内提示，绝不跳登录页——首页体验无需账号。
+   */
   const loadFlows = useCallback(async () => {
     setFlowsLoading(true);
     setFlowsError(null);
     try {
-      const list = await apiClient.taskFlows.list();
-      // 下拉边界（A8）：不能只认 status==='published'——编辑已发布流程会把状态打回
-      // draft，但 version>0（仅在 publish 时自增，见 task-flows.service.ts）说明
-      // 该流程仍有可执行的已发布快照，任务创建时会解析到该快照，应继续可选。
-      const published = list.filter((flow) => flow.status === 'published' || flow.version > 0);
-      setFlows(published);
+      const list = await apiClient.webDemo.flows();
+      setFlows(list);
       const preferred =
-        published.find(
-          (flow) =>
-            flow.scenarioConfig?.scenario === FALLBACK_SCENARIO || flow.name.includes('电商'),
-        ) ?? published[0];
+        list.find(
+          (flow) => flow.scenario === PREFERRED_SCENARIO || flow.name.includes('电商'),
+        ) ?? list[0];
       setSelectedFlowId((prev) => prev || preferred?.id || '');
     } catch (err) {
-      if (err instanceof ApiError && err.isUnauthorized) {
-        router.push('/login?redirect=/');
-        return;
-      }
       setFlowsError(err instanceof Error ? err.message : '加载流程列表失败');
     } finally {
       setFlowsLoading(false);
     }
-  }, [router]);
+  }, []);
+
+  // 挂载时预取一次（供 hero 徽标显示话术名）。空依赖：loadFlows 无外部依赖，仅跑一次。
+  useEffect(() => {
+    void loadFlows();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handlePhoneClick = useCallback(() => {
     if (expanded) {
@@ -107,17 +101,20 @@ export default function WebCallPanel() {
 
   const handleStart = useCallback(async () => {
     if (!selectedFlow) return;
-    await call.startCall({
-      to: callee.trim() || DEFAULT_CALLEE,
-      scenario: selectedFlow.scenarioConfig?.scenario ?? FALLBACK_SCENARIO,
-      flowId: selectedFlow.id,
-    });
-  }, [call, selectedFlow, callee]);
+    await call.startCall({ flowId: selectedFlow.id });
+  }, [call, selectedFlow]);
 
   const showForm = call.state === 'idle' || call.state === 'preparing';
 
   return (
     <>
+      <div className={heroStyles.demoStatus}>
+        <span className={heroStyles.liveDot} />
+        <span className={heroStyles.demoStatusText}>
+          {selectedFlow ? selectedFlow.name : '电商售后回访场景'} · 体验中
+        </span>
+      </div>
+
       <div className={heroStyles.callControls}>
         <button
           type="button"
@@ -188,20 +185,9 @@ export default function WebCallPanel() {
                   {flows.map((flow) => (
                     <option key={flow.id} value={flow.id}>
                       {flow.name}
-                      {flow.status !== 'published' ? '（草稿修改中，执行已发布版本）' : ''}
                     </option>
                   ))}
                 </select>
-              </div>
-              <div className={styles.field}>
-                <label htmlFor="web-call-to">被叫号码（仅作任务记录）</label>
-                <input
-                  id="web-call-to"
-                  value={callee}
-                  onChange={(event) => setCallee(event.target.value)}
-                  placeholder={DEFAULT_CALLEE}
-                  disabled={call.state === 'preparing'}
-                />
               </div>
               <button
                 type="submit"
@@ -262,13 +248,7 @@ export default function WebCallPanel() {
                   ))}
                 </ul>
               ) : null}
-              {call.taskId ? (
-                <p className={styles.metaText}>任务 ID：{call.taskId}（已真实落库）</p>
-              ) : null}
               <div className={styles.endedActions}>
-                <Link href="/tasks" className={styles.ghostButton}>
-                  在控制台查看任务
-                </Link>
                 <button type="button" className={styles.ghostButton} onClick={call.reset}>
                   再拨一次
                 </button>
@@ -279,7 +259,6 @@ export default function WebCallPanel() {
           {call.state === 'error' ? (
             <>
               {call.error ? <p className={styles.errorText}>{call.error}</p> : null}
-              {call.taskId ? <p className={styles.metaText}>任务 ID：{call.taskId}</p> : null}
               <button type="button" className={styles.ghostButton} onClick={call.reset}>
                 返回重试
               </button>

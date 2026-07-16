@@ -192,13 +192,15 @@ describe('/scenarios 创建页', () => {
 
   it('可多选知识库，并在保存时提交所有关联', async () => {
     mocks.knowledgeBases = [
-      { id: 'kb-orders', name: '订单知识库', docCount: 3 },
-      { id: 'kb-products', name: '产品知识库', docCount: 8 },
+      { id: 'kb-orders', name: '订单知识库', docCount: 3, children: [] },
+      { id: 'kb-products', name: '产品知识库', docCount: 8, children: [] },
     ];
     openCreate();
     fireEvent.change(screen.getByPlaceholderText('请输入场景名称'), {
       target: { value: '多库场景' },
     });
+    expect(screen.queryByLabelText('选择知识库 订单知识库')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: '选择关联知识库' }));
     fireEvent.click(screen.getByLabelText('选择知识库 订单知识库'));
     fireEvent.click(screen.getByLabelText('选择知识库 产品知识库'));
     fireEvent.click(screen.getByRole('button', { name: '保存' }));
@@ -214,11 +216,9 @@ describe('/scenarios 创建页', () => {
       clone('failed', VoiceCloneStatus.FAILED),
     ];
     openCreate();
-    fireEvent.click(screen.getByRole('button', { name: '语音&VUI' }));
 
     const select = screen.getByLabelText('语音音色');
     const options = within(select).getAllByRole('option').map((item) => item.textContent);
-    expect(screen.getAllByRole('combobox')).toHaveLength(1);
     expect(options.join(' ')).toContain('Cherry · 清晰自然');
     expect(options.join(' ')).toContain('Serena · 温柔舒缓');
     expect(options.join(' ')).toContain('克隆音色 ready · voice-ready');
@@ -232,7 +232,6 @@ describe('/scenarios 创建页', () => {
     fireEvent.change(screen.getByPlaceholderText('请输入场景名称'), {
       target: { value: '测试场景' },
     });
-    fireEvent.click(screen.getByRole('button', { name: '语音&VUI' }));
     fireEvent.change(screen.getByLabelText('语音音色'), {
       target: { value: 'clone:ready' },
     });
@@ -248,7 +247,6 @@ describe('/scenarios 创建页', () => {
 
   it('内置音色试听把当前音色、风格和文案传给 TTS', async () => {
     openCreate();
-    fireEvent.click(screen.getByRole('button', { name: '语音&VUI' }));
     fireEvent.change(screen.getByLabelText('语音音色'), {
       target: { value: 'builtin:Ethan' },
     });
@@ -276,7 +274,6 @@ describe('/scenarios 创建页', () => {
       usedFallback: false,
     });
     openCreate();
-    fireEvent.click(screen.getByRole('button', { name: '语音&VUI' }));
     fireEvent.change(screen.getByLabelText('语音音色'), {
       target: { value: 'clone:ready' },
     });
@@ -366,7 +363,7 @@ describe('身份/沟通风格标签化', () => {
 });
 
 describe('行业模板', () => {
-  it('选择行业模板后把预设内容回显进草稿并提示已应用，仍需手动保存', async () => {
+  it('先展示影响范围，默认仅补全空白项，确认后才回显模板内容', async () => {
     openCreate();
     fireEvent.change(screen.getByPlaceholderText('请输入场景名称'), {
       target: { value: '模板回显场景' },
@@ -374,8 +371,16 @@ describe('行业模板', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '电商售后回访' }));
 
-    expect(mocks.toastInfo).toHaveBeenCalledWith(expect.stringContaining('电商售后回访'));
+    expect(screen.getByRole('heading', { name: '应用「电商售后回访」' })).toBeTruthy();
+    expect(screen.getByText('仅补全空白项（推荐）')).toBeTruthy();
+    expect(screen.getByText('覆盖模板涉及的所有内容')).toBeTruthy();
+    expect(screen.getByText('关联知识库、外呼任务流程、语音和静默处理不会被模板修改。')).toBeTruthy();
+    expect(mocks.toastInfo).not.toHaveBeenCalled();
     expect(mocks.create).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: '补全 6 项' }));
+
+    expect(mocks.toastInfo).toHaveBeenCalledWith(expect.stringContaining('电商售后回访'));
 
     const identityRow = screen.getByText('身份').closest<HTMLElement>('.scenario-field-row')!;
     expect(within(identityRow).getByRole('button', { name: '电商售后客服助理' }).getAttribute('aria-pressed')).toBe('true');
@@ -391,12 +396,34 @@ describe('行业模板', () => {
     await waitFor(() => expect(mocks.create).toHaveBeenCalledTimes(1));
     expect(mocks.create.mock.calls[0][0].greeting).toContain('售后事项');
   });
+
+  it('编辑已有场景时默认保留客户配置，只有选择覆盖模式后才替换', () => {
+    mocks.scenarios = [scenarioItem({
+      agentIdentity: '客户专属顾问',
+      communicationStyle: '专业、严谨',
+      businessGoal: '保留客户原有目标',
+      systemPrompt: '保留客户原有提示词',
+      llmConstraints: ['保留客户原有边界'],
+      greeting: '保留客户原有开场白',
+    })];
+    render(<ScenariosPage />);
+    fireEvent.click(screen.getByRole('button', { name: '进入' }));
+
+    fireEvent.click(screen.getByRole('button', { name: '电商售后回访' }));
+    expect((screen.getByRole('button', { name: '补全 0 项' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText('当前没有可补全的空白项；如需使用模板，请选择覆盖模式。')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('radio', { name: /覆盖模板涉及的所有内容/ }));
+    fireEvent.click(screen.getByRole('button', { name: '确认覆盖 6 项' }));
+
+    const identityRow = screen.getByText('身份').closest<HTMLElement>('.scenario-field-row')!;
+    expect(within(identityRow).getByRole('button', { name: '电商售后客服助理' }).getAttribute('aria-pressed')).toBe('true');
+  });
 });
 
 describe('已移除字段', () => {
-  it('语音&VUI 不再渲染开场白模板与声音风格字段', () => {
+  it('语音面板不再渲染开场白模板与声音风格字段', () => {
     openCreate();
-    fireEvent.click(screen.getByRole('button', { name: '语音&VUI' }));
     expect(screen.queryByText('开场白模板')).toBeNull();
     expect(screen.queryByText('声音风格')).toBeNull();
   });
@@ -659,7 +686,7 @@ describe('静默处理与插话处理配置组', () => {
     expect((screen.getByLabelText('插话应答语') as HTMLInputElement).disabled).toBe(true);
 
     // 返回列表，进入非空值场景 → 勾选 + 回填文本
-    fireEvent.click(screen.getByRole('button', { name: '返回列表' }));
+    fireEvent.click(screen.getAllByRole('button', { name: '返回列表' })[0]);
     fireEvent.click(within(screen.getByText('自定义过渡语').closest('tr')!).getByRole('button', { name: '进入' }));
     expect((screen.getByLabelText('插话时先播应答语') as HTMLInputElement).checked).toBe(true);
     expect((screen.getByLabelText('插话应答语') as HTMLInputElement).value).toBe('稍等哈，我马上帮您查。');

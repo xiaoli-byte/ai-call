@@ -2,15 +2,16 @@
 
 .panel {
   position: absolute;
-  right: clamp(14px, 2vw, 24px);
   bottom: clamp(92px, 9vw, 120px);
-  left: clamp(14px, 2vw, 24px);
+  left: 50%;
   z-index: 6;
   display: flex;
   flex-direction: column;
   gap: 12px;
+  width: min(256px, calc(100% - 28px));
   max-height: calc(100% - 150px);
   padding: 16px 18px;
+  transform: translateX(-50%);
   overflow: hidden auto;
   border: 1px solid #dbe8ff;
   border-radius: 16px;
@@ -43,8 +44,9 @@
 
 .closeButton {
   display: grid;
-  width: 26px;
-  height: 26px;
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
   place-items: center;
   border: 1px solid #dbe8ff;
   border-radius: 50%;
@@ -251,13 +253,6 @@
   color: #b91c1c;
 }
 
-.metaText {
-  margin: 0;
-  font-size: 12px;
-  color: #64748b;
-  word-break: break-all;
-}
-
 .endedActions {
   display: flex;
   flex-wrap: wrap;
@@ -267,6 +262,14 @@
 
 .phoneButton {
   cursor: pointer;
+}
+
+/* 移动端：表单控件 ≥16px，避免 iOS 聚焦自动放大页面 */
+@media (max-width: 560px) {
+  .field select,
+  .field input {
+    font-size: 16px;
+  }
 }
 
 .phoneButtonActive {

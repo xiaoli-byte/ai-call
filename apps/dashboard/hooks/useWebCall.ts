@@ -4,7 +4,8 @@
  * useWebCall — 首页浏览器模拟外呼 Hook
  *
  * 走真实业务管线（契约 §3/§4）：
- *   1. POST /tasks（锁定已发布 flowVersion）→ POST /tasks/:id/dispatch { channel:'web' } 拿 attemptId；
+ *   1. POST /web-demo/calls { flowId }（匿名公开端点：服务端建单锁定已发布 flowVersion
+ *      并按 web 通道 dispatch）拿 taskId + attemptId；
  *   2. 申请麦克风（useAudioRecorder：AudioWorklet mono 采集 → 16k PCM16）；
  *   3. 连 `${NEXT_PUBLIC_VOICE_AGENT_WS_URL}/audio-stream`，首帧 metadata（dialog_id=attemptId）；
  *   4. 上行 20ms 帧聚批 ≤200ms 发送（对齐 useASR 节奏）；
@@ -52,18 +53,14 @@ export interface WebCallSubtitle {
 }
 
 export interface StartWebCallParams {
-  /** 被叫号码（仅作任务记录，如本机联调分机 1001） */
-  to: string;
-  /** 流程绑定的场景 key */
-  scenario: string;
-  /** 已发布流程 ID（建单时锁定其已发布版本） */
+  /** 已发布流程 ID（服务端建单时锁定其已发布版本；被叫/通道由服务端强制） */
   flowId: string;
 }
 
 export interface UseWebCallReturn {
   state: WebCallState;
   subtitles: WebCallSubtitle[];
-  /** 建单成功后即有值，结束态用于「在控制台查看任务」 */
+  /** 建单成功后即有值（真实落库的任务 ID，仅内部使用，不在首页展示） */
   taskId: string | null;
   /** 结束原因（end 帧 reason / hangup / disconnected） */
   endReason: string | null;
@@ -243,7 +240,7 @@ export function useWebCall(): UseWebCallReturn {
   );
 
   const startCall = useCallback(
-    async ({ to, scenario, flowId }: StartWebCallParams) => {
+    async ({ flowId }: StartWebCallParams) => {
       if (
         stateRef.current === 'preparing' ||
         stateRef.current === 'dialing' ||
@@ -260,15 +257,12 @@ export function useWebCall(): UseWebCallReturn {
       syncState('preparing');
 
       try {
-        // 1. 真实建单（锁定已发布 flowVersion）
-        const task = await apiClient.tasks.create({ to, scenario, flowId });
-        setTaskId(task.id);
-
-        // 2. web 通道 dispatch → attemptId 作为 dialog_id
-        const dispatched = await apiClient.tasks.dispatch(task.id, { channel: 'web' });
-        const attemptId = dispatched.attemptId;
+        // 1-2. 匿名公开端点一步完成：真实建单（锁定已发布 flowVersion）+ web 通道 dispatch
+        const demoCall = await apiClient.webDemo.startCall(flowId);
+        setTaskId(demoCall.taskId);
+        const attemptId = demoCall.attemptId;
         if (!attemptId) {
-          throw new Error('dispatch 未返回 attemptId，请确认 API 已支持 web 通道');
+          throw new Error('服务端未返回 attemptId，请确认 API 已支持 web 通道');
         }
 
         syncState('dialing');

@@ -1,32 +1,27 @@
 /**
- * 首页浏览器模拟外呼测试（契约 §3/§4）
+ * 首页浏览器模拟外呼测试（契约 §3/§4，2026-07-17 起全程匿名）
  *
- * ① 发起时序：create task → dispatch{channel:'web'} → 用返回 attemptId 拼首帧 metadata；
+ * ① 发起时序：POST /web-demo/calls { flowId } → 用返回 attemptId 拼首帧 metadata；
  * ② 文本帧 agent_speech/caller_speech 渲染进字幕列表，end 帧置 ended 态；
  * ③ 挂断：关 WS、停止采集；
- * ④ 未登录 401 → 跳转 /login?redirect=/。
+ * ④ 流程列表加载失败 → 面板内报错并可重试，绝不跳登录页。
  */
 
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, renderHook, act, fireEvent, waitFor, screen } from '@testing-library/react';
-import { ApiError } from '@/lib/api/types';
 
-// ─── Mock apiClient（useWebCall 与 WebCallPanel 共用） ───
+// ─── Mock apiClient（useWebCall 与 WebCallPanel 共用，匿名公开端点） ───
 const apiMocks = vi.hoisted(() => ({
-  createTask: vi.fn(),
-  dispatchTask: vi.fn(),
+  startDemoCall: vi.fn(),
   listFlows: vi.fn(),
 }));
 
 vi.mock('@/lib/api/client', () => ({
   apiClient: {
-    tasks: {
-      create: apiMocks.createTask,
-      dispatch: apiMocks.dispatchTask,
-    },
-    taskFlows: {
-      list: apiMocks.listFlows,
+    webDemo: {
+      flows: apiMocks.listFlows,
+      startCall: apiMocks.startDemoCall,
     },
   },
 }));
@@ -48,12 +43,6 @@ const mockRecorder = vi.hoisted(() => ({
 
 vi.mock('@/hooks/useAudioRecorder', () => ({
   useAudioRecorder: vi.fn(() => mockRecorder),
-}));
-
-// ─── Mock next/navigation ───
-const routerMocks = vi.hoisted(() => ({ push: vi.fn() }));
-vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push: routerMocks.push }),
 }));
 
 // ─── Mock WebSocket（连接后自动 open） ───
@@ -126,7 +115,7 @@ class MockAudioContext {
 import { useWebCall } from '@/hooks/useWebCall';
 import WebCallPanel from '@/components/home/WebCallPanel';
 
-const START_PARAMS = { to: '1001', scenario: 'ecommerce', flowId: 'flow-1' };
+const START_PARAMS = { flowId: 'flow-1' };
 
 /** 发起并等待 WS open（MockWebSocket 微任务内自动 open） */
 async function startCall(result: { current: ReturnType<typeof useWebCall> }) {
@@ -147,8 +136,7 @@ describe('useWebCall / WebCallPanel', () => {
     vi.stubGlobal('WebSocket', MockWebSocket);
     vi.stubGlobal('AudioContext', MockAudioContext);
 
-    apiMocks.createTask.mockResolvedValue({ id: 'task-1', status: 'PENDING' });
-    apiMocks.dispatchTask.mockResolvedValue({
+    apiMocks.startDemoCall.mockResolvedValue({
       taskId: 'task-1',
       attemptId: 'attempt-9',
       status: 'CALLING',
@@ -160,21 +148,13 @@ describe('useWebCall / WebCallPanel', () => {
     vi.unstubAllGlobals();
   });
 
-  it('① 发起时序：create → dispatch{channel:web} → 首帧 metadata 用返回的 attemptId', async () => {
+  it('① 发起时序：POST /web-demo/calls → 首帧 metadata 用返回的 attemptId', async () => {
     const { result } = renderHook(() => useWebCall());
 
     const ws = await startCall(result);
 
-    // 调用顺序与参数
-    expect(apiMocks.createTask).toHaveBeenCalledWith({
-      to: '1001',
-      scenario: 'ecommerce',
-      flowId: 'flow-1',
-    });
-    expect(apiMocks.dispatchTask).toHaveBeenCalledWith('task-1', { channel: 'web' });
-    expect(apiMocks.createTask.mock.invocationCallOrder[0]).toBeLessThan(
-      apiMocks.dispatchTask.mock.invocationCallOrder[0],
-    );
+    // 只带 flowId，被叫与通道由服务端强制
+    expect(apiMocks.startDemoCall).toHaveBeenCalledWith('flow-1');
 
     // WS 指向 /audio-stream，binaryType=arraybuffer
     expect(ws.url.endsWith('/audio-stream')).toBe(true);
@@ -306,22 +286,21 @@ describe('useWebCall / WebCallPanel', () => {
     expect(sourcesAfterClear.length).toBe(3); // 前 2 个仍在数组里（onended 未触发），新增 1 个
   });
 
-  it('④ 未登录：流程列表 401 → 跳转 /login?redirect=/', async () => {
-    apiMocks.listFlows.mockRejectedValue(new ApiError(401, 'UNAUTHORIZED', '未授权或登录已过期'));
+  it('④ 流程列表加载失败：面板内报错并可重试，不跳登录页', async () => {
+    apiMocks.listFlows.mockRejectedValue(new Error('加载流程列表失败'));
 
     render(<WebCallPanel />);
     fireEvent.click(screen.getByRole('button', { name: '发起模拟外呼' }));
 
-    await waitFor(() => {
-      expect(routerMocks.push).toHaveBeenCalledWith('/login?redirect=/');
-    });
+    expect(await screen.findByText('加载流程列表失败')).toBeTruthy();
+    expect(screen.getByText('重新加载流程')).toBeTruthy();
   });
 
-  it('已登录：拨号展开面板，已发布流程进下拉且默认选电商 demo', async () => {
+  it('匿名访客：拨号展开面板，可体验流程进下拉且默认选电商 demo，不显示被叫号', async () => {
     apiMocks.listFlows.mockResolvedValue([
-      { id: 'flow-a', name: '催收标准流程', status: 'published', scenarioConfig: { scenario: 'collection' } },
-      { id: 'flow-b', name: '电商回访流程', status: 'published', scenarioConfig: { scenario: 'ecommerce' } },
-      { id: 'flow-c', name: '草稿流程', status: 'draft' },
+      { id: 'flow-a', name: '催收标准流程', scenario: 'collection' },
+      { id: 'flow-b', name: '电商回访流程', scenario: 'ecommerce' },
+      { id: 'flow-d', name: '编辑中的已发布流程', scenario: null },
     ]);
 
     render(<WebCallPanel />);
@@ -333,27 +312,11 @@ describe('useWebCall / WebCallPanel', () => {
     });
     const options = Array.from(select.options).map((o) => o.textContent);
     expect(options).toContain('催收标准流程');
-    expect(options).not.toContain('草稿流程');
-    // 被叫号默认 1001
-    expect((screen.getByLabelText('被叫号码（仅作任务记录）') as HTMLInputElement).value).toBe('1001');
-  });
-
-  it('A8：编辑已发布流程打回 draft 后（version>0）仍进下拉，并带草稿提示后缀', async () => {
-    apiMocks.listFlows.mockResolvedValue([
-      { id: 'flow-b', name: '电商回访流程', status: 'published', version: 1, scenarioConfig: { scenario: 'ecommerce' } },
-      { id: 'flow-d', name: '编辑中的已发布流程', status: 'draft', version: 2 },
-      { id: 'flow-c', name: '从未发布的草稿', status: 'draft', version: 0 },
-    ]);
-
-    render(<WebCallPanel />);
-    fireEvent.click(screen.getByRole('button', { name: '发起模拟外呼' }));
-
-    const select = (await screen.findByLabelText('已发布流程')) as HTMLSelectElement;
-    await waitFor(() => {
-      expect(select.value).toBe('flow-b');
-    });
-    const options = Array.from(select.options).map((o) => o.textContent);
-    expect(options).toContain('编辑中的已发布流程（草稿修改中，执行已发布版本）');
-    expect(options).not.toContain('从未发布的草稿');
+    // 服务端已过滤/裁剪，前端原样展示，不追加草稿后缀
+    expect(options).toContain('编辑中的已发布流程');
+    // 被叫号不展示输入框（服务端固定 1001）
+    expect(screen.queryByLabelText('被叫号码（仅作任务记录）')).toBeNull();
+    // hero 左上角徽标显示当前选中话术名称
+    expect(screen.getByText('电商回访流程 · 体验中')).toBeTruthy();
   });
 });

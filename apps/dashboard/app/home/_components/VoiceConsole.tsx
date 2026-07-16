@@ -1,8 +1,6 @@
 'use client';
 
 import { useCallback, useMemo, useState } from 'react';
-import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import {
   AudioLines,
   Check,
@@ -18,15 +16,13 @@ import {
   Volume2,
   X,
 } from 'lucide-react';
-import type { TaskFlow } from '@ai-call/shared';
-
 import { useWebCall, type WebCallState } from '@/hooks/useWebCall';
 import { apiClient } from '@/lib/api/client';
-import { ApiError } from '@/lib/api/types';
+import type { WebDemoFlow } from '@/lib/api/endpoints/web-demo';
 import styles from './voice-console.module.scss';
 
-const DEFAULT_CALLEE = '1001';
-const FALLBACK_SCENARIO = 'ecommerce';
+/** 默认优先选中的场景（电商 demo） */
+const PREFERRED_SCENARIO = 'ecommerce';
 
 type VisualStage = 'idle' | 'requesting' | 'listening' | 'thinking' | 'speaking' | 'complete' | 'error';
 
@@ -57,16 +53,15 @@ const WAVE_BARS = [18, 28, 42, 32, 56, 72, 46, 84, 62, 36, 76, 92, 58, 44, 70, 5
 /**
  * 蓝色首页的语音入口。它与根首页 WebCallPanel 共用 useWebCall：
  * 建单、dispatch、麦克风 PCM 上行、语音服务 WebSocket、下行播放和实时字幕均走真实链路。
+ * 全程匿名可用（/web-demo/* 公开端点），不做登录跳转。
  */
 export default function VoiceConsole() {
-  const router = useRouter();
   const call = useWebCall();
   const [expanded, setExpanded] = useState(false);
-  const [flows, setFlows] = useState<TaskFlow[]>([]);
+  const [flows, setFlows] = useState<WebDemoFlow[]>([]);
   const [flowsLoading, setFlowsLoading] = useState(false);
   const [flowsError, setFlowsError] = useState<string | null>(null);
   const [selectedFlowId, setSelectedFlowId] = useState('');
-  const [callee, setCallee] = useState(DEFAULT_CALLEE);
 
   const lastSubtitle = call.subtitles[call.subtitles.length - 1];
   const stage = stageFromCall(call.state, lastSubtitle?.role);
@@ -82,26 +77,19 @@ export default function VoiceConsole() {
     setFlowsLoading(true);
     setFlowsError(null);
     try {
-      const list = await apiClient.taskFlows.list();
-      // 下拉边界（A8）：不能只认 status==='published'——编辑已发布流程会把状态打回
-      // draft，但 version>0（仅在 publish 时自增，见 task-flows.service.ts）说明
-      // 该流程仍有可执行的已发布快照，任务创建时会解析到该快照，应继续可选。
-      const published = list.filter((flow) => flow.status === 'published' || flow.version > 0);
-      setFlows(published);
-      const preferred = published.find(
-        (flow) => flow.scenarioConfig?.scenario === FALLBACK_SCENARIO || flow.name.includes('电商'),
-      ) ?? published[0];
+      // 匿名公开端点：服务端只返回已发布流程的 id/name/scenario
+      const list = await apiClient.webDemo.flows();
+      setFlows(list);
+      const preferred = list.find(
+        (flow) => flow.scenario === PREFERRED_SCENARIO || flow.name.includes('电商'),
+      ) ?? list[0];
       setSelectedFlowId((current) => current || preferred?.id || '');
     } catch (error) {
-      if (error instanceof ApiError && error.isUnauthorized) {
-        router.push('/login?redirect=/home');
-        return;
-      }
       setFlowsError(error instanceof Error ? error.message : '暂时无法读取已发布流程');
     } finally {
       setFlowsLoading(false);
     }
-  }, [router]);
+  }, []);
 
   const openSetup = useCallback(() => {
     if (call.state === 'ended' || call.state === 'error') call.reset();
@@ -116,12 +104,8 @@ export default function VoiceConsole() {
 
   const startCall = useCallback(async () => {
     if (!selectedFlow) return;
-    await call.startCall({
-      to: callee.trim() || DEFAULT_CALLEE,
-      scenario: selectedFlow.scenarioConfig?.scenario ?? FALLBACK_SCENARIO,
-      flowId: selectedFlow.id,
-    });
-  }, [call, callee, selectedFlow]);
+    await call.startCall({ flowId: selectedFlow.id });
+  }, [call, selectedFlow]);
 
   const reset = useCallback(() => {
     call.reset();
@@ -199,21 +183,11 @@ export default function VoiceConsole() {
                       {flows.map((flow) => (
                         <option key={flow.id} value={flow.id}>
                           {flow.name}
-                          {flow.status !== 'published' ? '（草稿修改中，执行已发布版本）' : ''}
                         </option>
                       ))}
                     </select>
                     <ChevronDown aria-hidden="true" />
                   </div>
-                </label>
-                <label>
-                  <span>被叫号码 <em>仅作任务记录</em></span>
-                  <input
-                    value={callee}
-                    onChange={(event) => setCallee(event.target.value)}
-                    placeholder={DEFAULT_CALLEE}
-                    disabled={call.state === 'preparing'}
-                  />
                 </label>
                 <button type="submit" className={styles.callButton} disabled={flowsLoading || !selectedFlow || call.state === 'preparing'}>
                   {call.state === 'preparing' ? <LoaderCircle className={styles.spinner} /> : <PhoneCall />}
@@ -245,12 +219,6 @@ export default function VoiceConsole() {
           </div>
         ) : null}
 
-        {call.state === 'ended' && call.taskId ? (
-          <div className={styles.resultBox}>
-            <span>任务已保存</span>
-            <Link href="/tasks">在控制台查看通话</Link>
-          </div>
-        ) : null}
       </div>
 
       <div className={styles.controls}>

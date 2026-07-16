@@ -132,18 +132,20 @@ export class KnowledgeBaseService implements OnModuleInit {
     },
   };
 
-  /** 列出所有知识库 */
+  /** 列出所有知识库，按 parentId 组装成目录树返回。 */
   async list() {
     if (this.externalBaseUrl) {
       // ai-knowledge 的可检索边界是 folder；不要继续代理 ai-call 自己才有的
       // /knowledge-base 路由，否则外部模式下场景页无法选择真实知识库。
       const folders = await this.requestExternal<ExternalFolder[]>('/folders/selectable');
-      return folders.map((folder) => ({
+      const nodes = folders.map((folder) => ({
         id: folder.id,
         name: folder.name,
         // folder 列表不携带文档统计，选择器只需稳定地展示可关联范围。
         docCount: Number(folder.documentCount ?? 0),
+        parentId: folder.parentId ?? null,
       }));
+      return this.buildKnowledgeBaseTree(nodes);
     }
 
     const builtin = Object.values(this.knowledgeBases).map(({ docs, ...rest }) => ({
@@ -152,8 +154,9 @@ export class KnowledgeBaseService implements OnModuleInit {
       indexedCount: docs.length,
       failedCount: 0,
       staleCount: 0,
+      parentId: null,
     }));
-    if (!this.prisma) return builtin;
+    if (!this.prisma) return this.buildKnowledgeBaseTree(builtin);
 
     const documents = await (this.prisma as any).knowledgeDocument.findMany({
       orderBy: { updatedAt: 'desc' },
@@ -168,13 +171,35 @@ export class KnowledgeBaseService implements OnModuleInit {
         indexedCount: 0,
         failedCount: 0,
         staleCount: 0,
+        parentId: null,
       };
       current.docCount += 1;
       if (doc.indexStatus === 'indexed') current.indexedCount += 1;
       if (doc.indexStatus === 'failed') current.failedCount += 1;
       byId.set(doc.knowledgeBaseId, current);
     }
-    return [...byId.values()];
+    return this.buildKnowledgeBaseTree([...byId.values()]);
+  }
+
+  private buildKnowledgeBaseTree(
+    nodes: Array<{ id: string; parentId?: string | null; children?: unknown[] } & Record<string, unknown>>,
+  ) {
+    const map = new Map<string, any>();
+    const roots: any[] = [];
+    for (const node of nodes) {
+      map.set(node.id, { ...node, children: [] });
+    }
+    for (const node of nodes) {
+      const mapped = map.get(node.id);
+      if (!mapped) continue;
+      if (node.parentId && map.has(node.parentId)) {
+        const parent = map.get(node.parentId);
+        parent.children.push(mapped);
+      } else {
+        roots.push(mapped);
+      }
+    }
+    return roots;
   }
 
   /** 获取知识库详情 */
@@ -596,12 +621,15 @@ interface KnowledgeBaseSummary {
   id: string;
   name: string;
   docCount?: number;
+  parentId?: string | null;
+  children?: KnowledgeBaseSummary[];
 }
 
 interface ExternalFolder {
   id: string;
   name: string;
   documentCount?: number;
+  parentId?: string | null;
 }
 
 interface KnowledgeBaseDetail {
