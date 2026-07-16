@@ -3,7 +3,8 @@
 契约：docs/superpowers/specs/2026-07-10-voice-test-call-design.md §2
 - channel=="web"：字幕/事件走同一 WS 的文本帧，且仍照常上报 NestJS
 - channel 缺省/freeswitch：不发任何文本帧（防 FreeSWITCH 把 JSON 当音频播）
-- web 断线兜底：会话未正常收尾时调用 tasks.hangup 推任务到终态
+- web 正常收尾：先调用 tasks.hangup 推任务到终态，再发 end 帧
+- web 断线兜底：会话未正常收尾时再次调用 tasks.hangup
 """
 
 from __future__ import annotations
@@ -45,8 +46,9 @@ class FakeTasks:
     ) -> None:
         self.transcripts.append((task_id, role, content))
 
-    async def hangup(self, task_id: str, *, quiet: bool = False) -> None:
+    async def hangup(self, task_id: str, *, quiet: bool = False) -> bool:
         self.hangups.append((task_id, quiet))
+        return True
 
 
 class StreamingWebSocket:
@@ -160,7 +162,7 @@ async def test_non_web_channel_never_sends_text_frames(kwargs: dict) -> None:
 
 
 async def test_web_disconnect_before_session_end_triggers_hangup() -> None:
-    """浏览器中途关 WS → 会话被 cancel（set_outcome 未执行）→ hangup 兜底。"""
+    """浏览器中途关 WS → 会话被 cancel（on_end 未执行）→ hangup 兜底。"""
     tasks = FakeTasks()
     server = _make_server(tasks)
 
@@ -177,8 +179,8 @@ async def test_web_disconnect_before_session_end_triggers_hangup() -> None:
     assert server._agent.ended == ["call-1"]
 
 
-async def test_web_session_completed_normally_skips_hangup() -> None:
-    """会话正常收尾（agent 内部已 set_outcome）时不再调用 hangup。"""
+async def test_web_session_completed_normally_skips_disconnect_fallback() -> None:
+    """on_end 已收口的正常会话不在连接 finally 重复调用 hangup。"""
     tasks = FakeTasks()
     server = _make_server(tasks)
 
@@ -270,11 +272,57 @@ async def test_start_agent_session_passes_channel_to_agent() -> None:
 
 async def test_web_channel_sends_end_frame_on_session_end() -> None:
     ws = FakeWebSocket()
-    callbacks = WebSocketCallbacks(ws, "call-1", FakeTasks(), channel="web")
+    tasks = FakeTasks()
+    callbacks = WebSocketCallbacks(ws, "call-1", tasks, channel="web")
 
     await callbacks.on_end("对话结束")
 
+    assert tasks.hangups == [("call-1", False)]
     assert _text_frames(ws)[-1] == {"type": "end", "reason": "对话结束"}
+
+
+async def test_web_channel_finalizes_before_sending_end_frame() -> None:
+    """Browser end must be published only after lifecycle finalization completes."""
+    ws = FakeWebSocket()
+    hangup_started = asyncio.Event()
+    allow_hangup = asyncio.Event()
+
+    class BlockingTasks(FakeTasks):
+        async def hangup(self, task_id: str, *, quiet: bool = False) -> bool:
+            hangup_started.set()
+            await allow_hangup.wait()
+            return await super().hangup(task_id, quiet=quiet)
+
+    tasks = BlockingTasks()
+    callbacks = WebSocketCallbacks(ws, "call-1", tasks, channel="web")
+    pending = asyncio.create_task(callbacks.on_end("completed"))
+
+    await hangup_started.wait()
+    assert _text_frames(ws) == []
+
+    allow_hangup.set()
+    await pending
+    assert tasks.hangups == [("call-1", False)]
+    assert _text_frames(ws) == [{"type": "end", "reason": "completed"}]
+
+
+async def test_web_channel_does_not_send_end_when_finalization_fails() -> None:
+    """收口失败时不能发 end，否则浏览器会关 WS 并遮蔽服务端故障。"""
+
+    class FailingTasks(FakeTasks):
+        async def hangup(self, task_id: str, *, quiet: bool = False) -> bool:
+            self.hangups.append((task_id, quiet))
+            return False
+
+    ws = FakeWebSocket()
+    tasks = FailingTasks()
+    callbacks = WebSocketCallbacks(ws, "call-1", tasks, channel="web")
+
+    with pytest.raises(RuntimeError, match="failed to finalize web call call-1"):
+        await callbacks.on_end("completed")
+
+    assert tasks.hangups == [("call-1", False)]
+    assert _text_frames(ws) == []
 
 
 async def test_web_channel_sends_error_frame_when_session_fails() -> None:

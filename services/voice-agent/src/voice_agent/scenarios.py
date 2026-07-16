@@ -188,4 +188,5 @@ def scenario_from_contract(data: Mapping[str, Any]) -> ScenarioConfig:
         business_goal=str(data.get("businessGoal") or ""),
         llm_constraints=[str(item) for item in data.get("llmConstraints", [])],
         default_flow_id=data.get("defaultFlowId"),
+        dialog_repair=dict(data.get("dialogRepair") or {}),
     )

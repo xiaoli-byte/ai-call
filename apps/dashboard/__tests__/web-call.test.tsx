@@ -192,15 +192,15 @@ describe('useWebCall / WebCallPanel', () => {
     expect(result.current.state).toBe('in-call');
     expect(result.current.taskId).toBe('task-1');
 
-    // 上行聚批：20ms 帧（640B）累计 200ms（6400B）才发送
+    // 上行聚批：20ms 帧（640B）累计 60ms（1920B）发送，降低打断延迟
     const audioCallback = mockRecorder.onAudioFrame.mock.calls[0][0] as (
       pcm: ArrayBuffer,
     ) => void;
-    for (let i = 0; i < 9; i++) audioCallback(new ArrayBuffer(640));
+    for (let i = 0; i < 2; i++) audioCallback(new ArrayBuffer(640));
     expect(ws.sent.length).toBe(1); // 仍只有 metadata
     audioCallback(new ArrayBuffer(640));
     expect(ws.sent.length).toBe(2);
-    expect((ws.sent[1] as ArrayBuffer).byteLength).toBe(6400);
+    expect((ws.sent[1] as ArrayBuffer).byteLength).toBe(1920);
   });
 
   it('② 文本帧渲染进字幕列表，end 帧置 ended 态', async () => {

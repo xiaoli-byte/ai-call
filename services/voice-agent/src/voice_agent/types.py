@@ -40,6 +40,10 @@ class ToolDefinition:
     name: str
     description: str
     parameters: dict[str, Any]
+    # Control-plane classifiers need provider-side schema enforcement and a
+    # mandatory tool call. Ordinary business tools keep both disabled.
+    strict: bool = False
+    required: bool = False
 
 
 @dataclass
@@ -69,7 +73,7 @@ class ToolResult:
 class LLMEvent:
     """LLM 流式回调事件。"""
 
-    type: Literal["delta", "tool_call", "done"]
+    type: Literal["delta", "tool_call", "error", "done"]
     content: Optional[str] = None
     tool_call: Optional[ToolCall] = None
 
@@ -167,6 +171,9 @@ class ScenarioConfig:
     business_goal: str = ""
     llm_constraints: list[str] = field(default_factory=list)
     default_flow_id: Optional[str] = None
+    # 对话修复话术配置（camelCase 键，镜像 shared 的 DialogRepairConfig；
+    # 由 repair_phrases.RepairPhrases.from_config 解析，空 dict = 全用默认）
+    dialog_repair: dict[str, Any] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------

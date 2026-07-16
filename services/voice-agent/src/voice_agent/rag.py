@@ -63,7 +63,8 @@ class RagService:
                 json={"query": query, "topK": top_k},
                 headers=headers or None,
             )
-            if response.status_code != 200:
+            # NestJS POST 默认 201，任何 2xx 都是成功
+            if not response.is_success:
                 raise RuntimeError(f"RAG retrieve failed: HTTP {response.status_code}")
 
             data = response.json()

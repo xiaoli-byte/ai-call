@@ -5,8 +5,10 @@
 - 每轮对话：PATCH /api/tasks/:id/transcript 上报转写条目
 - 转人工时：POST /api/tasks/:id/transfer 触发 ESL uuid_transfer
 - 会话结束：PATCH /api/tasks/:id/outcome 上报通话结果
+- Web 收尾：POST /api/tasks/:id/hangup 原子结束 task/attempt
 
-所有上报均为 fire-and-forget：失败仅 warn 不阻塞对话主循环。
+转写、结果等普通上报失败仅 warn，不阻塞对话主循环。Web 收尾的
+hangup 是例外：它会重试瞬时错误并返回是否成功，以便调用方决定是否发送 end 帧。
 """
 
 from __future__ import annotations
@@ -123,7 +125,7 @@ class TaskClient:
         outcome: str,
         tags: Optional[list[str]] = None,
     ) -> None:
-        """上报通话结果（会话结束时调用）。"""
+        """上报通话业务结果；该端点不负责将任务状态推到终态。"""
         url = f"{self._api_base_url}/tasks/{task_id}/outcome"
         body: dict[str, Any] = {"outcome": outcome}
         if tags:
@@ -197,7 +199,7 @@ class TaskClient:
             logger.warning("[TaskClient] get_task_flow %s error: %s", flow_id, err)
             return None
 
-    async def hangup(self, task_id: str, *, quiet: bool = False) -> None:
+    async def hangup(self, task_id: str, *, quiet: bool = False) -> bool:
         """挂机（POST /api/tasks/{task_id}/hangup，API 同步返回 200 或异步返回 202）。
 
         quiet=True 用于兜底型调用（如 web 通道断线清理）：任务可能已在终态，
@@ -206,15 +208,20 @@ class TaskClient:
         url = f"{self._api_base_url}/tasks/{task_id}/hangup"
         log = logger.debug if quiet else logger.warning
         try:
-            response = await self._request("POST", url, retry=False)
-            if response.status_code not in {200, 202}:
+            # The API endpoint is idempotent and Web calls have no provider
+            # event to repair a lost response, so transient failures must retry.
+            response = await self._request("POST", url, retry=True)
+            accepted = response.status_code in {200, 202}
+            if not accepted:
                 log(
                     "[TaskClient] hangup HTTP %s for task %s",
                     response.status_code,
                     task_id,
                 )
+            return accepted
         except Exception as err:
             log("[TaskClient] hangup %s error: %s", task_id, err)
+            return False
 
     async def execute_action(
         self,

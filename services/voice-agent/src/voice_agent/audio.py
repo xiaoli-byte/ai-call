@@ -27,7 +27,10 @@ def pcm16_to_float(pcm: bytes) -> np.ndarray:
 def float_to_pcm16(arr: np.ndarray) -> bytes:
     """float32 ndarray → PCM 16-bit signed LE bytes。"""
     clipped = np.clip(arr, -1.0, 1.0)
-    return (clipped * 32768.0).astype("<i2").tobytes()
+    # +1.0 * 32768 would wrap to -32768 during int16 conversion. Saturate the
+    # positive endpoint explicitly while preserving the full negative range.
+    scaled = np.clip(clipped * 32768.0, -32768.0, 32767.0)
+    return scaled.astype("<i2").tobytes()
 
 
 def resample(pcm: bytes, src_rate: int, dst_rate: int) -> bytes:

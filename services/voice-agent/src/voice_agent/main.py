@@ -109,6 +109,33 @@ def _build_agent() -> tuple[VoiceAgent, TaskClient, Any]:
     asr_tts_gate_web_enabled = _env_bool("ASR_TTS_GATE_WEB_ENABLED", False)
     asr_tts_echo_guard_enabled = _env_bool("ASR_TTS_ECHO_GUARD_ENABLED", True)
     asr_tts_tail_guard_ms = int(os.getenv("ASR_TTS_TAIL_GUARD_MS", "500"))
+    # 浏览器原生 AEC 后的服务端第二级：TTS PCM 参考相关性 + 残余能量 + 双讲锁存。
+    aec_reference_gate_enabled = _env_bool("AEC_REFERENCE_GATE_ENABLED", True)
+    aec_reference_window_ms = _env_int("AEC_REFERENCE_WINDOW_MS", 3000)
+    aec_analysis_window_ms = _env_int("AEC_ANALYSIS_WINDOW_MS", 200)
+    aec_min_analysis_ms = _env_int("AEC_MIN_ANALYSIS_MS", 180)
+    aec_echo_correlation_threshold = _env_float(
+        "AEC_ECHO_CORRELATION_THRESHOLD", 0.98
+    )
+    aec_echo_max_residual_ratio = _env_float(
+        "AEC_ECHO_MAX_RESIDUAL_RATIO", 0.20
+    )
+    aec_near_end_min_snr_db = _env_float("AEC_NEAR_END_MIN_SNR_DB", 8.0)
+    aec_min_rms = _env_float("AEC_MIN_RMS", 0.006)
+    aec_double_talk_hangover_ms = _env_int("AEC_DOUBLE_TALK_HANGOVER_MS", 800)
+    logger.info(
+        "[EchoAcoustic] config enabled=%s ref_ms=%d analysis_ms=%d min_ms=%d "
+        "corr=%.3f residual=%.3f near_snr_db=%.1f min_rms=%.4f dtd_hangover_ms=%d",
+        aec_reference_gate_enabled,
+        aec_reference_window_ms,
+        aec_analysis_window_ms,
+        aec_min_analysis_ms,
+        aec_echo_correlation_threshold,
+        aec_echo_max_residual_ratio,
+        aec_near_end_min_snr_db,
+        aec_min_rms,
+        aec_double_talk_hangover_ms,
+    )
     # 拖尾保护兜底窗口（ms）：utterance 起始信号缺失时判定拖尾用；0 关闭兜底。
     asr_tail_guard_ms = int(os.getenv("ASR_TAIL_GUARD_MS", "800"))
     barge_in_during_tts_enabled = _env_bool("BARGE_IN_DURING_TTS_ENABLED", True)
@@ -139,11 +166,21 @@ def _build_agent() -> tuple[VoiceAgent, TaskClient, Any]:
         vad_provider=vad_provider,
         vad_silero_threshold=vad_silero_threshold,
         max_turns=int(os.getenv("MAX_TURNS", "30")),
-        turn_timeout_s=int(os.getenv("TURN_TIMEOUT_S", "30")),
+        # 默认 6 秒：客户静默超过该时长即触发静默追问（可被场景级 silenceTimeoutMs 覆盖）
+        turn_timeout_s=int(os.getenv("TURN_TIMEOUT_S", "6")),
         asr_tts_gate_enabled=asr_tts_gate_enabled,
         asr_tts_gate_web_enabled=asr_tts_gate_web_enabled,
         asr_tts_echo_guard_enabled=asr_tts_echo_guard_enabled,
         asr_tts_tail_guard_ms=asr_tts_tail_guard_ms,
+        aec_reference_gate_enabled=aec_reference_gate_enabled,
+        aec_reference_window_ms=aec_reference_window_ms,
+        aec_analysis_window_ms=aec_analysis_window_ms,
+        aec_min_analysis_ms=aec_min_analysis_ms,
+        aec_echo_correlation_threshold=aec_echo_correlation_threshold,
+        aec_echo_max_residual_ratio=aec_echo_max_residual_ratio,
+        aec_near_end_min_snr_db=aec_near_end_min_snr_db,
+        aec_min_rms=aec_min_rms,
+        aec_double_talk_hangover_ms=aec_double_talk_hangover_ms,
         asr_tail_guard_ms=asr_tail_guard_ms,
         barge_in_during_tts_enabled=barge_in_during_tts_enabled,
         barge_in_min_ms=barge_in_min_ms,

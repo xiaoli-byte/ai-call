@@ -41,10 +41,11 @@ def create_llm() -> LLMAdapter:
 
         llm = LangChainLLMAdapter(
             api_key=api_key,
-            model=os.getenv("LLM_DEEPSEEK_MODEL", "deepseek-chat"),
+            model=os.getenv("LLM_DEEPSEEK_MODEL", "deepseek-v4-flash"),
             base_url=os.getenv(
                 "LLM_DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1"
             ),
+            provider="deepseek",
         )
         logger.info("LLM provider: deepseek (langchain, model=%s)", llm.name)
         return llm
@@ -63,6 +64,7 @@ def create_llm() -> LLMAdapter:
                 "LLM_QWEN_BASE_URL",
                 "https://dashscope.aliyuncs.com/compatible-mode/v1",
             ),
+            provider="qwen",
         )
         logger.info("LLM provider: qwen (langchain, model=%s)", llm.name)
         return llm
@@ -77,7 +79,7 @@ def create_llm() -> LLMAdapter:
 
         llm = OpenAICompatibleLLM(
             api_key=api_key,
-            model=os.getenv("LLM_MODEL", "deepseek-chat"),
+            model=os.getenv("LLM_MODEL", "deepseek-v4-flash"),
             base_url=os.getenv("LLM_BASE_URL", "https://api.deepseek.com/v1"),
         )
         logger.info("LLM provider: legacy httpx")

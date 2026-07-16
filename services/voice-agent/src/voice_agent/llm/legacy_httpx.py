@@ -13,6 +13,7 @@ from typing import Any, Awaitable, Callable, Optional
 import httpx
 
 from ..types import ChatMessage, LLMEvent, ToolCall, ToolDefinition
+from .provider_profile import ProviderProfile
 
 logger = logging.getLogger(__name__)
 
@@ -26,13 +27,15 @@ class OpenAICompatibleLLM:
     def __init__(
         self,
         api_key: str,
-        model: str = "deepseek-chat",
+        model: str = "deepseek-v4-flash",
         base_url: str = "https://api.deepseek.com/v1",
         timeout: Optional[float] = 300.0,
+        provider: str | None = None,
     ) -> None:
         self._api_key = api_key
         self._model = model
         self._base_url = base_url.rstrip("/")
+        self._profile = ProviderProfile.from_base_url(base_url, provider=provider)
         self._timeout = timeout
         self._client = httpx.AsyncClient(timeout=timeout)
         self._current_task: Optional[asyncio.Task[None]] = None
@@ -40,6 +43,12 @@ class OpenAICompatibleLLM:
     @property
     def name(self) -> str:
         return "openai"
+
+    def _control_options(self, tool_name: str) -> dict[str, Any]:
+        options = self._profile.control_options(tool_name)
+        extra_body = options.pop("extra_body", {})
+        options.update(extra_body)
+        return options
 
     async def chat(
         self,
@@ -58,9 +67,25 @@ class OpenAICompatibleLLM:
             "model": self._model,
             "messages": self._to_openai_messages(messages),
             "stream": True,
+            **self._profile.raw_chat_body(),
         }
         if tools:
-            body["tools"] = [{"type": "function", "function": t.__dict__} for t in tools]
+            serialized_tools: list[dict[str, Any]] = []
+            for tool in tools:
+                function: dict[str, Any] = {
+                    "name": tool.name,
+                    "description": tool.description,
+                    "parameters": self._profile.compile_schema(tool.parameters),
+                }
+                if tool.strict and self._profile.supports_strict_tools:
+                    function["strict"] = True
+                serialized_tools.append({"type": "function", "function": function})
+            body["tools"] = serialized_tools
+            required_tools = [tool for tool in tools if tool.required]
+            if required_tools:
+                if len(required_tools) != 1:
+                    raise ValueError("control requests require exactly one tool")
+                body.update(self._control_options(required_tools[0].name))
 
         headers = {
             "Authorization": f"Bearer {self._api_key}",
@@ -84,6 +109,12 @@ class OpenAICompatibleLLM:
                         response.status_code,
                         error_body[:200],
                     )
+                    await on_event(
+                        LLMEvent(
+                            type="error",
+                            content=f"HTTP {response.status_code}",
+                        )
+                    )
                     await on_event(LLMEvent(type="done"))
                     return
 
@@ -93,6 +124,7 @@ class OpenAICompatibleLLM:
             raise
         except httpx.HTTPError as err:
             logger.error("[%s] request failed: %s", self.name, err)
+            await on_event(LLMEvent(type="error", content=str(err)))
             await on_event(LLMEvent(type="done"))
         finally:
             self._current_task = None
@@ -101,6 +133,51 @@ class OpenAICompatibleLLM:
         """中断当前 LLM 生成（barge-in）。"""
         if self._current_task and not self._current_task.done():
             self._current_task.cancel()
+
+    async def complete_structured(
+        self,
+        messages: list[ChatMessage],
+        tool: ToolDefinition,
+    ) -> dict[str, Any]:
+        function: dict[str, Any] = {
+            "name": tool.name,
+            "description": tool.description,
+            "parameters": self._profile.compile_schema(tool.parameters),
+        }
+        if tool.strict and self._profile.supports_strict_tools:
+            function["strict"] = True
+        body: dict[str, Any] = {
+            "model": self._model,
+            "messages": self._to_openai_messages(messages),
+            "tools": [{"type": "function", "function": function}],
+            "stream": False,
+            **self._control_options(tool.name),
+        }
+        response = await self._client.post(
+            f"{self._base_url}/chat/completions",
+            json=body,
+            headers={
+                "Authorization": f"Bearer {self._api_key}",
+                "Content-Type": "application/json",
+            },
+        )
+        response.raise_for_status()
+        choices = response.json().get("choices") or []
+        message = choices[0].get("message") if choices else None
+        tool_calls = message.get("tool_calls") if isinstance(message, dict) else None
+        if not isinstance(tool_calls, list) or len(tool_calls) != 1:
+            count = len(tool_calls) if isinstance(tool_calls, list) else 0
+            raise RuntimeError(f"expected exactly one tool call, received {count}")
+        function_call = tool_calls[0].get("function") or {}
+        if function_call.get("name") != tool.name:
+            raise RuntimeError(f"unexpected tool call: {function_call.get('name')}")
+        try:
+            arguments = json.loads(function_call.get("arguments") or "{}")
+        except json.JSONDecodeError as err:
+            raise RuntimeError("provider returned malformed tool arguments") from err
+        if not isinstance(arguments, dict):
+            raise RuntimeError("tool arguments are not an object")
+        return arguments
 
     async def _parse_sse(
         self,
@@ -167,7 +244,8 @@ class OpenAICompatibleLLM:
 
         OpenAI 把一次工具调用的 arguments 拆成多块发送，按 index 累加字符串。
         """
-        idx = tc.get("index", 0)
+        raw_index = tc.get("index", 0)
+        idx = raw_index if isinstance(raw_index, int) else 0
         existing = agg.get(idx, ToolCall(id="", name="", arguments={}))
 
         if tc.get("id"):

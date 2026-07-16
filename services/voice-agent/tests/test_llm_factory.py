@@ -111,7 +111,7 @@ def test_provider_deepseek_with_key(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LLM_PROVIDER", "deepseek")
     monkeypatch.setenv("LLM_DEEPSEEK_API_KEY", "sk-test")
     llm = create_llm()
-    assert llm.name == "langchain:deepseek-chat"
+    assert llm.name == "langchain:deepseek-v4-flash"
 
 
 @requires_langchain
@@ -123,7 +123,7 @@ def test_provider_deepseek_fallback_to_llm_api_key(
     monkeypatch.setenv("LLM_PROVIDER", "deepseek")
     monkeypatch.setenv("LLM_API_KEY", "sk-fallback")
     llm = create_llm()
-    assert llm.name == "langchain:deepseek-chat"
+    assert llm.name == "langchain:deepseek-v4-flash"
 
 
 @requires_langchain

@@ -4,7 +4,7 @@
 1. 前置 WebRTC VAD：receive_audio 不再直接推 STT，先过 VAD 状态机
 2. 预缓冲：VAD 内部维护 300ms 滚动窗口，silence→speech 时 flush 防丢首字
 3. NestJS 任务端点集成：start_session 拉 task 上下文，每轮上报 transcript，escalate 时 transfer
-4. barge-in：STT partial → interrupt_speaking（TTS task cancel + LLM cancel）
+4. barge-in：STT partial → interrupt_speaking（按 call_id 中断 TTS 播放）
 5. asyncio.Future 替代 TS 版 Promise + callback
 """
 
@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 from difflib import SequenceMatcher
 import logging
+import os
 import re
 import time
 from typing import Any, Optional
@@ -20,6 +21,7 @@ from uuid import uuid4
 
 from . import audio
 from .callbacks import AgentCallbacks, NoopCallbacks
+from .echo_gate import EchoAnalysis, ReferenceEchoGate
 from .llm import LLMAdapter
 from .rag import RagService
 from .scenarios import SCENARIO_CONFIGS, DEFAULT_VARIABLES, fill_template, get_scenario
@@ -91,6 +93,42 @@ _SHORT_BARGE_IN_ANSWERS = frozenset(
 )
 
 
+def _trim_context_window(
+    messages: list[ChatMessage], max_history_turns: int
+) -> list[ChatMessage]:
+    """LLM 上下文滑动窗口：保留全部 system 消息 + 最近 N 轮非 system 消息。
+
+    只裁剪送给 LLM 的消息列表，不改动 session.messages 原始记录（完整对话
+    仍通过 transcript 上报）。max_history_turns <= 0 表示不限制（旧行为）。
+    每轮按 user+assistant 两条估算，窗口即最近 2N 条非 system 消息。
+    窗口起点不允许落在 tool 结果上：OpenAI 协议要求 tool 消息前必须有
+    对应带 tool_calls 的 assistant 消息，孤儿 tool 消息会被服务端拒绝。
+    """
+    if max_history_turns <= 0:
+        return messages
+    limit = max_history_turns * 2
+    non_system_indexes = [
+        index for index, message in enumerate(messages) if message.role != "system"
+    ]
+    if len(non_system_indexes) <= limit:
+        return messages
+    cut = non_system_indexes[-limit]
+    while cut < len(messages) and messages[cut].role == "tool":
+        cut += 1
+    trimmed = [
+        message
+        for index, message in enumerate(messages)
+        if message.role == "system" or index >= cut
+    ]
+    logger.debug(
+        "[ContextWindow] 裁剪 LLM 上下文 %d -> %d 条（窗口 %d 轮）",
+        len(messages),
+        len(trimmed),
+        max_history_turns,
+    )
+    return trimmed
+
+
 def _normalize_echo_text(text: str) -> str:
     """Normalize ASR/TTS text for tolerant echo comparison."""
     normalized = re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", text.lower())
@@ -159,6 +197,33 @@ def _classify_tts_echo(
     return ("echo" if score >= threshold else "distinct"), score
 
 
+_ECHO_PARTIAL_LATCH_MIN_SIMILARITY = 0.90
+_ECHO_LATCH_RELEASE_SIMILARITY = 0.55
+
+
+def _is_explicit_barge_in_candidate(text: str) -> bool:
+    """Return whether text is strong enough to override echo hysteresis."""
+    candidate = _normalize_echo_text(text)
+    return bool(candidate) and (
+        any(command in candidate for command in _BARGE_IN_COMMANDS)
+        or candidate in _SHORT_BARGE_IN_ANSWERS
+    )
+
+
+def _should_hold_echo_latch(text: str, similarity: float) -> bool:
+    """Keep a prior high-confidence echo decision across unstable ASR rewrites.
+
+    Streaming ASR can first emit an exact TTS fragment and then rewrite the
+    final into a short, slightly different hallucination.  Releasing on that
+    single rewrite caused real iPhone speaker echo to interrupt playback.  A
+    clear command/known short answer or genuinely low similarity still escapes.
+    """
+    return (
+        similarity >= _ECHO_LATCH_RELEASE_SIMILARITY
+        and not _is_explicit_barge_in_candidate(text)
+    )
+
+
 # 语义自适应端点检测（B-P1b）的判定表：常量置于模块级便于真机调参。
 # 数字结尾（报号码等）：阿拉伯数字 + 常见中文数字。
 _SEMANTIC_DIGIT_CHARS = frozenset("0123456789一二三四五六七八九十两零")
@@ -220,6 +285,15 @@ class VoiceAgent:
         asr_tts_gate_web_enabled: bool = False,
         asr_tts_echo_guard_enabled: bool = True,
         asr_tts_tail_guard_ms: int = 500,
+        aec_reference_gate_enabled: bool = True,
+        aec_reference_window_ms: int = 3000,
+        aec_analysis_window_ms: int = 200,
+        aec_min_analysis_ms: int = 180,
+        aec_echo_correlation_threshold: float = 0.98,
+        aec_echo_max_residual_ratio: float = 0.20,
+        aec_near_end_min_snr_db: float = 8.0,
+        aec_min_rms: float = 0.006,
+        aec_double_talk_hangover_ms: int = 800,
         asr_tail_guard_ms: int = 800,
         barge_in_during_tts_enabled: bool = False,
         barge_in_min_ms: int = 500,
@@ -274,6 +348,18 @@ class VoiceAgent:
         # 对话循环配置
         self._max_turns = max_turns
         self._turn_timeout_s = turn_timeout_s
+        # 场景级静默超时覆盖（秒，按 call_id；来自 dialogRepair.silenceTimeoutMs）
+        self._turn_timeout_overrides: dict[str, float] = {}
+
+        # LLM 上下文滑动窗口（轮数，每轮≈user+assistant 两条；0=不限制）。
+        # 长通话下全量历史会让 token 成本与生成延迟线性上涨，默认保留最近 20 轮。
+        try:
+            self._llm_history_window_turns = int(
+                os.getenv("LLM_HISTORY_WINDOW_TURNS", "20")
+            )
+        except ValueError:
+            logger.warning("invalid LLM_HISTORY_WINDOW_TURNS; using 20")
+            self._llm_history_window_turns = 20
 
         # TTS 播放期间的 ASR 门控：
         # FreeSWITCH 当前回传音频可能包含 AI 自己的 TTS/扬声器回声。
@@ -285,6 +371,25 @@ class VoiceAgent:
         self._asr_tts_gate_web_enabled = asr_tts_gate_web_enabled
         self._asr_tts_echo_guard_enabled = asr_tts_echo_guard_enabled
         self._asr_tts_tail_guard_ms = max(0, asr_tts_tail_guard_ms)
+        # Web 端原生 AEC 后的第二级残余回声门控。它使用实际下发的 TTS PCM
+        # 作为远端参考，只丢弃高置信纯回声；双讲/不确定块始终原样送 VAD/ASR。
+        self._aec_reference_gate_enabled = aec_reference_gate_enabled
+        self._aec_reference_window_ms = min(10000, max(500, aec_reference_window_ms))
+        self._aec_analysis_window_ms = min(
+            500, max(80, aec_analysis_window_ms)
+        )
+        self._aec_min_analysis_ms = min(
+            self._aec_analysis_window_ms, max(40, aec_min_analysis_ms)
+        )
+        self._aec_echo_correlation_threshold = min(
+            1.0, max(0.0, aec_echo_correlation_threshold)
+        )
+        self._aec_echo_max_residual_ratio = max(0.0, aec_echo_max_residual_ratio)
+        self._aec_near_end_min_snr_db = max(0.0, aec_near_end_min_snr_db)
+        self._aec_min_rms = max(0.0, aec_min_rms)
+        self._aec_double_talk_hangover_ms = min(
+            5000, max(0, aec_double_talk_hangover_ms)
+        )
         # 拖尾保护（TailGuard）兜底窗口：utterance 起始信号缺失时（首个 partial 丢失、
         # 短语只出 final），用「final 到达 - 本轮 speak 起始 < 窗口」判定拖尾。
         # 设 0 关闭兜底（此时仅靠 partial 起始信号判定）。
@@ -309,15 +414,36 @@ class VoiceAgent:
         # 语义延长日志去重：provider 每帧被查询，仅在本 utterance 首次生效时打一行。
         self._semantic_extend_logged: set[str] = set()
         self._speaking: dict[str, bool] = {}
+        # Identity token prevents a late provider callback/finally from an old
+        # utterance from clearing state owned by a newer _speak invocation.
+        self._speak_tokens: dict[str, object] = {}
         # Web echo guard reference: current TTS text plus a short post-playback
         # validity window, so a delayed ASR final cannot become the next answer.
         self._tts_reference_text: dict[str, str] = {}
         self._tts_reference_until: dict[str, float] = {}
+        # Acoustic reference state is deliberately independent from the text
+        # echo guard so either layer can be disabled without coupling lifetimes.
+        self._echo_gates: dict[str, ReferenceEchoGate] = {}
+        self._echo_reference_until: dict[str, float] = {}
+        self._echo_reference_generation: dict[str, int] = {}
+        self._echo_latest_analysis: dict[str, tuple[float, EchoAnalysis]] = {}
+        self._echo_probe_logged: dict[str, tuple[float, str]] = {}
+        self._echo_fail_open_until: dict[str, float] = {}
+        self._echo_pending_audio: dict[str, bytearray] = {}
         # 拖尾保护：本轮 TTS 开口时刻（_speak 设 _speaking=True 时记）。
         self._speak_started_at: dict[str, float] = {}
         # 拖尾保护：本 ASR utterance 起始时刻（本句首个 partial 到达时记，
         # final/speech_start/speech_end 消费并清除）。缺失时走兜底窗口。
         self._utterance_started_at: dict[str, float] = {}
+        # A partial can interrupt TTS before its matching final arrives. Keep
+        # that utterance latched so the final cannot interrupt a new TTS turn.
+        # The final is still buffered/consumed; only the duplicate transport
+        # interruption is suppressed.
+        self._partial_barge_in_active: set[str] = set()
+        # call_id -> (the TTS reference pinned by a high-confidence echo
+        # partial, peak similarity).  It survives speech_end until the matching
+        # provider final, because FunASR emits final asynchronously afterwards.
+        self._semantic_echo_evidence: dict[str, tuple[str, float]] = {}
         self._channels: dict[str, str] = {}  # call_id → 会话通道（freeswitch|web）
         self._asr_suppressed_until: dict[str, float] = {}
         self._asr_gate_logged: set[str] = set()
@@ -368,7 +494,17 @@ class VoiceAgent:
         self._sessions[call_id] = session
         self._scenario_configs[call_id] = scenario
         self._callbacks[call_id] = callbacks
+        # 场景级静默超时：配置了 silenceTimeoutMs 时覆盖全局 turn_timeout
+        from .repair_phrases import RepairPhrases
+
+        repair = RepairPhrases.from_config(getattr(scenario, "dialog_repair", None))
+        if repair.silence_timeout_ms > 0:
+            self._turn_timeout_overrides[call_id] = repair.silence_timeout_ms / 1000.0
         self._channels[call_id] = channel or "freeswitch"
+        # Per-call detector: no model state or noise floor may leak between
+        # callers. receive_audio also creates lazily to tolerate startup races.
+        if channel == "web" and self._aec_reference_gate_enabled and not dry_run:
+            self._get_echo_gate(call_id)
         if dry_run:
             self._dry_run[call_id] = True
 
@@ -380,8 +516,9 @@ class VoiceAgent:
             await self._speak(call_id, greeting)
             await self._conversation_loop(call_id)
 
-        # 会话结束上报
-        if not self._dry_run.get(call_id):
+        # 会话结束上报。用本地参数而非 _dry_run 字典：end_session 清理可能先于
+        # 本协程执行到这里，字典条目已被 pop，回读会误把 dry_run 会话当真实通话上报。
+        if not dry_run:
             outcome = (
                 CallOutcome.ESCALATED
                 if call_id in self._escalated
@@ -405,10 +542,16 @@ class VoiceAgent:
         """
         from .flow_executor import FlowExecutor
         from .flow_types import TaskFlow as TaskFlowModel
+        from .repair_phrases import RepairPhrases
 
         flow_model = TaskFlowModel.from_dict(flow)
         adapter = _FlowExecutorAdapter(self, call_id, dry_run=self._dry_run.get(call_id, False))
-        executor = FlowExecutor(flow_model, adapter)
+        # 场景级修复话术随场景配置下发；未配置时 RepairPhrases 用内置默认。
+        scenario = self._scenario_configs.get(call_id)
+        repair = RepairPhrases.from_config(
+            getattr(scenario, "dialog_repair", None) if scenario else None
+        )
+        executor = FlowExecutor(flow_model, adapter, repair=repair)
         await executor.run(call_id)
 
     async def _conversation_loop(self, call_id: str) -> None:
@@ -466,15 +609,24 @@ class VoiceAgent:
 
         full_reply = ""
         pending_tool_calls: list[ToolCall] = []
+        transport_error = ""
 
         async def on_event(event: LLMEvent) -> None:
+            nonlocal full_reply, transport_error
             if event.type == "delta" and event.content:
-                nonlocal full_reply
                 full_reply += event.content
             elif event.type == "tool_call" and event.tool_call:
                 pending_tool_calls.append(event.tool_call)
+            elif event.type == "error":
+                transport_error = event.content or "provider error"
 
-        await self._llm.chat(messages, tools, on_event)
+        await self._llm.chat(
+            _trim_context_window(messages, self._llm_history_window_turns),
+            tools,
+            on_event,
+        )
+        if transport_error:
+            raise RuntimeError(f"LLM generation failed: {transport_error}")
 
         # 无工具调用：直接返回回复
         if not pending_tool_calls:
@@ -537,14 +689,120 @@ class VoiceAgent:
         if self._llm is None:
             return ""
         reply = ""
+        transport_error = ""
 
         async def on_event(event: LLMEvent) -> None:
-            nonlocal reply
+            nonlocal reply, transport_error
             if event.type == "delta" and event.content:
                 reply += event.content
+            elif event.type == "error":
+                transport_error = event.content or "provider error"
 
-        await self._llm.chat(messages, tools, on_event)
+        await self._llm.chat(
+            _trim_context_window(messages, self._llm_history_window_turns),
+            tools,
+            on_event,
+        )
+        if transport_error:
+            raise RuntimeError(f"LLM generation failed: {transport_error}")
         return reply
+
+    async def _classify_dialog_turn(
+        self,
+        call_id: str,
+        messages: list[ChatMessage],
+        schema: dict[str, Any],
+    ) -> dict[str, Any] | str:
+        """Run the semantic turn router through a constrained tool call.
+
+        Business conversation still uses the regular streaming generation path.
+        Routing is different: advancing a flow is a control-plane decision, so
+        providers that support function calling receive a strict schema. Text is
+        retained only as a compatibility fallback for older providers.
+        """
+        if self._llm is None:
+            return ""
+
+        raw_text = ""
+        tool_calls: list[ToolCall] = []
+        transport_error = ""
+        route_tool = ToolDefinition(
+            name="route_dialog_turn",
+            description=(
+                "Classify the caller's latest utterance for the deterministic "
+                "dialogue state machine. Always call this tool exactly once."
+            ),
+            parameters=schema,
+            strict=True,
+            required=True,
+        )
+
+        try:
+            timeout_ms = int(os.getenv("DIALOG_ROUTER_TIMEOUT_MS", "4000"))
+        except ValueError:
+            timeout_ms = 4000
+        timeout_ms = min(10_000, max(250, timeout_ms))
+
+        structured_completion = getattr(self._llm, "complete_structured", None)
+        if callable(structured_completion):
+            try:
+                return await asyncio.wait_for(
+                    structured_completion(messages, route_tool),
+                    timeout=timeout_ms / 1000,
+                )
+            except TimeoutError:
+                logger.warning(
+                    "[TurnRouter] call_id=%s provider=%s timeout_ms=%d",
+                    call_id,
+                    getattr(self._llm, "name", "unknown"),
+                    timeout_ms,
+                )
+                raise
+
+        async def on_event(event: LLMEvent) -> None:
+            nonlocal raw_text, transport_error
+            if event.type == "delta" and event.content:
+                raw_text += event.content
+            elif event.type == "error":
+                transport_error = event.content or "provider error"
+            elif event.type == "tool_call" and event.tool_call:
+                tool_calls.append(event.tool_call)
+
+        try:
+            await asyncio.wait_for(
+                self._llm.chat(messages, [route_tool], on_event),
+                timeout=timeout_ms / 1000,
+            )
+        except TimeoutError:
+            logger.warning(
+                "[TurnRouter] call_id=%s provider=%s timeout_ms=%d",
+                call_id,
+                getattr(self._llm, "name", "unknown"),
+                timeout_ms,
+            )
+            raise
+        if transport_error:
+            raise RuntimeError(f"dialog router transport failed: {transport_error}")
+        if tool_calls:
+            if len(tool_calls) == 1:
+                call = tool_calls[0]
+                if call.name == route_tool.name and isinstance(call.arguments, dict):
+                    return dict(call.arguments)
+            logger.warning(
+                "[TurnRouter] call_id=%s provider=%s invalid_tool_calls=%s",
+                call_id,
+                getattr(self._llm, "name", "unknown"),
+                [call.name for call in tool_calls],
+            )
+            return ""
+
+        logger.info(
+            "[TurnRouter] call_id=%s provider=%s structured_tool_missing "
+            "fallback=text",
+            call_id,
+            getattr(self._llm, "name", "unknown"),
+        )
+        return raw_text
 
     def _append_rag_context(
         self, messages: list[ChatMessage], rag_context: str
@@ -571,7 +829,13 @@ class VoiceAgent:
         self._endpoint_waiters[call_id] = future
 
         try:
-            timeout = None if self._dry_run.get(call_id) else self._turn_timeout_s
+            if self._dry_run.get(call_id):
+                timeout = None
+            else:
+                # 场景级静默超时（dialogRepair.silenceTimeoutMs）优先于全局默认
+                timeout = self._turn_timeout_overrides.get(
+                    call_id, self._turn_timeout_s
+                )
             return await asyncio.wait_for(future, timeout=timeout)
         except asyncio.TimeoutError:
             return ""
@@ -635,7 +899,22 @@ class VoiceAgent:
         if tts is None:
             return
 
+        speak_token = object()
+        self._speak_tokens[call_id] = speak_token
         self._speaking[call_id] = True
+        echo_generation = self._begin_echo_reference(call_id)
+        far_end_observer = None
+        transport_supplies_reference = False
+        if callbacks is not None and echo_generation is not None:
+            set_observer = getattr(callbacks, "set_far_end_observer", None)
+            if callable(set_observer):
+                def far_end_observer(pcm: bytes) -> None:
+                    self._add_echo_reference(
+                        call_id, echo_generation, pcm, sample_rate=16000
+                    )
+
+                set_observer(far_end_observer)
+                transport_supplies_reference = True
         if self._asr_tts_echo_guard_enabled:
             self._tts_reference_text[call_id] = text
             self._tts_reference_until.pop(call_id, None)
@@ -645,18 +924,35 @@ class VoiceAgent:
         self._barge_in_voice_ms.pop(call_id, None)
         self._barge_in_low_ms.pop(call_id, None)
         self._barge_in_probe.pop(call_id, None)
+        completed = False
         try:
             tts_chunks = 0
             tts_bytes = 0
 
             async def on_chunk(chunk: TTSChunk) -> None:
                 nonlocal tts_chunks, tts_bytes
-                # barge-in：speaking 标志为 False 时停止推送
-                if not self._speaking.get(call_id):
+                # barge-in / overlapping generation: ignore late provider data.
+                if (
+                    not self._speaking.get(call_id)
+                    or self._speak_tokens.get(call_id) is not speak_token
+                ):
                     return
                 if callbacks and chunk.audio:
                     tts_chunks += 1
                     tts_bytes += len(chunk.audio)
+                    # WebSocketCallbacks supplies the reference at the exact
+                    # paced-send boundary. Lightweight/test callbacks have no
+                    # transport hook, so preserve a safe generation-time fallback.
+                    if (
+                        echo_generation is not None
+                        and not transport_supplies_reference
+                    ):
+                        self._add_echo_reference(
+                            call_id,
+                            echo_generation,
+                            chunk.audio,
+                            sample_rate=chunk.sample_rate,
+                        )
                     await callbacks.on_audio_output(chunk.audio)
 
             tts_config = scenario.tts_config if scenario else {}
@@ -674,6 +970,7 @@ class VoiceAgent:
             )
             if callbacks:
                 await callbacks.on_audio_output_complete()
+            completed = True
             logger.info(
                 "[VoiceAgent] call_id=%s TTS delivered chunks=%d bytes=%d",
                 call_id,
@@ -689,34 +986,67 @@ class VoiceAgent:
             # tts.interrupt() 自抛的 CancelledError = barge-in，按原设计吞掉
             logger.info("[VoiceAgent] call_id=%s TTS cancelled (barge-in)", call_id)
         finally:
-            was_interrupted = not self._speaking.get(call_id, False)
-            if self._asr_tts_gate_enabled:
-                if was_interrupted or self._asr_tts_tail_guard_ms <= 0:
-                    self._asr_suppressed_until.pop(call_id, None)
+            if far_end_observer is not None and callbacks is not None:
+                clear_observer = getattr(callbacks, "clear_far_end_observer", None)
+                if callable(clear_observer):
+                    clear_observer(far_end_observer)
+                elif self._speak_tokens.get(call_id) is speak_token:
+                    set_observer = getattr(callbacks, "set_far_end_observer", None)
+                    if callable(set_observer):
+                        set_observer(None)
+
+            owns_speak_state = self._speak_tokens.get(call_id) is speak_token
+            was_interrupted = (
+                not completed
+                or not self._speaking.get(call_id, False)
+                or not owns_speak_state
+            )
+            if echo_generation is not None:
+                if not was_interrupted:
+                    self._arm_echo_reference_tail(call_id, echo_generation)
                 else:
-                    self._asr_suppressed_until[call_id] = (
-                        time.monotonic() + self._asr_tts_tail_guard_ms / 1000
+                    self._clear_echo_reference(
+                        call_id,
+                        generation=echo_generation,
+                        discard_pending=True,
                     )
-                self._barge_in_voice_ms.pop(call_id, None)
-                self._barge_in_low_ms.pop(call_id, None)
-                self._barge_in_probe.pop(call_id, None)
-            if self._asr_tts_echo_guard_enabled:
-                if was_interrupted:
-                    self._tts_reference_text.pop(call_id, None)
-                    self._tts_reference_until.pop(call_id, None)
-                else:
-                    self._tts_reference_until[call_id] = (
-                        time.monotonic() + self._asr_tts_tail_guard_ms / 1000
-                    )
-            self._speaking.pop(call_id, None)
-            # 开口时刻随本轮播报结束失效，避免跨轮/跨测试泄漏。
-            self._speak_started_at.pop(call_id, None)
+            if owns_speak_state:
+                if self._asr_tts_gate_enabled:
+                    if was_interrupted or self._asr_tts_tail_guard_ms <= 0:
+                        self._asr_suppressed_until.pop(call_id, None)
+                    else:
+                        self._asr_suppressed_until[call_id] = (
+                            time.monotonic() + self._asr_tts_tail_guard_ms / 1000
+                        )
+                    self._barge_in_voice_ms.pop(call_id, None)
+                    self._barge_in_low_ms.pop(call_id, None)
+                    self._barge_in_probe.pop(call_id, None)
+                if self._asr_tts_echo_guard_enabled:
+                    if was_interrupted:
+                        self._tts_reference_text.pop(call_id, None)
+                        self._tts_reference_until.pop(call_id, None)
+                    else:
+                        self._tts_reference_until[call_id] = (
+                            time.monotonic() + self._asr_tts_tail_guard_ms / 1000
+                        )
+                self._speaking.pop(call_id, None)
+                self._speak_tokens.pop(call_id, None)
+                # 开口时刻随本轮播报结束失效，避免跨轮/跨测试泄漏。
+                self._speak_started_at.pop(call_id, None)
 
     def _interrupt_speaking(self, call_id: str) -> None:
-        """barge-in：用户开始说话时中断 TTS 和 LLM 生成。"""
+        """barge-in：用户开始说话时中断当前通话的 TTS 播放。
+
+        The current pipeline finishes LLM generation before playback starts.
+        Cancelling the shared LLM adapter here could therefore only cancel a
+        different concurrent call, not the response being interrupted.
+        """
         if not self._speaking.get(call_id):
             return
         self._speaking[call_id] = False
+        # A real barge-in starts a near-end utterance. Invalidate the acoustic
+        # reference immediately so delayed provider chunks cannot gate its tail.
+        self._clear_echo_reference(call_id, discard_pending=True)
         # 打断 = 新用户回合开始：复位语义端点缓存（随后 partial 会写入本句最新文本）。
         self._reset_semantic_partial(call_id)
         if self._tts is not None:
@@ -724,8 +1054,6 @@ class VoiceAgent:
         for override in self._tts_overrides.values():
             if override is not None and override is not self._tts:
                 override.interrupt()
-        if self._llm is not None:
-            self._llm.cancel()
         logger.info(
             "[BargeIn] call_id=%s channel=%s interrupt_executed",
             call_id,
@@ -773,6 +1101,157 @@ class VoiceAgent:
         vad = self._vads.get(call_id)
         if vad is not None:
             vad.reset()
+
+    def _get_echo_gate(self, call_id: str) -> Optional[ReferenceEchoGate]:
+        """Return the per-call web acoustic gate, creating it lazily."""
+        if (
+            not self._aec_reference_gate_enabled
+            or self._channels.get(call_id) != "web"
+            or self._dry_run.get(call_id)
+        ):
+            return None
+        gate = self._echo_gates.get(call_id)
+        if gate is None:
+            gate = ReferenceEchoGate(
+                sample_rate=16000,
+                reference_window_ms=self._aec_reference_window_ms,
+                analysis_window_ms=self._aec_analysis_window_ms,
+                min_analysis_ms=self._aec_min_analysis_ms,
+                echo_correlation_threshold=self._aec_echo_correlation_threshold,
+                echo_max_residual_ratio=self._aec_echo_max_residual_ratio,
+                near_end_min_snr_db=self._aec_near_end_min_snr_db,
+                min_rms=self._aec_min_rms,
+            )
+            self._echo_gates[call_id] = gate
+        return gate
+
+    def _begin_echo_reference(self, call_id: str) -> Optional[int]:
+        """Start a new far-end reference generation for one TTS utterance."""
+        gate = self._get_echo_gate(call_id)
+        if gate is None:
+            return None
+        generation = self._echo_reference_generation.get(call_id, 0) + 1
+        self._echo_reference_generation[call_id] = generation
+        gate.reset_reference()
+        self._echo_reference_until.pop(call_id, None)
+        self._echo_latest_analysis.pop(call_id, None)
+        self._echo_fail_open_until.pop(call_id, None)
+        self._echo_pending_audio.pop(call_id, None)
+        return generation
+
+    def _add_echo_reference(
+        self, call_id: str, generation: int, pcm: bytes, sample_rate: int = 16000
+    ) -> None:
+        """Append PCM only if it still belongs to the active TTS generation."""
+        if self._echo_reference_generation.get(call_id) != generation:
+            return
+        gate = self._echo_gates.get(call_id)
+        if gate is not None:
+            gate.add_reference(pcm, sample_rate=sample_rate)
+
+    def _clear_echo_reference(
+        self,
+        call_id: str,
+        *,
+        generation: Optional[int] = None,
+        discard_pending: bool = False,
+    ) -> None:
+        """Invalidate late TTS callbacks and clear all active acoustic evidence."""
+        current = self._echo_reference_generation.get(call_id, 0)
+        if generation is not None and current != generation:
+            return
+        self._echo_reference_generation[call_id] = current + 1
+        gate = self._echo_gates.get(call_id)
+        if gate is not None:
+            gate.reset_reference()
+        self._echo_reference_until.pop(call_id, None)
+        self._echo_latest_analysis.pop(call_id, None)
+        self._echo_fail_open_until.pop(call_id, None)
+        if discard_pending:
+            self._echo_pending_audio.pop(call_id, None)
+
+    def _arm_echo_reference_tail(self, call_id: str, generation: int) -> None:
+        """Keep the completed TTS PCM briefly for delayed loudspeaker echo."""
+        if self._echo_reference_generation.get(call_id) != generation:
+            return
+        gate = self._echo_gates.get(call_id)
+        if (
+            gate is None
+            or gate.reference_samples <= 0
+            or self._asr_tts_tail_guard_ms <= 0
+        ):
+            self._clear_echo_reference(call_id, generation=generation)
+            return
+        self._echo_reference_until[call_id] = (
+            time.monotonic() + self._asr_tts_tail_guard_ms / 1000
+        )
+
+    def _active_echo_reference(self, call_id: str) -> Optional[ReferenceEchoGate]:
+        """Return an active far-end PCM reference (during TTS or its tail)."""
+        gate = self._echo_gates.get(call_id)
+        if gate is None or gate.reference_samples <= 0:
+            return None
+        if self._speaking.get(call_id):
+            return gate
+        valid_until = self._echo_reference_until.get(call_id, 0.0)
+        if time.monotonic() < valid_until:
+            return gate
+        self._clear_echo_reference(call_id)
+        return None
+
+    def _log_echo_analysis(
+        self, call_id: str, analysis: EchoAnalysis, action: str
+    ) -> None:
+        """Rate-limited, privacy-safe acoustic calibration metrics."""
+        now = time.monotonic()
+        previous_at, previous_class = self._echo_probe_logged.get(
+            call_id, (0.0, "")
+        )
+        if analysis.classification == previous_class and now - previous_at < 1.0:
+            return
+        self._echo_probe_logged[call_id] = (now, analysis.classification)
+        offset_ms = (
+            analysis.reference_offset_ms
+            if analysis.reference_offset_ms is not None
+            else -1.0
+        )
+        logger.info(
+            "[EchoAcoustic] call_id=%s class=%s action=%s rms=%.4f "
+            "noise=%.4f snr_db=%.1f corr=%.3f residual=%.3f "
+            "gain=%.3f ref_offset_ms=%.1f window_ms=%.1f",
+            call_id,
+            analysis.classification,
+            action,
+            analysis.input_rms,
+            analysis.noise_floor_rms,
+            analysis.snr_db,
+            analysis.correlation,
+            analysis.residual_ratio,
+            analysis.echo_gain,
+            offset_ms,
+            analysis.analyzed_ms,
+        )
+
+    def _should_drop_acoustic_echo(
+        self, call_id: str, analysis: EchoAnalysis
+    ) -> tuple[bool, str]:
+        """Fuse acoustic classification with a double-talk/VAD fail-open latch."""
+        now = time.monotonic()
+        if analysis.classification in {"double_talk", "near_end"}:
+            self._echo_fail_open_until[call_id] = max(
+                self._echo_fail_open_until.get(call_id, 0.0),
+                now + self._aec_double_talk_hangover_ms / 1000,
+            )
+        if not analysis.is_confident_echo:
+            return False, "pass"
+
+        vad = self._vads.get(call_id)
+        vad_state = getattr(vad, "state", "silence") if vad is not None else "silence"
+        if vad_state in {"pending", "speech", "speech_start"}:
+            return False, f"pass_vad_{vad_state}"
+        if now < self._echo_fail_open_until.get(call_id, 0.0):
+            return False, "pass_double_talk_hangover"
+        return True, "drop_confident_echo"
 
     def _reset_semantic_partial(self, call_id: str) -> None:
         """复位语义端点的 partial 缓存与日志去重（utterance 结束/打断/新 speech_start）。
@@ -974,6 +1453,120 @@ class VoiceAgent:
         """
         if call_id in self._ended:
             return
+        if len(audio_bytes) % 2:
+            logger.warning(
+                "[VoiceAgent] call_id=%s drop malformed trailing PCM byte",
+                call_id,
+            )
+            audio_bytes = audio_bytes[:-1]
+        if not audio_bytes:
+            return
+
+        # Web endpoint AEC is the primary canceller. This reference-aware layer
+        # catches only the residual blocks that are still almost completely
+        # explained by the actual TTS PCM. All uncertain/double-talk audio is
+        # fail-open and continues through the unchanged VAD/ASR path below.
+        if (
+            self._aec_reference_gate_enabled
+            and self._channels.get(call_id) == "web"
+        ):
+            echo_gate = self._active_echo_reference(call_id)
+            if echo_gate is not None:
+                now = time.monotonic()
+                vad = self._vads.get(call_id)
+                vad_state = (
+                    getattr(vad, "state", "silence")
+                    if vad is not None
+                    else "silence"
+                )
+                fail_open_active = (
+                    now < self._echo_fail_open_until.get(call_id, 0.0)
+                    or vad_state in {"pending", "speech", "speech_start"}
+                )
+                pending = self._echo_pending_audio.get(call_id)
+                if fail_open_active:
+                    if pending:
+                        audio_bytes = bytes(pending) + audio_bytes
+                        self._echo_pending_audio.pop(call_id, None)
+                else:
+                    if pending is None:
+                        pending = bytearray()
+                        self._echo_pending_audio[call_id] = pending
+                    pending.extend(audio_bytes)
+                    min_analysis_bytes = 16000 * 2 * self._aec_min_analysis_ms // 1000
+                    analysis_window_bytes = (
+                        16000 * 2 * self._aec_analysis_window_ms // 1000
+                    )
+                    if len(pending) < min_analysis_bytes:
+                        # Hold at most the short acoustic warm-up window. If it
+                        # proves to be near-end/double-talk, the complete prefix
+                        # is flushed into VAD so no first phoneme is lost.
+                        return
+                    if (
+                        echo_gate.reference_samples
+                        < 16000 * self._aec_min_analysis_ms // 1000
+                        and len(pending) < analysis_window_bytes
+                    ):
+                        # A slow/small first TTS chunk is not enough reference
+                        # for a safe decision. Wait only to the bounded analysis
+                        # window, then fail-open rather than holding indefinitely.
+                        return
+                    pending_audio = bytes(pending)
+                    self._echo_pending_audio.pop(call_id, None)
+                    # Never discard audio that was not actually analysed. A
+                    # third-party client may send >200ms in one websocket frame;
+                    # only the bounded suffix is eligible for echo removal.
+                    prefix_audio = pending_audio[:-analysis_window_bytes]
+                    analysis_audio = pending_audio[-analysis_window_bytes:]
+                    try:
+                        echo_analysis = echo_gate.analyze(analysis_audio)
+                    except Exception:
+                        logger.exception(
+                            "[EchoAcoustic] call_id=%s analysis failed; fail-open",
+                            call_id,
+                        )
+                        audio_bytes = pending_audio
+                    else:
+                        self._echo_latest_analysis[call_id] = (
+                            time.monotonic(),
+                            echo_analysis,
+                        )
+                        drop_echo, acoustic_action = self._should_drop_acoustic_echo(
+                            call_id, echo_analysis
+                        )
+                        self._log_echo_analysis(
+                            call_id, echo_analysis, acoustic_action
+                        )
+                        if drop_echo:
+                            if not prefix_audio:
+                                self._reset_vad(call_id)
+                                return
+                            audio_bytes = prefix_audio
+                        else:
+                            audio_bytes = pending_audio
+            else:
+                pending = self._echo_pending_audio.pop(call_id, None)
+                if pending:
+                    audio_bytes = bytes(pending) + audio_bytes
+                # Learn only outside far-end playback and only while VAD is
+                # idle; an asymmetric low-percentile tracker adds a second
+                # defence against accidentally learning caller speech as noise.
+                gate = self._get_echo_gate(call_id)
+                vad = self._vads.get(call_id)
+                vad_state = (
+                    getattr(vad, "state", "silence")
+                    if vad is not None
+                    else "silence"
+                )
+                if gate is not None and vad_state == "silence":
+                    try:
+                        gate.observe_background(audio_bytes)
+                    except Exception:
+                        logger.exception(
+                            "[EchoAcoustic] call_id=%s noise-floor update failed; "
+                            "fail-open",
+                            call_id,
+                        )
 
         suppressed, reason = self._is_asr_suppressed(call_id)
         if suppressed:
@@ -1027,6 +1620,10 @@ class VoiceAgent:
                 # 新 utterance 起说：复位上一句遗留的 partial 结尾状态与拖尾起始时刻。
                 self._reset_semantic_partial(call_id)
                 self._utterance_started_at.pop(call_id, None)
+                # Bound provider state to one VAD utterance. This also clears
+                # stale latches if a provider omitted the preceding final.
+                self._partial_barge_in_active.discard(call_id)
+                self._semantic_echo_evidence.pop(call_id, None)
                 logger.info(
                     "[VAD] call_id=%s speech_start flush_ms=%d",
                     call_id,
@@ -1067,16 +1664,49 @@ class VoiceAgent:
             # 记录本 utterance 起始时刻（首个 partial）。供拖尾判定与后续 final 兜底。
             if call_id not in self._utterance_started_at:
                 self._utterance_started_at[call_id] = now
-            reference = self._active_tts_reference(call_id)
+            if call_id in self._partial_barge_in_active:
+                # This provider utterance already interrupted on an earlier
+                # partial. Keep its latest text for semantic endpointing, but
+                # never compare it with or interrupt a newly-started TTS turn.
+                self._recent_partial[call_id] = event.text
+                logger.info(
+                    "[BargeIn] call_id=%s source=stt_partial "
+                    "duplicate_same_utterance_suppressed",
+                    call_id,
+                )
+                return
+            echo_evidence = self._semantic_echo_evidence.get(call_id)
+            reference = (
+                echo_evidence[0]
+                if echo_evidence is not None
+                else self._active_tts_reference(call_id)
+            )
             if reference:
                 decision, similarity = _classify_tts_echo(
                     event.text, reference, is_final=False
                 )
+                if (
+                    decision == "echo"
+                    and similarity >= _ECHO_PARTIAL_LATCH_MIN_SIMILARITY
+                ):
+                    peak = max(
+                        similarity,
+                        echo_evidence[1] if echo_evidence is not None else 0.0,
+                    )
+                    self._semantic_echo_evidence[call_id] = (reference, peak)
+                    echo_evidence = (reference, peak)
+                elif (
+                    echo_evidence is not None
+                    and decision == "distinct"
+                    and _should_hold_echo_latch(event.text, similarity)
+                ):
+                    decision = "echo_latched"
                 self._log_echo_guard(
                     call_id, event.type, decision, similarity, event.text
                 )
                 if decision != "distinct":
                     return
+                self._semantic_echo_evidence.pop(call_id, None)
             # 拖尾保护：agent 正在播报，且本 utterance 起始于开口之前 → 上一轮拖尾，
             # 不是对 agent 的打断。不打断、不写 _recent_partial（不污染下一句端点）。
             if self._speaking.get(call_id):
@@ -1097,20 +1727,40 @@ class VoiceAgent:
                     call_id,
                     self._channels.get(call_id, "freeswitch"),
                 )
+            was_speaking = bool(self._speaking.get(call_id))
             self._interrupt_speaking(call_id)
+            if was_speaking:
+                self._partial_barge_in_active.add(call_id)
             # 记录本句最新 partial，供语义端点延长静音窗。必须在打断复位之后写，
             # 否则触发 barge-in 的这条 partial 会被 _interrupt_speaking 的复位清掉。
             self._recent_partial[call_id] = event.text
         elif event.type == "final":
             now = time.monotonic()
+            interrupted_by_partial = call_id in self._partial_barge_in_active
+            self._partial_barge_in_active.discard(call_id)
+            echo_evidence = self._semantic_echo_evidence.pop(call_id, None)
             # 本 utterance 结束：消费并清除其起始时刻（无论是否退化/空，均不残留）。
             utterance_started_at = self._utterance_started_at.pop(call_id, None)
             echo_guard_distinct = False
-            reference = self._active_tts_reference(call_id)
+            reference = (
+                None
+                if interrupted_by_partial
+                else (
+                    echo_evidence[0]
+                    if echo_evidence is not None
+                    else self._active_tts_reference(call_id)
+                )
+            )
             if event.text and reference:
                 decision, similarity = _classify_tts_echo(
                     event.text, reference, is_final=True
                 )
+                if (
+                    echo_evidence is not None
+                    and decision == "distinct"
+                    and _should_hold_echo_latch(event.text, similarity)
+                ):
+                    decision = "echo_latched"
                 self._log_echo_guard(
                     call_id, event.type, decision, similarity, event.text
                 )
@@ -1137,7 +1787,9 @@ class VoiceAgent:
                 # A final-only utterance normally falls back to the time-based
                 # tail guard. Text that is positively distinct from current TTS
                 # is stronger evidence and must remain eligible for barge-in.
-                if echo_guard_distinct and utterance_started_at is None:
+                if interrupted_by_partial or (
+                    echo_guard_distinct and utterance_started_at is None
+                ):
                     is_tail = False
                 if is_tail:
                     self._merge_tail_into_last_user_message(call_id, event.text)
@@ -1157,7 +1809,7 @@ class VoiceAgent:
                 # 体感为打不断 + 响应极慢：短语打断往往只出 final 不出
                 # online partial（2pass 在线块 ~600ms）。缓冲进 _injected_text
                 # 供下一次 _wait_for_user_speech 立即消费，播报中则一并打断。
-                if self._speaking.get(call_id):
+                if self._speaking.get(call_id) and not interrupted_by_partial:
                     logger.info(
                         "[BargeIn] call_id=%s channel=%s source=stt_final barge_in",
                         call_id,
@@ -1167,7 +1819,15 @@ class VoiceAgent:
                 self._injected_text[call_id] = (
                     f"{buffered} {event.text}" if buffered else event.text
                 )
-                self._interrupt_speaking(call_id)
+                if interrupted_by_partial:
+                    if self._speaking.get(call_id):
+                        logger.info(
+                            "[BargeIn] call_id=%s source=stt_final "
+                            "duplicate_same_utterance_suppressed",
+                            call_id,
+                        )
+                else:
+                    self._interrupt_speaking(call_id)
 
     async def inject_user_text(self, call_id: str, text: str) -> None:
         """CLI/测试模式：直接注入用户文本（跳过 STT）。"""
@@ -1202,10 +1862,20 @@ class VoiceAgent:
         self._callbacks.pop(call_id, None)
         self._injected_text.pop(call_id, None)
         self._speaking.pop(call_id, None)
+        self._speak_tokens.pop(call_id, None)
         self._tts_reference_text.pop(call_id, None)
         self._tts_reference_until.pop(call_id, None)
+        self._echo_gates.pop(call_id, None)
+        self._echo_reference_until.pop(call_id, None)
+        self._echo_reference_generation.pop(call_id, None)
+        self._echo_latest_analysis.pop(call_id, None)
+        self._echo_probe_logged.pop(call_id, None)
+        self._echo_fail_open_until.pop(call_id, None)
+        self._echo_pending_audio.pop(call_id, None)
         self._speak_started_at.pop(call_id, None)
         self._utterance_started_at.pop(call_id, None)
+        self._partial_barge_in_active.discard(call_id)
+        self._semantic_echo_evidence.pop(call_id, None)
         self._channels.pop(call_id, None)
         self._asr_suppressed_until.pop(call_id, None)
         self._asr_gate_logged.discard(call_id)
@@ -1213,6 +1883,7 @@ class VoiceAgent:
         self._barge_in_low_ms.pop(call_id, None)
         self._barge_in_probe.pop(call_id, None)
         self._dry_run.pop(call_id, None)
+        self._turn_timeout_overrides.pop(call_id, None)
 
     async def close(self) -> None:
         """关闭所有共享资源（应用退出时调用）。"""
@@ -1246,12 +1917,38 @@ class _FlowExecutorAdapter:
     async def generate_reply(
         self, call_id: str, messages: list[ChatMessage], tools: list = None
     ) -> str:
+        session = self._agent._sessions.get(call_id)
+        scenario = self._agent._scenario_configs.get(call_id)
+        query = next(
+            (
+                message.content
+                for message in reversed(messages)
+                if message.role == "user" and message.content.strip()
+            ),
+            "",
+        )
+        if session and scenario and query:
+            rag_context = await self._agent._rag.retrieve(
+                scenario,
+                query,
+                tenant_id=session.tenant_id,
+                user_id=session.user_id,
+            )
+            messages = self._agent._append_rag_context(messages, rag_context)
         return await self._agent._generate_reply(call_id, messages, tools or [])
 
     async def generate_llm_text(
         self, call_id: str, messages: list[ChatMessage], options: dict = None
     ) -> str:
         return await self._agent._generate_llm_text(call_id, messages, [])
+
+    async def classify_dialog_turn(
+        self,
+        call_id: str,
+        messages: list[ChatMessage],
+        schema: dict[str, Any],
+    ) -> dict[str, Any] | str:
+        return await self._agent._classify_dialog_turn(call_id, messages, schema)
 
     async def on_caller_speech(self, call_id: str, text: str) -> None:
         callbacks = self._agent._callbacks.get(call_id)

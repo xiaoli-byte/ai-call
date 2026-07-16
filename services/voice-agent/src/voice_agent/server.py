@@ -27,7 +27,7 @@ import time
 import wave
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 from urllib.parse import parse_qs, urlparse
 
 import websockets
@@ -381,8 +381,8 @@ class VoiceAgentServer:
         except Exception as err:
             logger.exception("[VoiceAgentServer] connection error: %s", err)
         finally:
-            # session_finalized=True 表示 _start_agent_session 正常跑完
-            # （agent.start_session 内部已 set_outcome，任务已到终态）。
+            # session_finalized=True 表示 _start_agent_session 正常跑完。
+            # Web 通道中，on_end 已在发送 end 帧前完成 hangup 收口。
             session_finalized = False
             if session_task:
                 if session_task.done():
@@ -410,13 +410,11 @@ class VoiceAgentServer:
                     and metadata.get("channel") == "web"
                     and not session_finalized
                 ):
-                    # web 通道终态兜底：浏览器中途断线（挂断/关页面）时会话被
-                    # cancel，agent.start_session 尾部的 set_outcome 不会执行，
-                    # 任务会卡在 IN_CALL。调用既有 hangup 端点推到终态；
-                    # 任务已是终态时 API 报错由 quiet 模式吞掉（debug 日志）。
+                    # 正常路径已在 WebSocketCallbacks.on_end 发送 end 帧前收口；
+                    # 中途断线没有 on_end，因此在连接 finally 中幂等兜底。
                     logger.info(
-                        "[VoiceAgentServer] callId=%s web channel closed before "
-                        "session end, hangup fallback",
+                        "[VoiceAgentServer] callId=%s web session interrupted, "
+                        "hangup fallback",
                         call_id,
                     )
                     await self._tasks.hangup(call_id, quiet=True)
@@ -431,8 +429,9 @@ class VoiceAgentServer:
         2) 构造 WebSocketCallbacks（ws.send 音频 + 上报 transcript）
         3) await agent.start_session(...)（阻塞式，内部跑完整个对话循环）
 
-        返回 True 表示会话正常收尾（agent 内部已 set_outcome）；返回 False
-        表示会话异常终止，任务可能未到终态（web 通道据此触发 hangup 兜底）。
+        返回 True 表示会话正常收尾（Web 通道的 on_end 已完成
+        hangup 收口）；返回 False 表示会话异常终止，Web 通道据此触发
+        hangup 兜底。
         """
         # 1) 拉任务上下文
         scenario_str = metadata.get("scenario", "ecommerce")
@@ -591,9 +590,49 @@ class WebSocketCallbacks:
         self._paced_enabled = (
             os.getenv("TTS_PACED_DELIVERY_ENABLED", "true").lower() != "false"
         )
-        self._paced_lead_ms = _env_int("TTS_PACED_LEAD_MS", 1200)
-        self._paced_tail_margin_ms = _env_int("TTS_PACED_TAIL_MARGIN_MS", 200)
+        default_lead_ms = _env_int("TTS_PACED_LEAD_MS", 1200)
+        if self._web_channel:
+            if os.getenv("TTS_PACED_WEB_LEAD_MS") is not None:
+                self._paced_lead_ms = _env_int("TTS_PACED_WEB_LEAD_MS", 240)
+            elif os.getenv("TTS_PACED_LEAD_MS") is not None:
+                # Backward-compatible explicit global override (and existing
+                # pacing tests) wins when no web-specific value is configured.
+                self._paced_lead_ms = default_lead_ms
+            else:
+                self._paced_lead_ms = 240
+        else:
+            self._paced_lead_ms = default_lead_ms
+        self._paced_lead_ms = min(5000, max(0, self._paced_lead_ms))
+        self._paced_tail_margin_ms = min(
+            5000, max(0, _env_int("TTS_PACED_TAIL_MARGIN_MS", 200))
+        )
         self._stream: Optional[_PacedStream] = None
+        # Optional synchronous tap installed by VoiceAgent. In paced mode it is
+        # invoked at the actual send boundary, not when TTS produces data, so
+        # the acoustic gate retains the reference that the endpoint can hear.
+        self._far_end_observer: Optional[Callable[[bytes], None]] = None
+
+    def set_far_end_observer(
+        self, observer: Optional[Callable[[bytes], None]]
+    ) -> None:
+        self._far_end_observer = observer
+
+    def clear_far_end_observer(self, observer: Callable[[bytes], None]) -> None:
+        """Clear only the observer installed by the matching TTS generation."""
+        if self._far_end_observer is observer:
+            self._far_end_observer = None
+
+    def _notify_far_end_audio(self, pcm: bytes) -> None:
+        observer = self._far_end_observer
+        if observer is None or not pcm:
+            return
+        try:
+            observer(pcm)
+        except Exception:
+            # Telemetry/gating must never break audio delivery.
+            logger.exception(
+                "[EchoAcoustic] callId=%s far-end observer failed", self._call_id
+            )
 
     async def on_agent_speech(self, text: str) -> None:
         logger.info("[Agent] 🤖 %s", text)
@@ -643,6 +682,7 @@ class WebSocketCallbacks:
                     self._audio_response_format,
                 )
             if self._audio_response_format == "base64-json":
+                self._notify_far_end_audio(audio)
                 await self._send_json(
                     {
                         "type": "streamAudio",
@@ -654,6 +694,7 @@ class WebSocketCallbacks:
                     }
                 )
                 return
+            self._notify_far_end_audio(audio)
             await self._send_bytes(audio)
             return
 
@@ -737,6 +778,7 @@ class WebSocketCallbacks:
             delay = target - time.monotonic()
             if delay > 0:
                 await asyncio.sleep(delay)
+        self._notify_far_end_audio(chunk)
         if self._audio_response_format == "esl-file":
             await self._play_audio_chunk(chunk)
         elif self._audio_response_format == "base64-json":
@@ -908,7 +950,14 @@ class WebSocketCallbacks:
             self._output_bytes,
         )
         if self._web_channel:
-            # web 通道：通知浏览器会话结束（FreeSWITCH 通道不发文本帧）
+            # set_outcome 只记录业务结果。Web 没有运营商挂断事件，必须先通过
+            # 本地 hangup 原子收口 task/attempt，再发 end；否则浏览器会立刻关
+            # WS，令服务端正常完成路径永远留下 status=in_call。
+            finalized = await self._tasks.hangup(self._call_id)
+            if finalized is False:
+                raise RuntimeError(
+                    f"failed to finalize web call {self._call_id}"
+                )
             await self._send_json({"type": "end", "reason": reason})
 
     async def _send_json(self, obj: dict[str, Any]) -> None:

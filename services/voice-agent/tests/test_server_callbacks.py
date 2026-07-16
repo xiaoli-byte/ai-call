@@ -86,6 +86,29 @@ async def test_audio_fork_receives_raw_pcm() -> None:
 
 
 @pytest.mark.asyncio
+async def test_far_end_observer_receives_pcm_at_transport_send_boundary(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("TTS_PACED_DELIVERY_ENABLED", "false")
+    ws = FakeWebSocket()
+    callbacks = WebSocketCallbacks(ws, "call-observer", FakeTasks(), channel="web")
+    observed: list[bytes] = []
+
+    def observer(pcm: bytes) -> None:
+        # The websocket has not been written yet: this is the exact pre-send tap.
+        assert ws.messages == []
+        observed.append(pcm)
+
+    callbacks.set_far_end_observer(observer)
+    await callbacks.on_audio_output(b"\x01\x02")
+
+    assert observed == [b"\x01\x02"]
+    assert ws.messages == [b"\x01\x02"]
+    callbacks.clear_far_end_observer(observer)
+    assert callbacks._far_end_observer is None
+
+
+@pytest.mark.asyncio
 async def test_audio_stream_receives_base64_json() -> None:
     ws = FakeWebSocket()
     callbacks = WebSocketCallbacks(

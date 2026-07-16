@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from typing import Any, AsyncIterator
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -37,8 +38,10 @@ class FakeChat:
 
     def __init__(self, chunks: list[AIMessageChunk]) -> None:
         self._chunks = chunks
+        self.last_kwargs: dict[str, Any] = {}
 
     def astream(self, messages: Any, **kwargs: Any) -> AsyncIterator[AIMessageChunk]:
+        self.last_kwargs = dict(kwargs)
         return _aiter_chunks(self._chunks)
 
 
@@ -53,13 +56,23 @@ class FailingChat:
         return _failing()
 
 
+class CompleteChat:
+    def __init__(self, response: AIMessage) -> None:
+        self.response = response
+        self.last_kwargs: dict[str, Any] = {}
+
+    async def ainvoke(self, messages: Any, **kwargs: Any) -> AIMessage:
+        self.last_kwargs = dict(kwargs)
+        return self.response
+
+
 @pytest.fixture
 def adapter() -> LangChainLLMAdapter:
     """构造测试用适配器（fake api_key，不发起真实请求）。"""
     return LangChainLLMAdapter(
         api_key="test-key",
         model="test-model",
-        base_url="http://test",
+        base_url="https://api.openai.com/v1",
     )
 
 
@@ -138,6 +151,225 @@ def test_to_langchain_tools(adapter: LangChainLLMAdapter) -> None:
     assert func["name"] == "query_order"
     assert func["description"] == "查询订单状态"
     assert func["parameters"]["properties"]["orderNo"]["type"] == "string"
+
+
+def test_to_langchain_tools_preserves_strict_schema(
+    adapter: LangChainLLMAdapter,
+) -> None:
+    tool = ToolDefinition(
+        name="route_dialog_turn",
+        description="route",
+        parameters={"type": "object", "additionalProperties": False},
+        strict=True,
+        required=True,
+    )
+
+    result = adapter._to_langchain_tools([tool])
+
+    assert result[0]["function"]["strict"] is True
+    assert "required" not in result[0]["function"]
+
+
+def test_deepseek_v1_omits_unsupported_strict_flag_and_array_limits() -> None:
+    adapter = LangChainLLMAdapter(
+        api_key="test-key",
+        model="deepseek-v4-flash",
+        base_url="https://api.deepseek.com/v1",
+    )
+    tool = ToolDefinition(
+        name="route_dialog_turn",
+        description="route",
+        parameters={
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 2,
+                    "items": {"type": "string"},
+                }
+            },
+            "required": ["items"],
+            "additionalProperties": False,
+        },
+        strict=True,
+        required=True,
+    )
+    function = adapter._to_langchain_tools([tool])[0]["function"]
+    assert "strict" not in function
+    assert "minItems" not in function["parameters"]["properties"]["items"]
+    assert "maxItems" not in function["parameters"]["properties"]["items"]
+
+
+@pytest.mark.asyncio
+async def test_non_streaming_structured_request_requires_exactly_one_tool(
+    adapter: LangChainLLMAdapter,
+) -> None:
+    complete = CompleteChat(
+        AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "name": "route_dialog_turn",
+                    "args": {"protocol_version": "dialog-turn.v1"},
+                    "id": "route-1",
+                    "type": "tool_call",
+                }
+            ],
+        )
+    )
+    adapter._chat = complete
+    adapter._control_chat = complete
+    tool = ToolDefinition(
+        name="route_dialog_turn",
+        description="route",
+        parameters={"type": "object"},
+        strict=True,
+        required=True,
+    )
+    result = await adapter.complete_structured(
+        [ChatMessage(role="user", content="x")], tool
+    )
+    assert result == {"protocol_version": "dialog-turn.v1"}
+    assert complete.last_kwargs["parallel_tool_calls"] is False
+
+
+@pytest.mark.asyncio
+async def test_non_streaming_structured_request_rejects_multiple_tools(
+    adapter: LangChainLLMAdapter,
+) -> None:
+    call = {
+        "name": "route_dialog_turn",
+        "args": {},
+        "id": "route-1",
+        "type": "tool_call",
+    }
+    complete = CompleteChat(
+        AIMessage(content="", tool_calls=[call, {**call, "id": "route-2"}])
+    )
+    adapter._chat = complete
+    adapter._control_chat = complete
+    tool = ToolDefinition(
+        name="route_dialog_turn",
+        description="route",
+        parameters={"type": "object"},
+        required=True,
+    )
+    with pytest.raises(RuntimeError, match="exactly one"):
+        await adapter.complete_structured([ChatMessage(role="user", content="x")], tool)
+
+
+@pytest.mark.asyncio
+async def test_structured_completion_uses_dedicated_non_streaming_client() -> None:
+    streaming_client = MagicMock()
+    streaming_client.ainvoke = AsyncMock(
+        side_effect=AssertionError("streaming client used for structured request")
+    )
+    structured_client = MagicMock()
+    structured_client.ainvoke = AsyncMock(
+        return_value=AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "name": "route_dialog_turn",
+                    "args": {"protocol_version": "dialog-turn.v1"},
+                    "id": "route-1",
+                    "type": "tool_call",
+                }
+            ],
+        )
+    )
+
+    with patch(
+        "voice_agent.llm.langchain_adapter.ChatOpenAI",
+        side_effect=[streaming_client, structured_client],
+    ) as chat_openai:
+        adapter = LangChainLLMAdapter(
+            api_key="test-key",
+            model="test-model",
+            base_url="https://api.openai.com/v1",
+        )
+
+    assert chat_openai.call_count == 2
+    assert chat_openai.call_args_list[0].kwargs["streaming"] is True
+    assert chat_openai.call_args_list[1].kwargs["streaming"] is False
+
+    tool = ToolDefinition(
+        name="route_dialog_turn",
+        description="route",
+        parameters={"type": "object"},
+        required=True,
+    )
+    result = await adapter.complete_structured(
+        [ChatMessage(role="user", content="x")], tool
+    )
+
+    assert result == {"protocol_version": "dialog-turn.v1"}
+    structured_client.ainvoke.assert_awaited_once()
+    streaming_client.ainvoke.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_required_tool_forces_zero_temperature_and_tool_choice(
+    adapter: LangChainLLMAdapter,
+) -> None:
+    fake_chat = FakeChat([])
+    adapter._chat = fake_chat
+    tool = ToolDefinition(
+        name="route_dialog_turn",
+        description="route",
+        parameters={"type": "object"},
+        strict=True,
+        required=True,
+    )
+
+    async def on_event(_event: LLMEvent) -> None:
+        return None
+
+    await adapter.chat([ChatMessage(role="user", content="x")], [tool], on_event)
+
+    assert fake_chat.last_kwargs["tool_choice"] == {
+        "type": "function",
+        "function": {"name": "route_dialog_turn"},
+    }
+    assert fake_chat.last_kwargs["parallel_tool_calls"] is False
+    assert fake_chat.last_kwargs["temperature"] == 0
+    assert fake_chat.last_kwargs["max_completion_tokens"] == 512
+
+
+@pytest.mark.parametrize(
+    ("base_url", "expected_extra_body"),
+    [
+        (
+            "https://api.deepseek.com/v1",
+            {"thinking": {"type": "disabled"}},
+        ),
+        (
+            "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            {"enable_thinking": False},
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_normal_chat_disables_provider_thinking_by_default(
+    base_url: str,
+    expected_extra_body: dict[str, Any],
+) -> None:
+    adapter = LangChainLLMAdapter(
+        api_key="test-key",
+        model="test-model",
+        base_url=base_url,
+    )
+    fake_chat = FakeChat([])
+    adapter._chat = fake_chat
+
+    async def on_event(_event: LLMEvent) -> None:
+        return None
+
+    await adapter.chat([ChatMessage(role="user", content="x")], [], on_event)
+
+    assert fake_chat.last_kwargs["extra_body"] == expected_extra_body
+    assert "tool_choice" not in fake_chat.last_kwargs
 
 
 # ===================== 流式 delta 测试 =====================
@@ -252,8 +484,8 @@ async def test_empty_stream_emits_done(adapter: LangChainLLMAdapter) -> None:
 
 
 @pytest.mark.asyncio
-async def test_chat_error_emits_done(adapter: LangChainLLMAdapter) -> None:
-    """astream 抛异常应捕获并发 done，不向外抛。"""
+async def test_chat_error_emits_error_then_done(adapter: LangChainLLMAdapter) -> None:
+    """astream failures remain visible to control-plane callers."""
     adapter._chat = FailingChat()
     events: list[LLMEvent] = []
 
@@ -262,7 +494,8 @@ async def test_chat_error_emits_done(adapter: LangChainLLMAdapter) -> None:
 
     await adapter.chat([ChatMessage(role="user", content="x")], [], on_event)
 
-    assert events == [LLMEvent(type="done")]
+    assert [event.type for event in events] == ["error", "done"]
+    assert events[0].content == "network error"
 
 
 def test_name_format(adapter: LangChainLLMAdapter) -> None:

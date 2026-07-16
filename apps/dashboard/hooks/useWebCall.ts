@@ -35,9 +35,11 @@ import {
   type WebCallServerEvent,
 } from '@/lib/web-call-client';
 
-/** 上行节奏：20ms 帧、200ms 聚批（对齐 useASR.ts） */
+/** 上行节奏：20ms 帧、60ms 聚批 */
 const FRAME_MS = 20;
-const SEND_BATCH_MS = 200;
+// 60ms 聚批相比旧的 200ms 可减少最多 140ms 的打断延迟，同时 WebSocket 开销仍可控；
+// 服务端会重新切成精确的 20ms VAD 帧，并自带 300ms 语音前置缓冲。
+const SEND_BATCH_MS = 60;
 const FRAME_BYTES = getPCM16FrameByteLength(TARGET_SAMPLE_RATE, FRAME_MS);
 const SEND_BATCH_BYTES = FRAME_BYTES * Math.max(1, Math.round(SEND_BATCH_MS / FRAME_MS));
 

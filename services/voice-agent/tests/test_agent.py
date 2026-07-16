@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from voice_agent.agent import VoiceAgent
+from voice_agent.agent import VoiceAgent, _FlowExecutorAdapter
 from voice_agent.callbacks import NoopCallbacks
 from voice_agent.flow_executor import render_template
 from voice_agent.scenarios import SCENARIO_CONFIGS, DEFAULT_VARIABLES
@@ -85,12 +85,14 @@ def mock_llm():
             self.scripts: list[list[LLMEvent]] = []
             self.cancel_called = False
             self.calls = 0
+            self.last_tools = []
 
         def set_script(self, events: list[LLMEvent]) -> None:
             self.scripts.append(events)
 
         async def chat(self, messages, tools, on_event) -> None:
             self.calls += 1
+            self.last_tools = list(tools)
             script = self.scripts.pop(0) if self.scripts else [LLMEvent(type="done")]
             for ev in script:
                 await on_event(ev)
@@ -237,6 +239,225 @@ def test_flow_template_render_supports_new_and_legacy_variables() -> None:
         text,
         {"company": "测试公司", "orderNo": "A001", "amount": "100"},
     ) == "您好，测试公司，订单A001，金额100，未知${missing}"
+
+
+@pytest.mark.asyncio
+async def test_dialog_router_uses_required_strict_tool(
+    agent: VoiceAgent, mock_llm
+) -> None:
+    payload = {
+        "protocol_version": "dialog-turn.v1",
+        "commands": [
+            {
+                "type": "BUSINESS_INTENT",
+                "value": "edge_yes",
+                "confidence": 0.94,
+            }
+        ],
+        "alternatives": [],
+    }
+    mock_llm.set_script(
+        [
+            LLMEvent(
+                type="tool_call",
+                tool_call=ToolCall(
+                    id="route-1",
+                    name="route_dialog_turn",
+                    arguments=payload,
+                ),
+            ),
+            LLMEvent(type="done"),
+        ]
+    )
+
+    result = await agent._classify_dialog_turn(
+        "call-route",
+        [ChatMessage(role="user", content="可以")],
+        {"type": "object", "additionalProperties": False},
+    )
+
+    assert result == payload
+    assert len(mock_llm.last_tools) == 1
+    assert mock_llm.last_tools[0].name == "route_dialog_turn"
+    assert mock_llm.last_tools[0].strict is True
+    assert mock_llm.last_tools[0].required is True
+
+
+@pytest.mark.asyncio
+async def test_dialog_router_keeps_text_only_as_strict_parser_fallback(
+    agent: VoiceAgent, mock_llm
+) -> None:
+    mock_llm.set_script(
+        [LLMEvent(type="delta", content='{"protocol_version":"dialog-turn.v1"}')]
+    )
+    result = await agent._classify_dialog_turn(
+        "call-route-text",
+        [ChatMessage(role="user", content="可以")],
+        {"type": "object"},
+    )
+    assert result == '{"protocol_version":"dialog-turn.v1"}'
+
+
+@pytest.mark.asyncio
+async def test_dialog_router_fallback_rejects_expected_plus_unknown_tool(
+    agent: VoiceAgent, mock_llm
+) -> None:
+    payload = {
+        "protocol_version": "dialog-turn.v1",
+        "commands": [
+            {
+                "type": "BUSINESS_INTENT",
+                "value": "edge_yes",
+                "confidence": 0.94,
+            }
+        ],
+        "alternatives": [],
+    }
+    mock_llm.set_script(
+        [
+            LLMEvent(
+                type="tool_call",
+                tool_call=ToolCall(
+                    id="route-1",
+                    name="route_dialog_turn",
+                    arguments=payload,
+                ),
+            ),
+            LLMEvent(
+                type="tool_call",
+                tool_call=ToolCall(
+                    id="unknown-1",
+                    name="invented_control_tool",
+                    arguments={},
+                ),
+            ),
+            LLMEvent(type="done"),
+        ]
+    )
+
+    result = await agent._classify_dialog_turn(
+        "call-route-unknown-tool",
+        [ChatMessage(role="user", content="可以")],
+        {"type": "object"},
+    )
+
+    assert result == ""
+
+
+@pytest.mark.asyncio
+async def test_dialog_router_timeout_fails_closed(
+    agent: VoiceAgent, monkeypatch
+) -> None:
+    class HangingLLM:
+        name = "hanging"
+
+        async def chat(self, messages, tools, on_event) -> None:
+            await asyncio.sleep(10)
+
+        def cancel(self) -> None:
+            pass
+
+        async def close(self) -> None:
+            pass
+
+    agent._llm = HangingLLM()
+    monkeypatch.setenv("DIALOG_ROUTER_TIMEOUT_MS", "1")
+    started = time.monotonic()
+    with pytest.raises(TimeoutError):
+        await agent._classify_dialog_turn(
+            "call-route-timeout",
+            [ChatMessage(role="user", content="可以")],
+            {"type": "object"},
+        )
+    assert time.monotonic() - started < 1
+
+
+@pytest.mark.asyncio
+async def test_generate_reply_raises_when_chat_emits_error(
+    agent: VoiceAgent, mock_llm
+) -> None:
+    call_id = "call-reply-provider-error"
+    agent._sessions[call_id] = CallSession(
+        call_id=call_id,
+        scenario="ecommerce",
+        variables={},
+        messages=[],
+    )
+    mock_llm.set_script(
+        [
+            LLMEvent(type="delta", content="不完整回复"),
+            LLMEvent(type="error", content="provider exploded"),
+            LLMEvent(type="done"),
+        ]
+    )
+
+    with pytest.raises(RuntimeError, match="provider exploded"):
+        await agent._generate_reply(
+            call_id,
+            [ChatMessage(role="user", content="请回答")],
+            [],
+        )
+
+
+@pytest.mark.asyncio
+async def test_generate_llm_text_raises_when_chat_emits_error(
+    agent: VoiceAgent, mock_llm
+) -> None:
+    mock_llm.set_script(
+        [
+            LLMEvent(type="delta", content="不完整回复"),
+            LLMEvent(type="error", content="provider exploded"),
+            LLMEvent(type="done"),
+        ]
+    )
+
+    with pytest.raises(RuntimeError, match="provider exploded"):
+        await agent._generate_llm_text(
+            "call-text-provider-error",
+            [ChatMessage(role="user", content="请回答")],
+            [],
+        )
+
+
+@pytest.mark.asyncio
+async def test_flow_side_question_adapter_retrieves_rag_and_keeps_tools_empty(
+    agent: VoiceAgent,
+    mock_rag,
+    scenario_config,
+) -> None:
+    call_id = "call-side-rag"
+    agent._sessions[call_id] = CallSession(
+        call_id=call_id,
+        scenario=scenario_config.scenario.value,
+        variables={},
+        messages=[],
+        tenant_id="tenant-1",
+        user_id="user-1",
+    )
+    agent._scenario_configs[call_id] = scenario_config
+    mock_rag.retrieve = AsyncMock(return_value="\n【知识库】安装免费")
+    agent._generate_reply = AsyncMock(return_value="安装免费。")
+    adapter = _FlowExecutorAdapter(agent, call_id)
+
+    result = await adapter.generate_reply(
+        call_id,
+        [
+            ChatMessage(role="system", content="system"),
+            ChatMessage(role="user", content="安装收费吗？"),
+        ],
+        [],
+    )
+
+    assert result == "安装免费。"
+    mock_rag.retrieve.assert_awaited_once_with(
+        scenario_config,
+        "安装收费吗？",
+        tenant_id="tenant-1",
+        user_id="user-1",
+    )
+    generated_messages = agent._generate_reply.await_args.args[1]
+    assert "【知识库】安装免费" in generated_messages[0].content
+    assert agent._generate_reply.await_args.args[2] == []
 
 
 @pytest.mark.asyncio
@@ -405,8 +626,8 @@ async def test_barge_in_interrupts_tts(
 
     # TTS interrupt 应被调用
     assert mock_tts.interrupt_called
-    # LLM cancel 也应被调用
-    assert mock_llm.cancel_called
+    # Shared LLM work has already completed before playback starts.
+    assert not mock_llm.cancel_called
     # speaking 标志应被清除
     assert not agent._speaking.get(call_id)
 
@@ -692,7 +913,7 @@ async def test_stt_partial_triggers_interrupt_and_on_interrupted(
     await asyncio.sleep(0)  # 让 create_task 出来的 on_interrupted 执行
 
     assert mock_tts.interrupt_called
-    assert mock_llm.cancel_called
+    assert not mock_llm.cancel_called
     assert not agent._speaking.get(call_id)
     assert callbacks.interrupted_calls == 1
 
@@ -740,9 +961,125 @@ async def test_web_echo_guard_distinct_partial_interrupts(
     )
 
     assert mock_tts.interrupt_called
-    assert mock_llm.cancel_called
+    assert not mock_llm.cancel_called
     assert not agent._speaking.get(call_id)
     assert agent._recent_partial.get(call_id) == "等一下，我还有问题"
+
+
+@pytest.mark.asyncio
+async def test_web_echo_guard_keeps_exact_partial_evidence_across_asr_rewrite(
+    agent: VoiceAgent, mock_llm, mock_tts
+) -> None:
+    """An exact TTS partial must keep a mildly rewritten final classified as echo."""
+    call_id = "echo-guard-rewrite"
+    agent._channels[call_id] = "web"
+    agent._speaking[call_id] = True
+    agent._speak_started_at[call_id] = time.monotonic() - 1.0
+    agent._tts_reference_text[call_id] = (
+        "\u60a8\u597d\uff0c\u6211\u662f\u793a\u4f8b\u516c\u53f8\u7684\u5ba2\u670d\u3002"
+    )
+
+    await agent._on_stt_event(
+        call_id,
+        STTEvent(type="partial", text="\u4f60\u597d\uff0c\u6211\u662f"),
+    )
+    assert call_id in agent._semantic_echo_evidence
+
+    await agent._on_stt_event(
+        call_id,
+        STTEvent(type="final", text="\u597d\uff0c\u6211\u652f\u6301\u3002"),
+    )
+
+    assert agent._speaking.get(call_id) is True
+    assert not mock_tts.interrupt_called
+    assert not mock_llm.cancel_called
+    assert call_id not in agent._injected_text
+    assert call_id not in agent._semantic_echo_evidence
+
+
+@pytest.mark.asyncio
+async def test_web_echo_latch_releases_known_short_answer(
+    agent: VoiceAgent, mock_tts
+) -> None:
+    """A known short caller answer remains actionable despite prior echo evidence."""
+    call_id = "echo-guard-short-answer"
+    agent._channels[call_id] = "web"
+    agent._speaking[call_id] = True
+    agent._speak_started_at[call_id] = time.monotonic() - 1.0
+    agent._tts_reference_text[call_id] = (
+        "\u60a8\u597d\uff0c\u6211\u662f\u5ba2\u670d\uff0c"
+        "\u8bf7\u95ee\u5546\u54c1\u6536\u5230\u4e86\u5417\uff1f"
+    )
+
+    await agent._on_stt_event(
+        call_id,
+        STTEvent(type="partial", text="\u4f60\u597d\uff0c\u6211\u662f\u5ba2\u670d"),
+    )
+    await agent._on_stt_event(
+        call_id,
+        STTEvent(type="final", text="\u6536\u5230\u4e86"),
+    )
+
+    assert mock_tts.interrupt_called
+    assert not agent._speaking.get(call_id)
+    assert await agent._wait_for_user_speech(call_id) == "\u6536\u5230\u4e86"
+
+
+@pytest.mark.asyncio
+async def test_partial_and_final_from_same_utterance_interrupt_only_once(
+    agent: VoiceAgent, mock_llm, mock_tts
+) -> None:
+    """A final arriving after partial barge-in must not cancel the next TTS."""
+    call_id = "barge-one-utterance"
+    agent._channels[call_id] = "web"
+    agent._speaking[call_id] = True
+    agent._speak_started_at[call_id] = time.monotonic() - 1.0
+    agent._tts_reference_text[call_id] = (
+        "\u8bf7\u95ee\u60a8\u6700\u8fd1\u54ea\u5929\u65b9\u4fbf\uff1f"
+    )
+
+    await agent._on_stt_event(
+        call_id,
+        STTEvent(type="partial", text="\u7b49\u4e00\u4e0b\uff0c\u6211\u770b\u4e00\u4e0b"),
+    )
+    assert mock_tts.interrupt_called
+    assert call_id in agent._partial_barge_in_active
+
+    # A non-blocking flow node may begin its next prompt before FunASR emits
+    # the matching final for the caller utterance that already interrupted it.
+    mock_tts.interrupt_called = False
+    mock_llm.cancel_called = False
+    agent._speaking[call_id] = True
+    agent._speak_started_at.pop(call_id, None)
+    agent._tts_reference_text[call_id] = (
+        "\u611f\u8c22\u60a8\u7684\u63a5\u542c\uff0c\u518d\u89c1\u3002"
+    )
+
+    await agent._on_stt_event(
+        call_id,
+        STTEvent(
+            type="partial",
+            text="\u7b49\u4e00\u4e0b\uff0c\u6211\u518d\u770b\u4e00\u4e0b",
+        ),
+    )
+    assert agent._speaking.get(call_id) is True
+    assert not mock_tts.interrupt_called
+    assert agent._recent_partial[call_id] == (
+        "\u7b49\u4e00\u4e0b\uff0c\u6211\u518d\u770b\u4e00\u4e0b"
+    )
+
+    await agent._on_stt_event(
+        call_id,
+        STTEvent(type="final", text="\u7b49\u4e00\u4e0b\uff0c\u6211\u770b\u4e00\u4e0b\u3002"),
+    )
+
+    assert agent._speaking.get(call_id) is True
+    assert not mock_tts.interrupt_called
+    assert not mock_llm.cancel_called
+    assert call_id not in agent._partial_barge_in_active
+    assert await agent._wait_for_user_speech(call_id) == (
+        "\u7b49\u4e00\u4e0b\uff0c\u6211\u770b\u4e00\u4e0b\u3002"
+    )
 
 
 @pytest.mark.asyncio
@@ -962,10 +1299,34 @@ async def test_executes_immutable_flow_snapshot(
 @pytest.mark.asyncio
 async def test_flow_dialog_uses_edge_intent_then_default(
     agent: VoiceAgent,
+    mock_llm,
     scenario_config,
     variables,
     captured_callbacks,
 ) -> None:
+    mock_llm.set_script(
+        [
+            LLMEvent(
+                type="tool_call",
+                tool_call=ToolCall(
+                    id="route-flow-2",
+                    name="route_dialog_turn",
+                    arguments={
+                        "protocol_version": "dialog-turn.v1",
+                        "commands": [
+                            {
+                                "type": "BUSINESS_INTENT",
+                                "value": "e2",
+                                "confidence": 0.96,
+                            }
+                        ],
+                        "alternatives": [],
+                    },
+                ),
+            ),
+            LLMEvent(type="done"),
+        ]
+    )
     flow = {
         "id": "version-2",
         "nodes": [
@@ -1360,7 +1721,7 @@ async def test_post_speak_partial_still_interrupts(
     await agent._on_stt_event(call_id, STTEvent(type="partial", text="停一下"))
 
     assert mock_tts.interrupt_called
-    assert mock_llm.cancel_called
+    assert not mock_llm.cancel_called
     assert not agent._speaking.get(call_id)
     assert agent._recent_partial.get(call_id) == "停一下"
 

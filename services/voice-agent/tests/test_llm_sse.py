@@ -10,12 +10,16 @@ import httpx
 import pytest
 
 from voice_agent.llm import OpenAICompatibleLLM
-from voice_agent.types import ChatMessage, LLMEvent, ToolCall
+from voice_agent.types import ChatMessage, LLMEvent, ToolCall, ToolDefinition
 
 
 @pytest.fixture
 def llm() -> OpenAICompatibleLLM:
-    return OpenAICompatibleLLM(api_key="test-key", model="test-model", base_url="http://test")
+    return OpenAICompatibleLLM(
+        api_key="test-key",
+        model="test-model",
+        base_url="https://api.openai.com/v1",
+    )
 
 
 def _make_sse_response(lines: list[str]) -> httpx.Response:
@@ -56,6 +60,85 @@ async def test_delta_accumulation(llm: OpenAICompatibleLLM) -> None:
     deltas = [ev for ev in events if ev.type == "delta"]
     assert [d.content for d in deltas] == ["你好", "，世界"]
     assert events[-1].type == "done"
+
+
+@pytest.mark.asyncio
+async def test_required_strict_tool_is_serialized_as_control_request(
+    llm: OpenAICompatibleLLM,
+) -> None:
+    response = _make_sse_response(["data: [DONE]"])
+    stream_ctx = MagicMock()
+    stream_ctx.__aenter__ = AsyncMock(return_value=response)
+    stream_ctx.__aexit__ = AsyncMock(return_value=None)
+    tool = ToolDefinition(
+        name="route_dialog_turn",
+        description="route",
+        parameters={"type": "object", "additionalProperties": False},
+        strict=True,
+        required=True,
+    )
+
+    async def on_event(_event: LLMEvent) -> None:
+        return None
+
+    with patch.object(llm._client, "stream", return_value=stream_ctx) as stream:
+        await llm.chat([ChatMessage(role="user", content="x")], [tool], on_event)
+
+    body = stream.call_args.kwargs["json"]
+    assert body["tool_choice"] == {
+        "type": "function",
+        "function": {"name": "route_dialog_turn"},
+    }
+    assert body["parallel_tool_calls"] is False
+    assert body["temperature"] == 0
+    assert body["max_completion_tokens"] == 512
+    assert body["tools"][0]["function"]["strict"] is True
+    assert "required" not in body["tools"][0]["function"]
+
+
+@pytest.mark.parametrize(
+    ("base_url", "expected_body"),
+    [
+        (
+            "https://api.deepseek.com/v1",
+            {"thinking": {"type": "disabled"}},
+        ),
+        (
+            "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            {"enable_thinking": False},
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_normal_http_chat_disables_provider_thinking_by_default(
+    base_url: str,
+    expected_body: dict[str, Any],
+) -> None:
+    provider_llm = OpenAICompatibleLLM(
+        api_key="test-key",
+        model="test-model",
+        base_url=base_url,
+    )
+    response = _make_sse_response(["data: [DONE]"])
+    stream_ctx = MagicMock()
+    stream_ctx.__aenter__ = AsyncMock(return_value=response)
+    stream_ctx.__aexit__ = AsyncMock(return_value=None)
+
+    async def on_event(_event: LLMEvent) -> None:
+        return None
+
+    with patch.object(
+        provider_llm._client, "stream", return_value=stream_ctx
+    ) as stream:
+        await provider_llm.chat(
+            [ChatMessage(role="user", content="x")], [], on_event
+        )
+
+    body = stream.call_args.kwargs["json"]
+    for key, value in expected_body.items():
+        assert body[key] == value
+    assert "tool_choice" not in body
+    await provider_llm.close()
 
 
 @pytest.mark.asyncio
@@ -144,8 +227,8 @@ async def test_done_signal_without_explicit_done(llm: OpenAICompatibleLLM) -> No
 
 
 @pytest.mark.asyncio
-async def test_http_error_emits_done(llm: OpenAICompatibleLLM) -> None:
-    """HTTP 非 200 应记录错误并发 done 事件，不抛异常。"""
+async def test_http_error_emits_error_then_done(llm: OpenAICompatibleLLM) -> None:
+    """HTTP failures remain visible to control-plane callers."""
     events: list[LLMEvent] = []
 
     async def on_event(ev: LLMEvent) -> None:
@@ -163,7 +246,8 @@ async def test_http_error_emits_done(llm: OpenAICompatibleLLM) -> None:
     with patch.object(llm._client, "stream", return_value=mock_stream_ctx):
         await llm.chat([ChatMessage(role="user", content="x")], [], on_event)
 
-    assert events == [LLMEvent(type="done")]
+    assert [event.type for event in events] == ["error", "done"]
+    assert events[0].content == "HTTP 500"
 
 
 def test_to_openai_messages_assistant_with_tool_calls(llm: OpenAICompatibleLLM) -> None:
