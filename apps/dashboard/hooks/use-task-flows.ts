@@ -28,8 +28,11 @@ export const taskFlowKeyString = (id: string) =>
   unstable_serialize(taskFlowKey(id));
 
 export function useTaskFlow(id: string | null, fallback?: TaskFlow) {
-  return useSWR<TaskFlow>(id ? taskFlowKey(id) : null, () =>
-    apiClient.taskFlows.get(id!),
+  return useSWR<TaskFlow>(
+    id ? taskFlowKey(id) : null,
+    () => apiClient.taskFlows.get(id!),
+    // fallbackData：服务端组件已取到的流程作为初始值，避免首帧闪烁
+    { fallbackData: fallback },
   );
 }
 

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { appToast } from '@/lib/toast';
+import { voiceAgentWsBaseUrl } from '@/lib/voice-agent-ws';
 import { ConversationWindow, type ConversationMessage } from '@/components/conversation/conversation-window';
 import styles from './flow-debug-panel.module.scss';
 
@@ -10,6 +11,13 @@ interface DebugMessage {
   role: 'user' | 'agent' | 'action' | 'system';
   text: string;
   nodeName?: string;
+}
+
+/** 测试变量行——仅在本次调试会话中注入，不落库、不影响流程定义 */
+interface TestVariableRow {
+  id: string;
+  key: string;
+  value: string;
 }
 
 interface FlowDebugPanelProps {
@@ -22,12 +30,29 @@ interface FlowDebugPanelProps {
 
 type PanelState = 'idle' | 'saving' | 'connecting' | 'running' | 'ended' | 'error';
 
+function genRowId(): string {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
+  return `row_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/** 将变量行列表整理为 {key: value} 对象，忽略空 key 的行；发给 /text-test 的 start 帧 */
+function buildVariablesPayload(rows: TestVariableRow[]): Record<string, string> {
+  const payload: Record<string, string> = {};
+  for (const row of rows) {
+    const key = row.key.trim();
+    if (!key) continue;
+    payload[key] = row.value;
+  }
+  return payload;
+}
+
 export function FlowDebugPanel({ flowId, flowName, open, onClose, onSaveFlow }: FlowDebugPanelProps) {
   const [state, setState] = useState<PanelState>('idle');
   const [messages, setMessages] = useState<DebugMessage[]>([]);
   const [input, setInput] = useState('');
   const [sessionId, setSessionId] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
+  const [variableRows, setVariableRows] = useState<TestVariableRow[]>([]);
   const wsRef = useRef<WebSocket | null>(null);
   const currentNodeName = useRef<string>('');
 
@@ -41,9 +66,19 @@ export function FlowDebugPanel({ flowId, flowName, open, onClose, onSaveFlow }: 
     }
   }, []);
 
-  // 关闭时清理
+  // 每次打开都是一次全新测试：清空上一轮调试对话内容与服务端会话 id
+  // （服务端会话 id 会在下一次“开始会话”时由后端重新生成，这里先清空展示）；
+  // 关闭时则断开 WS 连接。变量配置（variableRows）不属于“会话内容”，跨开关保留，
+  // 方便用户反复调试同一批变量。
   useEffect(() => {
-    if (!open) {
+    if (open) {
+      setState('idle');
+      setMessages([]);
+      setInput('');
+      setSessionId('');
+      setErrorMsg('');
+      currentNodeName.current = '';
+    } else {
       cleanup();
     }
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -107,7 +142,9 @@ export function FlowDebugPanel({ flowId, flowName, open, onClose, onSaveFlow }: 
     }
 
     setState('connecting');
-    const wsUrl = `${process.env.NEXT_PUBLIC_VOICE_AGENT_WS_URL}/text-test`;
+    // WS 地址必须经 voiceAgentWsBaseUrl 派生（协议随页面 http/https，本地直连 8090，
+    // 生产/代理走同源路径转发）；直接拼 env 在未配置时会退化成页面源导致连接失败。
+    const wsUrl = `${voiceAgentWsBaseUrl()}/text-test`;
     let ws: WebSocket;
     try {
       ws = new WebSocket(wsUrl);
@@ -119,7 +156,7 @@ export function FlowDebugPanel({ flowId, flowName, open, onClose, onSaveFlow }: 
     wsRef.current = ws;
 
     ws.onopen = () => {
-      ws.send(JSON.stringify({ type: 'start', flowId, variables: {} }));
+      ws.send(JSON.stringify({ type: 'start', flowId, variables: buildVariablesPayload(variableRows) }));
       setState('running');
     };
 
@@ -150,6 +187,18 @@ export function FlowDebugPanel({ flowId, flowName, open, onClose, onSaveFlow }: 
     wsRef.current.send(JSON.stringify({ type: 'user_input', text }));
     addMessage({ role: 'user', text });
     setInput('');
+  };
+
+  const addVariableRow = () => {
+    setVariableRows((prev) => [...prev, { id: genRowId(), key: '', value: '' }]);
+  };
+
+  const updateVariableRow = (id: string, patch: Partial<Pick<TestVariableRow, 'key' | 'value'>>) => {
+    setVariableRows((prev) => prev.map((row) => (row.id === id ? { ...row, ...patch } : row)));
+  };
+
+  const removeVariableRow = (id: string) => {
+    setVariableRows((prev) => prev.filter((row) => row.id !== id));
   };
 
   const handleReset = () => {
@@ -215,6 +264,50 @@ export function FlowDebugPanel({ flowId, flowName, open, onClose, onSaveFlow }: 
           </svg>
         </button>
       </div>
+
+      {/* 测试变量注入：仅在本次调试对话中模拟 ${变量} 替换，不落库、不影响流程定义 */}
+      <details className={styles.debugVariables}>
+        <summary className={styles.debugVariablesSummary}>
+          测试变量{variableRows.length > 0 ? `（${variableRows.length}）` : ''}
+        </summary>
+        <div className={styles.debugVariablesBody}>
+          {variableRows.length === 0 && (
+            <div className={styles.debugVariablesEmpty}>暂无变量，点击下方“添加变量”注入测试数据</div>
+          )}
+          {variableRows.map((row) => (
+            <div className={styles.debugVariableRow} key={row.id}>
+              <input
+                type="text"
+                value={row.key}
+                onChange={(e) => updateVariableRow(row.id, { key: e.target.value })}
+                placeholder="变量名，如 company"
+                aria-label="变量名"
+                className={styles.debugVariableKeyInput}
+              />
+              <input
+                type="text"
+                value={row.value}
+                onChange={(e) => updateVariableRow(row.id, { value: e.target.value })}
+                placeholder="模拟值"
+                aria-label="变量值"
+                className={styles.debugVariableValueInput}
+              />
+              <button
+                type="button"
+                onClick={() => removeVariableRow(row.id)}
+                className={styles.debugVariableRemoveBtn}
+                title="删除该变量"
+                aria-label="删除该变量"
+              >
+                ×
+              </button>
+            </div>
+          ))}
+          <button type="button" onClick={addVariableRow} className={styles.debugVariableAddBtn}>
+            + 添加变量
+          </button>
+        </div>
+      </details>
 
       <ConversationWindow
         variant="embedded"

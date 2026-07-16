@@ -32,7 +32,6 @@ export function DialogForm({ node, onUpdate }: DialogFormProps) {
     data.text ?? (data.mode === 'question' ? data.prompt ?? '' : ''),
   );
   const [prompt, setPrompt] = useState(data.prompt ?? '');
-  const [systemPrompt, setSystemPrompt] = useState(data.systemPrompt ?? '');
   const [timeoutSeconds, setTimeoutSeconds] = useState(
     data.timeoutSeconds ?? 10,
   );
@@ -47,7 +46,6 @@ export function DialogForm({ node, onUpdate }: DialogFormProps) {
     setMode(editableMode(data));
     setText(data.text ?? (data.mode === 'question' ? data.prompt ?? '' : ''));
     setPrompt(data.prompt ?? '');
-    setSystemPrompt(data.systemPrompt ?? '');
     setTimeoutSeconds(data.timeoutSeconds ?? 10);
     setRetryCount(data.retryCount ?? 2);
     setInterruptible(data.interruptible);
@@ -93,31 +91,21 @@ export function DialogForm({ node, onUpdate }: DialogFormProps) {
       )}
 
       {mode === 'ai' && (
-        <>
-          <Field label="系统提示词">
-            <VariableTextArea
-              value={systemPrompt}
-              variables={variables}
-              onValueChange={(value) => {
-                setSystemPrompt(value);
-                emit({ systemPrompt: value });
-              }}
-              rows={4}
-              placeholder="你是客服专员，专业且礼貌..."
-            />
-          </Field>
-          <Field label="回复目标" hint="描述这一节点要如何结合上下文生成回复">
-            <VariableTextArea
-              value={prompt}
-              variables={variables}
-              onValueChange={(value) => {
-                setPrompt(value);
-                emit({ prompt: value });
-              }}
-              placeholder="例如：确认客户是否收到商品，并自然询问使用体验"
-            />
-          </Field>
-        </>
+        // 节点配置精简：AI 对话节点只保留「回复目标」一个配置项；
+        // 「系统提示词」（systemPrompt）字段本身在数据结构中保留透传，
+        // 存量流程已配置的 systemPrompt 值不会丢失，voice-agent 运行时仍会读取它，
+        // 只是不再提供 UI 输入入口。
+        <Field label="回复目标" hint="描述这一节点要如何结合上下文生成回复">
+          <VariableTextArea
+            value={prompt}
+            variables={variables}
+            onValueChange={(value) => {
+              setPrompt(value);
+              emit({ prompt: value });
+            }}
+            placeholder="例如：确认客户是否收到商品，并自然询问使用体验"
+          />
+        </Field>
       )}
 
       <div className={styles.flowSectionDivider} />

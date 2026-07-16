@@ -371,6 +371,65 @@
   line-height: 1.5;
 }
 
+.workbench :global(.scenario-collapsible-section) {
+  padding-bottom: 26px;
+}
+
+/* 静默处理：行内句式布局（"客户静默超过 [N] 毫秒…"、"连续 [N] 轮后 [动作]"） */
+.workbench :global(.scenario-silence-row) {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.workbench :global(.scenario-silence-row) > span {
+  color: var(--text-secondary);
+  font-size: 12.5px;
+}
+
+.workbench :global(.scenario-silence-row .form-input) {
+  width: 110px;
+}
+
+.workbench :global(.scenario-silence-row .form-select) {
+  width: auto;
+  min-width: 180px;
+}
+
+.workbench :global(.scenario-collapsible-summary) {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 16px;
+  color: var(--gray-800);
+  font-size: 14px;
+  font-weight: 650;
+  cursor: pointer;
+  list-style: none;
+}
+
+.workbench :global(.scenario-collapsible-summary)::-webkit-details-marker {
+  display: none;
+}
+
+.workbench :global(.scenario-collapsible-summary)::before {
+  width: 3px;
+  height: 14px;
+  border-radius: 999px;
+  background: var(--primary-600);
+  content: '';
+}
+
+.workbench :global(.scenario-collapsible-chevron) {
+  margin-left: auto;
+  transition: transform 0.15s ease;
+}
+
+.workbench :global(.scenario-collapsible-section[open] .scenario-collapsible-chevron) {
+  transform: rotate(180deg);
+}
+
 .workbench :global(.scenario-inline-warning) {
   padding: 8px 10px;
   border: 1px solid #fed7aa;
@@ -498,6 +557,59 @@
   background: var(--primary-50);
   color: var(--primary-700);
   box-shadow: inset 0 0 0 1px rgba(37, 99, 235, 0.12);
+}
+
+/* 可删除标签：标签本体 + 右上角 × 删除按钮的定位容器 */
+.workbench :global(.scenario-chip-slot) {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.workbench :global(.scenario-chip-slot.removable .scenario-chip) {
+  padding-right: 24px;
+}
+
+.workbench :global(.scenario-chip-remove) {
+  position: absolute;
+  right: 4px;
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.workbench :global(.scenario-chip-remove:hover) {
+  background: var(--gray-100);
+  color: var(--danger);
+}
+
+/* 「+ 新增」标签及其编辑态输入框 */
+.workbench :global(.scenario-chip-add) {
+  border-style: dashed;
+  color: var(--text-secondary);
+}
+
+.workbench :global(.scenario-chip-input) {
+  width: 104px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--primary-600);
+  border-radius: var(--radius-md);
+  background: #fff;
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
 }
 
 .workbench :global(.scenario-flow-row),

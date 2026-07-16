@@ -1,4 +1,5 @@
 export * from './scenarios.js';
+export * from './scenario-templates.js';
 export * from './global-config.js';
 export * from './voice-clones.js';
 export * from './tasks.js';

@@ -22,7 +22,9 @@ function getSummary(data: DialogNodeData): string {
 function isConfigured(data: DialogNodeData): boolean {
   if (data.mode === 'script') return !!data.text;
   if (data.mode === 'question') return !!data.prompt;
-  if (data.mode === 'ai') return !!data.systemPrompt;
+  // 配置面板只保留「回复目标」（prompt）；systemPrompt 不再可编辑，
+  // 但存量流程可能只填过 systemPrompt，仍视为已配置，兼容历史数据。
+  if (data.mode === 'ai') return !!data.prompt || !!data.systemPrompt;
   return false;
 }
 
